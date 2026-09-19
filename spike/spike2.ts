@@ -226,6 +226,15 @@ function measure(
 }
 
 function main(): void {
+  // A file path argument runs the check scoped to that one file only —
+  // what the PostToolUse hook stand-in (spike3-hook.mjs) needs: per-file
+  // feedback at edit time, not a whole-project run on every edit.
+  const singleFile = process.argv[2];
+  if (singleFile !== undefined) {
+    measure(singleFile, resolve(singleFile, ".."), resolve(singleFile));
+    return;
+  }
+
   // Real, read-only: nukadoko's own public entry point already, so this
   // needs no provisional public.ts written into that checkout.
   measure(

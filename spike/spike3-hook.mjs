@@ -41,21 +41,22 @@ function main() {
     return;
   }
 
-  // Stand-in for `archstrict check <file>`: spike 2's leak detector, but
-  // asked about one file only. Reuses the fixture project so this script
-  // is self-contained and needs no other repository present to prove the
-  // round trip.
+  // Stand-in for `archstrict check <file>`: spike 2's leak detector,
+  // scoped to the one file the event named (spike2.ts's own file-path
+  // argument mode), not a whole-project run. A hook that reruns the whole
+  // project on every keystroke-adjacent edit is the wrong shape for this;
+  // the value PostToolUse offers is per-file feedback at edit time.
   let findingsText;
   try {
     const out = execFileSync(
       "node",
-      [resolve("spike/spike2.ts")],
+      [resolve("spike/spike2.ts"), filePath],
       { encoding: "utf8", cwd: resolve(".") },
     );
     const leakCount = (out.match(/"totalLeaks": (\d+)/g) ?? [])
       .map((m) => Number(m.match(/(\d+)/)[1]))
       .reduce((a, b) => a + b, 0);
-    findingsText = `archstrict: ${leakCount} finding(s) across the checked project (stood in for 'check ${filePath}' — v0's real check verb is not built yet).`;
+    findingsText = `archstrict: ${leakCount} finding(s) in ${filePath} (stood in for 'check ${filePath}' — v0's real check verb is not built yet).`;
   } catch (e) {
     findingsText = `archstrict: check did not run (${e instanceof Error ? e.message : String(e)}).`;
   }
