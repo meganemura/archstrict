@@ -6,7 +6,7 @@
 // stdin, and a hook feeds text back via `hookSpecificOutput.additionalContext`
 // (visible to Claude) on stdout, exit 0.
 //
-// v0's real `check` verb (archstrict-t35.11) doesn't exist yet, so this
+// v0's real `check` verb doesn't exist yet, so this
 // spike stands a real detector in for it: spike 2's type-leak walker, run
 // against whichever file the hook says was just edited. That is a genuine
 // analysis producing genuine violations, not a placeholder string — the
