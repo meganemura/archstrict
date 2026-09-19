@@ -4,7 +4,7 @@
 // silently skipped a module must not look like that module passed).
 // Boundary: pure predicate over a ModuleGraph and a Config. No I/O, no
 // output formatting.
-import { invalidKindPatternMessage, kindPatternNames, type Config } from "../config.js";
+import { assertKindPatternsSupported, kindPatternNames, type Config } from "../config.js";
 import type { ModuleGraph } from "../module-graph.js";
 
 export type Violation = {
@@ -21,16 +21,17 @@ const BECAUSE =
   "a module matching no kind is unchecked, not passing (deptrac's --fail-on-uncovered)";
 
 export function checkUncoveredModules(graph: ModuleGraph, config: Config): Violation[] {
+  // Validated up front, independent of graph.modules: an unsupported
+  // pattern shape is unsupported whether or not the loop below ever
+  // reaches a module that would have exposed it.
+  assertKindPatternsSupported(config);
+
   const violations: Violation[] = [];
 
   for (const [name, module] of graph.modules) {
-    const matchingKinds = Object.entries(config.kinds).filter(([, pattern]) => {
-      const result = kindPatternNames(pattern, config.modules, name);
-      if (result === "invalid") {
-        throw new Error(invalidKindPatternMessage(pattern, config.modules));
-      }
-      return result;
-    });
+    const matchingKinds = Object.entries(config.kinds).filter(
+      ([, pattern]) => kindPatternNames(pattern, config.modules, name) === true,
+    );
 
     if (matchingKinds.length > 1) {
       throw new Error(

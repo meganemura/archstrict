@@ -5,7 +5,7 @@
 // is "a kind (or a layer) that covers no module is a failure".
 // Boundary: a config-vs-graph consistency check, not an edge check. No
 // I/O, no output formatting.
-import { kindPatternNames, invalidKindPatternMessage, type Config } from "../config.js";
+import { assertKindPatternsSupported, kindPatternNames, type Config } from "../config.js";
 import type { ModuleGraph } from "../module-graph.js";
 
 export type Violation = {
@@ -34,27 +34,36 @@ function violation(config: Config, evidence: string, next: string): Violation {
 }
 
 export function checkEmptyRuleSet(graph: ModuleGraph, config: Config): Violation[] {
+  // Validated up front: an unsupported pattern shape must throw regardless
+  // of graph.modules's contents. Looping over modules first (this rule's
+  // own first draft) meant an empty graph skipped shape validation
+  // entirely, since the loop that would have found it never ran.
+  assertKindPatternsSupported(config);
+
   const violations: Violation[] = [];
 
   // No modules at all: not "a rule matched zero", but "nothing to check" —
   // reported the same way (a violation, not a thrown error) so it fits the
-  // same 0-is-a-result shape as everything else `check` reports.
+  // same 0-is-a-result shape as everything else `check` reports. Returned
+  // immediately rather than falling through to the per-kind loop below:
+  // with zero modules, EVERY kind trivially matches nothing, so the loop
+  // would add one redundant violation per configured kind, all restating
+  // the same root cause this one violation already names. Measured: a
+  // one-kind config produced 2 violations instead of 1 before this guard.
   if (graph.modules.size === 0) {
-    violations.push(
+    return [
       violation(
         config,
         `no modules under '${config.modules}'`,
         `add at least one module directory under ${config.modules}, or check the modules glob in archstrict.config.ts`,
       ),
-    );
+    ];
   }
 
   for (const [kindName, pattern] of Object.entries(config.kinds)) {
-    const matchedAny = [...graph.modules.keys()].some((moduleName) => {
-      const result = kindPatternNames(pattern, config.modules, moduleName);
-      if (result === "invalid") throw new Error(invalidKindPatternMessage(pattern, config.modules));
-      return result;
-    });
+    const matchedAny = [...graph.modules.keys()].some(
+      (moduleName) => kindPatternNames(pattern, config.modules, moduleName) === true,
+    );
     if (!matchedAny) {
       violations.push(
         violation(

@@ -58,3 +58,20 @@ export function invalidKindPatternMessage(pattern: string, modulesGlob: string):
     `use the modules glob itself, or '<modules-root>/<exact-module-name>'`
   );
 }
+
+// Throws on the first unsupported kind-pattern shape. Called up front, not
+// discovered by looping over `graph.modules`: `kindPatternNames` needs a
+// module name to test against, but its "invalid" verdict never depends on
+// which name was passed — an unsupported shape is unsupported whether or
+// not any module happens to exist. Looping over modules first (as rule 3
+// and rule 4 originally did) meant an empty module graph, or a graph that
+// never reaches the offending kind in its iteration, let an invalid
+// pattern through unvalidated. Measured: rule 4's own "no modules at all"
+// case did exactly this.
+export function assertKindPatternsSupported(config: Config): void {
+  for (const pattern of Object.values(config.kinds)) {
+    if (kindPatternNames(pattern, config.modules, "") === "invalid") {
+      throw new Error(invalidKindPatternMessage(pattern, config.modules));
+    }
+  }
+}
