@@ -78,6 +78,7 @@ describe("check", () => {
       );
       expect(JSON.parse(JSON.stringify(result))).toEqual({
         modules: 2,
+        modulesWithoutPublicTs: 2,
         edges: 1,
         outsideFiles: 0,
         unresolvedSpecifiers: 0,
@@ -112,6 +113,17 @@ describe("check", () => {
     });
   });
 
+  test("check scans the config's own modules glob, not a hard-coded one", async () => {
+    await withTempProject(async (root) => {
+      mkdirSync(join(root, "lib", "widgets"), { recursive: true });
+      writeFileSync(join(root, "lib", "widgets", "module.ts"), "export const widgets = 1;\n");
+      init(root, "lib/*");
+
+      const result = await check(root);
+      expect(result.modules).toBe(1); // found lib/widgets, not src/* (which doesn't exist here)
+    });
+  });
+
   test("check <file> reports only that file's own violations", async () => {
     await withTempProject(async (root) => {
       mkdirSync(join(root, "src", "app"), { recursive: true });
@@ -130,7 +142,7 @@ describe("check", () => {
       const full = await check(root);
       expect(full.violations).toHaveLength(2); // a.ts and b.ts each bypass shared
 
-      const focused = await check(root, "src/*", join(root, "src", "app", "a.ts"));
+      const focused = await check(root, join(root, "src", "app", "a.ts"));
       expect(focused.violations).toHaveLength(1);
       expect(focused.violations[0]!.path).toBe(join(root, "src", "app", "a.ts"));
     });

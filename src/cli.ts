@@ -19,7 +19,7 @@ function runInit(): number {
 async function runCheck(args: string[]): Promise<number> {
   const asJson = args.includes("--json");
   const [focusFile] = args.filter((a) => a !== "--json");
-  const result = await check(process.cwd(), "src/*", focusFile);
+  const result = await check(process.cwd(), focusFile);
   if (asJson) {
     process.stdout.write(JSON.stringify(result, null, 2) + "\n");
   } else {

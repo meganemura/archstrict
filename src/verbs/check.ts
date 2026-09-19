@@ -28,6 +28,7 @@ export type AnyViolation =
 
 export type CheckResult = {
   modules: number;
+  modulesWithoutPublicTs: number; // Q35's "公開面が無いモジュールが N 個" — the same fact rule 1's violations imply, restated as one count
   edges: number;
   outsideFiles: number;
   unresolvedSpecifiers: number;
@@ -66,8 +67,14 @@ export function runRules(graph: ModuleGraph, config: Config): CheckResult {
   const deprecated = checkDeprecatedEdges(graph, config);
   violations.push(...deprecated.violations);
 
+  let modulesWithoutPublicTs = 0;
+  for (const m of graph.modules.values()) {
+    if (m.publicTsPath === undefined) modulesWithoutPublicTs++;
+  }
+
   return {
     modules: graph.modules.size,
+    modulesWithoutPublicTs,
     edges: graph.crossModuleEdges.length,
     outsideFiles: graph.outsideFiles.length,
     unresolvedSpecifiers: graph.unresolvedSpecifierCount,
@@ -91,14 +98,13 @@ export function filterToFile(result: CheckResult, file: string): CheckResult {
   return { ...result, violations: result.violations.filter((v) => v.path === target) };
 }
 
-export async function check(
-  projectRoot: string,
-  modulesGlob = "src/*",
-  focusFile?: string,
-): Promise<CheckResult> {
+export async function check(projectRoot: string, focusFile?: string): Promise<CheckResult> {
   const configPath = resolve(projectRoot, "archstrict.config.ts");
   const config = await loadConfig(configPath);
-  const graph = buildModuleGraph({ projectRoot, modulesGlob });
+  // The config's own modules field is the source of truth, not a
+  // parameter — a config saying modules: "lib/*" must scan lib/, not
+  // whatever the caller happened to hard-code.
+  const graph = buildModuleGraph({ projectRoot, modulesGlob: config.modules });
   const result = runRules(graph, config);
   return focusFile === undefined ? result : filterToFile(result, focusFile);
 }
@@ -120,10 +126,16 @@ export function formatText(result: CheckResult): string {
     lines.push(`  ${s.evidence}`);
     lines.push(`  next: ${s.next}`);
   }
-  lines.push(
-    `modules: ${result.modules}, edges: ${result.edges}, outside: ${result.outsideFiles}, ` +
-      `unresolved: ${result.unresolvedSpecifiers}, unsupported: ${result.unsupportedSyntax}, todo: ${result.todo}`,
-  );
+  // One fact per line, not a comma-joined blob: an agent reading text
+  // output (not JSON) reads lines, and each of these is one of the
+  // project's "0 が失敗に見える" counts, recorded even when it's 0.
+  lines.push(`modules: ${result.modules}`);
+  lines.push(`modules without a public.ts: ${result.modulesWithoutPublicTs}`);
+  lines.push(`edges: ${result.edges}`);
+  lines.push(`outside the modules glob: ${result.outsideFiles}`);
+  lines.push(`unresolved specifiers: ${result.unresolvedSpecifiers}`);
+  lines.push(`unsupported syntax: ${result.unsupportedSyntax}`);
+  lines.push(`todo: ${result.todo}`);
   lines.push(`next: ${result.violations.length > 0 ? "archstrict todo" : "archstrict check"}`);
   return lines.join("\n") + "\n";
 }
