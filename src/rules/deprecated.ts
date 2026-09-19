@@ -8,7 +8,7 @@
 // output formatting. Does not suppress rule 1: a deprecated edge that also
 // bypasses its target's public.ts is still a rule-1 violation — deprecated
 // means "shrinking," not "exempt from every other rule."
-import type { Config } from "../config.js";
+import { assertDeprecatedModulesExist, type Config } from "../config.js";
 import type { ModuleGraph } from "../module-graph.js";
 
 export type Violation = {
@@ -47,18 +47,15 @@ export function checkDeprecatedEdges(
   graph: ModuleGraph,
   config: Config,
 ): { violations: Violation[]; suggestions: Suggestion[] } {
+  // Validated up front, same reasoning as assertKindPatternsSupported: a
+  // config error must not depend on which branch of this function happens
+  // to run first.
+  assertDeprecatedModulesExist(graph, config);
+
   const violations: Violation[] = [];
   const suggestions: Suggestion[] = [];
 
   for (const entry of config.deprecated ?? []) {
-    for (const moduleName of [entry.from, entry.to]) {
-      if (!graph.modules.has(moduleName)) {
-        throw new Error(
-          `deprecated entry '${entry.from} -> ${entry.to}' names module '${moduleName}', which does not exist`,
-        );
-      }
-    }
-
     const actual = countEdges(graph, entry.from, entry.to);
 
     if (actual > entry.count) {

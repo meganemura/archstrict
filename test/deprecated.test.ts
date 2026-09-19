@@ -64,4 +64,12 @@ describe("checkDeprecatedEdges", () => {
 
     expect(() => checkDeprecatedEdges(graph, config)).toThrow(/does not exist/);
   });
+
+  test("rule 4 and rule 5 agree: a nonexistent module throws from both, not one reporting it as a stale edge", () => {
+    const graph = buildModuleGraph({ projectRoot: FIXTURE, modulesGlob: "src/*" });
+    const config = baseConfig([{ from: "ghost", to: "a", count: 1, because: "test" }]);
+
+    expect(() => checkDeprecatedEdges(graph, config)).toThrow(/does not exist/);
+    expect(() => checkEmptyRuleSet(graph, config)).toThrow(/does not exist/);
+  });
 });

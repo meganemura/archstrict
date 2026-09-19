@@ -1,3 +1,5 @@
+import type { ModuleGraph } from "./module-graph.js";
+
 // Responsibility: the shape of archstrict.config.ts (minimal for v0; `init`,
 // a later ticket, writes a file of this shape, and later rules and the
 // generated-union-type mechanism (spike 4) grow it), plus the kind-pattern
@@ -88,6 +90,27 @@ export function assertKindPatternsSupported(config: Config): void {
   for (const pattern of Object.values(config.kinds)) {
     if (kindPatternNames(pattern, config.modules, "") === "invalid") {
       throw new Error(invalidKindPatternMessage(pattern, config.modules));
+    }
+  }
+}
+
+// Throws if any `deprecated` entry names a module that doesn't exist.
+// Shared by rule 4 and rule 5 for the same reason `assertKindPatternsSupported`
+// is: without a single shared check, the two rules can disagree about the
+// same config. Measured: rule 4's own zero-modules early return skips its
+// `deprecated` loop entirely, so a `deprecated` entry naming a nonexistent
+// module reached rule 4's "count is 0, edge no longer exists" case instead
+// of a config error — a name that never existed is not the same fact as an
+// edge that used to exist and shrank to nothing, and reporting it that way
+// is misleading, not just imprecise.
+export function assertDeprecatedModulesExist(graph: ModuleGraph, config: Config): void {
+  for (const entry of config.deprecated ?? []) {
+    for (const moduleName of [entry.from, entry.to]) {
+      if (!graph.modules.has(moduleName)) {
+        throw new Error(
+          `deprecated entry '${entry.from} -> ${entry.to}' names module '${moduleName}', which does not exist`,
+        );
+      }
     }
   }
 }

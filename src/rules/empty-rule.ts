@@ -5,7 +5,12 @@
 // is "a kind (or a layer) that covers no module is a failure".
 // Boundary: a config-vs-graph consistency check, not an edge check. No
 // I/O, no output formatting.
-import { assertKindPatternsSupported, kindPatternNames, type Config } from "../config.js";
+import {
+  assertDeprecatedModulesExist,
+  assertKindPatternsSupported,
+  kindPatternNames,
+  type Config,
+} from "../config.js";
 import type { ModuleGraph } from "../module-graph.js";
 
 export type Violation = {
@@ -34,11 +39,15 @@ function violation(config: Config, evidence: string, next: string): Violation {
 }
 
 export function checkEmptyRuleSet(graph: ModuleGraph, config: Config): Violation[] {
-  // Validated up front: an unsupported pattern shape must throw regardless
-  // of graph.modules's contents. Looping over modules first (this rule's
-  // own first draft) meant an empty graph skipped shape validation
-  // entirely, since the loop that would have found it never ran.
+  // Both validated up front, before the zero-modules early return below: a
+  // config error must not depend on which branch runs first. Measured: the
+  // zero-modules return used to sit above these checks, so a `deprecated`
+  // entry naming a nonexistent module on an empty graph reached the
+  // "actual count is 0" case (below) instead of throwing as a config
+  // error — the same config was diagnosed two different ways depending on
+  // which rule (this one, or rule 5) happened to run first.
   assertKindPatternsSupported(config);
+  assertDeprecatedModulesExist(graph, config);
 
   const violations: Violation[] = [];
 
