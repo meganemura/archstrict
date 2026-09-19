@@ -39,8 +39,10 @@ export function checkUncoveredModules(graph: ModuleGraph, config: Config): Viola
     const matchingKinds = Object.entries(config.kinds).filter(([, pattern]) => {
       const result = matches(pattern, config.modules, name);
       if (result === "invalid") {
+        const root = config.modules.slice(0, -1);
+        const meantCatchAll = pattern.startsWith(root) ? ` (did you mean '${config.modules}'?)` : "";
         throw new Error(
-          `kind pattern '${pattern}' is not a shape v0 supports (modules glob is '${config.modules}'): ` +
+          `kind pattern '${pattern}' is not a shape v0 supports (modules glob is '${config.modules}')${meantCatchAll}: ` +
             `use the modules glob itself, or '<modules-root>/<exact-module-name>'`,
         );
       }

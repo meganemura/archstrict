@@ -54,4 +54,15 @@ describe("checkUncoveredModules", () => {
 
     expect(() => checkUncoveredModules(graph, config)).toThrow(/not a shape v0 supports/);
   });
+
+  test("a near-miss catch-all pattern gets a 'did you mean' hint", () => {
+    const graph = buildModuleGraph({ projectRoot: FIXTURE, modulesGlob: "src/*" });
+    const config: Config = {
+      modules: "src/*",
+      kinds: { flat: "src/*/" }, // trailing slash: meant the catch-all, typo'd it
+      because: "test config",
+    };
+
+    expect(() => checkUncoveredModules(graph, config)).toThrow(/did you mean 'src\/\*'/);
+  });
 });
