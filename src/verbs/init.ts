@@ -60,6 +60,10 @@ export type Config = {
 function configFileContents(modulesGlob: string): string {
   return `import type { Config } from "./archstrict.generated.js";
 
+// Public surface convention: a module's public.ts is the only file other
+// modules may import from it. An import that reaches any other file inside
+// a module is a violation. A module with no public.ts is entirely private
+// - every import into it violates.
 export default {
   modules: ${JSON.stringify(modulesGlob)},
   kinds: { flat: ${JSON.stringify(modulesGlob)} },

@@ -73,6 +73,13 @@ function parseModulesGlob(modulesGlob: string): { root: string } {
 function discoverModules(projectRoot: string, glob: string): Map<string, Module> {
   const { root } = parseModulesGlob(glob);
   const rootDir = join(projectRoot, root);
+  // init is the one verb that runs before anything else exists in a
+  // project, so a missing modules root is the likely first-run path, not
+  // an edge case. A raw ENOENT from readdirSync doesn't name the glob or
+  // what was expected there.
+  if (!ts.sys.directoryExists(rootDir)) {
+    throw new Error(`modules glob '${glob}' names '${rootDir}', which does not exist`);
+  }
   const modules = new Map<string, Module>();
   // ts.sys has no direct "list immediate subdirectories" call; use node:fs.
   for (const name of readdirSync(rootDir).sort()) {

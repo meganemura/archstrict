@@ -89,4 +89,15 @@ describe("init", () => {
       ).not.toThrow();
     });
   });
+
+  test("init on a project with no src/ at all fails loudly, naming what's missing", () => {
+    const root = mkdtempSync(join(tmpdir(), "archstrict-init-"));
+    try {
+      // No src/ directory created at all — the likely first-run state for
+      // a brand-new project, since init is the first verb anyone runs.
+      expect(() => init(root)).toThrow(/does not exist/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

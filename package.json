@@ -6,16 +6,17 @@
   "author": "meganemura",
   "type": "module",
   "bin": {
-    "archstrict": "src/cli.ts"
+    "archstrict": "./dist/cli.js"
   },
   "files": [
     "README.md",
     "LICENSE",
-    "src"
+    "dist"
   ],
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json"
   },
   "dependencies": {
     "typescript": "6.0.3"
