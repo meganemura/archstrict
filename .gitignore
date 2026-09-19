@@ -15,3 +15,7 @@ dist/
 
 # spike 4's throwaway single-config tsconfig, regenerated each run
 spike/fixtures/generated-union/tsconfig.oneoff.json
+.nukadoko/
+.env
+.env.*
+!.env.example

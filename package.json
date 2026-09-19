@@ -16,7 +16,8 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "build": "tsc -p tsconfig.build.json"
+    "build": "tsc -p tsconfig.build.json",
+    "dogfood:nukadoko": "npm run build && nuka run features"
   },
   "dependencies": {
     "typescript": "6.0.3"

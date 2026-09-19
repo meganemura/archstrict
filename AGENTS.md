@@ -43,6 +43,7 @@ For working on archstrict itself:
 - `npm run build` — compile `src/` to `dist/`. The CLI's own tests spawn the built `dist/cli.js`, so run this before `npm test` if `dist/` is missing or stale.
 - `npm run typecheck` — `tsc --noEmit` over the whole project.
 - `npm test` — the Vitest suite.
+- `npm run dogfood:nukadoko` — a nukadoko (Gherkin) scenario that runs the built CLI's full init/check/todo/edit/check round trip against nukadoko's own published `src/` (a real, unrelated codebase with no public-surface convention), copied into a disposable scratch directory. Never modifies the real nukadoko package or a checkout of it.
 
 The CLI itself:
 
