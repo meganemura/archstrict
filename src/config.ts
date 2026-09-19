@@ -49,6 +49,12 @@ export type Config = {
     count: number;
     because: string;
   }[];
+  // Module names whose todo file may only shrink, never gain a new entry -
+  // not even on todo's first run. A strict module with freezable
+  // violations that aren't already in its (possibly pre-existing) todo
+  // simply keeps failing check: strict never adds, so nothing hides those
+  // violations from check.
+  strict?: readonly string[];
   because: string;
 };
 

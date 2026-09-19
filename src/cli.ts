@@ -3,6 +3,7 @@
 // Boundary: no rule logic here; verbs live in their own modules.
 import { init } from "./verbs/init.js";
 import { check, formatText } from "./verbs/check.js";
+import { todo } from "./verbs/todo.js";
 
 function runInit(): number {
   const result = init(process.cwd());
@@ -28,6 +29,17 @@ async function runCheck(args: string[]): Promise<number> {
   return result.violations.length > 0 ? 1 : 0;
 }
 
+async function runTodo(): Promise<number> {
+  const result = await todo(process.cwd());
+  if (result.firstRun) {
+    process.stdout.write(`froze ${result.added} violation(s)\n`);
+  } else {
+    process.stdout.write(`pruned ${result.pruned} stale entrie(s)\n`);
+  }
+  process.stdout.write(`next: archstrict check\n`);
+  return 0;
+}
+
 async function main(argv: string[]): Promise<number> {
   const [verb, ...rest] = argv;
   if (verb === undefined) {
@@ -36,6 +48,7 @@ async function main(argv: string[]): Promise<number> {
   }
   if (verb === "init") return runInit();
   if (verb === "check") return runCheck(rest);
+  if (verb === "todo") return runTodo();
   process.stderr.write(`archstrict: '${verb}' is not implemented yet\n`);
   return 1;
 }

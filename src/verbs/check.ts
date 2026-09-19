@@ -18,13 +18,29 @@ import {
   type Suggestion as DeprecatedSuggestion,
   type Violation as DeprecatedViolation,
 } from "../rules/deprecated.js";
+import { fingerprintOf, readTodo } from "../todo-store.js";
+
+// Not one of the five rules: reported when a todo entry matches no
+// current violation (import-linter's own default for the same case is
+// also an error, not a silent pass). It has no todoModule of its own -
+// freezing a stale-todo finding would be circular.
+export type StaleTodoViolation = {
+  rule: "stale-todo";
+  path: string;
+  line: number;
+  column: number;
+  evidence: string;
+  because: string;
+  next: string;
+};
 
 export type AnyViolation =
   | PublicSurfaceViolation
   | CycleViolation
   | UncoveredViolation
   | EmptyRuleViolation
-  | DeprecatedViolation;
+  | DeprecatedViolation
+  | StaleTodoViolation;
 
 export type CheckResult = {
   modules: number;
@@ -98,6 +114,63 @@ export function filterToFile(result: CheckResult, file: string): CheckResult {
   return { ...result, violations: result.violations.filter((v) => v.path === target) };
 }
 
+function isFreezable(v: AnyViolation): v is AnyViolation & { todoModule: string } {
+  return "todoModule" in v;
+}
+
+// Suppresses a violation whose fingerprint is already frozen into its
+// module's todo (counted into `todo`, not the exit code), and flags a
+// todo entry that matches no current violation as its own violation
+// (import-linter's own default for the same case: an unmatched ignore is
+// an error, not a silent pass) — a todo entry cannot be left behind once
+// what it named is gone.
+export function applyTodo(graph: ModuleGraph, result: CheckResult): CheckResult {
+  const remaining: AnyViolation[] = [];
+  const matchedByModule = new Map<string, Set<string>>();
+  let suppressed = 0;
+
+  for (const v of result.violations) {
+    if (!isFreezable(v)) {
+      remaining.push(v);
+      continue;
+    }
+    const targetModule = graph.modules.get(v.todoModule);
+    const entries = targetModule === undefined ? [] : readTodo(targetModule.dir);
+    const fp = fingerprintOf(v);
+    if (entries.some((e) => e.fingerprint === fp)) {
+      suppressed++;
+      let matched = matchedByModule.get(v.todoModule);
+      if (matched === undefined) {
+        matched = new Set();
+        matchedByModule.set(v.todoModule, matched);
+      }
+      matched.add(fp);
+    } else {
+      remaining.push(v);
+    }
+  }
+
+  for (const [name, module] of graph.modules) {
+    const entries = readTodo(module.dir);
+    if (entries.length === 0) continue;
+    const matched = matchedByModule.get(name) ?? new Set<string>();
+    for (const entry of entries) {
+      if (matched.has(entry.fingerprint)) continue;
+      remaining.push({
+        rule: "stale-todo",
+        path: module.dir,
+        line: 1,
+        column: 1,
+        evidence: `todo entry ${entry.fingerprint} (${entry.rule}) no longer matches any violation`,
+        because: "an unmatched todo entry hides nothing real; it must be pruned, not left behind",
+        next: "archstrict todo",
+      });
+    }
+  }
+
+  return { ...result, violations: remaining, todo: suppressed };
+}
+
 export async function check(projectRoot: string, focusFile?: string): Promise<CheckResult> {
   const configPath = resolve(projectRoot, "archstrict.config.ts");
   const config = await loadConfig(configPath);
@@ -105,7 +178,7 @@ export async function check(projectRoot: string, focusFile?: string): Promise<Ch
   // parameter — a config saying modules: "lib/*" must scan lib/, not
   // whatever the caller happened to hard-code.
   const graph = buildModuleGraph({ projectRoot, modulesGlob: config.modules });
-  const result = runRules(graph, config);
+  const result = applyTodo(graph, runRules(graph, config));
   return focusFile === undefined ? result : filterToFile(result, focusFile);
 }
 
