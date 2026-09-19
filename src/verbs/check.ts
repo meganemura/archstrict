@@ -1,6 +1,6 @@
 // Responsibility: the `check` verb. Loads a real archstrict.config.ts,
 // builds the module graph, runs every available rule, and aggregates the
-// results into one shape for JSON and text output (Q33).
+// results into one shape for JSON and text output.
 // Boundary: this is where the five rules' differing return shapes get
 // normalized to one — `deprecated`'s two arrays (violations/suggestions)
 // flatten in here, not in each rule. Rule 6 (type leak) is not built yet;
@@ -28,7 +28,7 @@ export type AnyViolation =
 
 export type CheckResult = {
   modules: number;
-  modulesWithoutPublicTs: number; // Q35's "公開面が無いモジュールが N 個" — the same fact rule 1's violations imply, restated as one count
+  modulesWithoutPublicTs: number; // how many modules have no public.ts — the same fact rule 1's violations imply, restated as one count
   edges: number;
   outsideFiles: number;
   unresolvedSpecifiers: number;
@@ -109,7 +109,7 @@ export async function check(projectRoot: string, focusFile?: string): Promise<Ch
   return focusFile === undefined ? result : filterToFile(result, focusFile);
 }
 
-// Q33's unyielding conditions: rule id, path:line:col, evidence, because,
+// The output must always carry: rule id, path:line:col, evidence, because,
 // and a next: line last. "Inference" (pks's shape) is the evidence + next
 // pair together, not a separate field: evidence says what was found
 // ("resolved to module Y's X"), next says what to do about it.

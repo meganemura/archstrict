@@ -1,7 +1,8 @@
 // Responsibility: rule 1, the public-surface bypass. A module is private by
-// default (Q28): an import from outside a module that reaches a file other
-// than that module's public.ts is a violation, and a module with no
-// public.ts is entirely private, so every external import into it violates.
+// default, the same posture Bazel's build visibility takes: an import from
+// outside a module that reaches a file other than that module's public.ts
+// is a violation, and a module with no public.ts is entirely private, so
+// every external import into it violates.
 // This counts a type-only (`import type`) edge the same as a value edge:
 // reaching an internal file for its types alone still reaches past the
 // public surface (module-graph.ts's own header has the contrasting
@@ -34,8 +35,7 @@ export type Violation = {
   todoModule: string;
 };
 
-const BECAUSE =
-  "a module's public.ts is its only public surface; everything else is private (Q28)";
+const BECAUSE = "a module's public.ts is its only public surface; everything else is private";
 
 export function checkPublicSurfaceBypass(graph: ModuleGraph): Violation[] {
   const violations: Violation[] = [];

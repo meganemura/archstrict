@@ -40,8 +40,9 @@ export type Config = {
   kinds: Record<string, string>;
   layers?: readonly string[];
   // A from -> to module edge whose count must not increase (rule 5).
-  // `because` is mandatory per Q43 — a deprecated edge is exactly the kind
-  // of root-level rule the spec requires a reason for.
+  // `because` is mandatory: a deprecated edge names a real design tradeoff,
+  // and a root-level rule with no stated reason is a decision no future
+  // reader can judge.
   deprecated?: readonly {
     from: string;
     to: string;

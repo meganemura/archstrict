@@ -70,7 +70,7 @@ describe("check", () => {
       expect(text).toContain("because:");
       expect(text.trim().split("\n").at(-1)).toBe("next: archstrict todo");
 
-      // The JSON shape is the contract (Q33): pinned against a
+      // The JSON shape is the contract: pinned against a
       // hand-written expected object, not a snapshot, so a shape change
       // here is a deliberate edit to this test, not an accepted diff.
       expect(Object.keys(violation).sort()).toEqual(

@@ -1,4 +1,4 @@
-// Responsibility: the `init` verb (Q35). Writes only the root
+// Responsibility: the `init` verb. Writes only the root
 // archstrict.config.ts and the generated module-name union type; it does
 // not create per-module public.ts files. Idempotent: a second run
 // regenerates archstrict.generated.ts (init's own file) but leaves an
@@ -11,13 +11,12 @@
 // The generated file carries its own self-contained `Config` type
 // (specialized with the real `ModuleName` union), rather than the config
 // importing a generic `Config<ModuleName>` from a package entry point:
-// archstrict has no published package surface yet (out of scope for this
-// ticket), and spec's config sketch says the shape may change as long as
-// the properties hold (spec.md line 64's "形は変えてよい"). This keeps
-// `archstrict.config.ts` a one-import file that works whether or not
-// archstrict is ever published, and matches spike 4's own fixture
-// (a self-contained `Config<ModuleName>` beside the generated file, not a
-// package import).
+// archstrict has no published package surface yet, and this project's own
+// config shape is free to change as long as the properties it guarantees
+// hold. This keeps `archstrict.config.ts` a one-import file that works
+// whether or not archstrict is ever published, and matches spike 4's own
+// fixture (a self-contained `Config<ModuleName>` beside the generated
+// file, not a package import).
 import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { buildModuleGraph } from "../module-graph.js";
@@ -29,9 +28,9 @@ export type InitResult = {
   moduleNames: string[];
 };
 
-// v0's only preset (Q41): every module under the glob is the same kind,
-// checked for a public surface and cycles only. `because` is mandatory
-// (Q43) even for a shipped preset's own rule.
+// The flat preset, v0's only one: every module under the glob is the same
+// kind, checked for a public surface and cycles only. `because` is
+// mandatory even for a shipped preset's own rule.
 const FLAT_BECAUSE =
   "flat preset: every module under the glob is one kind, checked for its public surface and cycles";
 
