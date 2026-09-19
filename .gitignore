@@ -19,3 +19,10 @@ spike/fixtures/generated-union/tsconfig.oneoff.json
 .env
 .env.*
 !.env.example
+
+# nuka accept's own acceptance records for the nukadoko dogfood scenario:
+# its steps' returned values legitimately include the mkdtemp scratch
+# path each run creates, so any accepted record embeds a machine-local
+# path and cannot be committed clean. report.md carries the durable,
+# path-free record of a passing run instead.
+features/*.md
