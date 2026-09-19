@@ -11,6 +11,7 @@ describe("checkUncoveredModules", () => {
   test("flags a module with no matching kind, leaves covered ones alone", () => {
     const graph = buildModuleGraph({ projectRoot: FIXTURE, modulesGlob: "src/*" });
     const config: Config = {
+      configPath: "<test>",
       modules: "src/*",
       kinds: { covered: "src/a", also: "src/b" }, // c is not named anywhere
       because: "test config",
@@ -25,6 +26,7 @@ describe("checkUncoveredModules", () => {
   test("the flat preset's catch-all pattern covers every module", () => {
     const graph = buildModuleGraph({ projectRoot: FIXTURE, modulesGlob: "src/*" });
     const config: Config = {
+      configPath: "<test>",
       modules: "src/*",
       kinds: { flat: "src/*" },
       because: "test config",
@@ -36,6 +38,7 @@ describe("checkUncoveredModules", () => {
   test("an overlapping kind assignment is a config error, not a violation", () => {
     const graph = buildModuleGraph({ projectRoot: FIXTURE, modulesGlob: "src/*" });
     const config: Config = {
+      configPath: "<test>",
       modules: "src/*",
       kinds: { flat: "src/*", also: "src/a" }, // a matches both
       because: "test config",
@@ -47,6 +50,7 @@ describe("checkUncoveredModules", () => {
   test("a nested wildcard pattern is a config error, not silent non-coverage", () => {
     const graph = buildModuleGraph({ projectRoot: FIXTURE, modulesGlob: "src/*" });
     const config: Config = {
+      configPath: "<test>",
       modules: "src/*",
       kinds: { nested: "src/a/*" }, // out of scope for v0's single-level modules
       because: "test config",
@@ -58,6 +62,7 @@ describe("checkUncoveredModules", () => {
   test("a near-miss catch-all pattern gets a 'did you mean' hint", () => {
     const graph = buildModuleGraph({ projectRoot: FIXTURE, modulesGlob: "src/*" });
     const config: Config = {
+      configPath: "<test>",
       modules: "src/*",
       kinds: { flat: "src/*/" }, // trailing slash: meant the catch-all, typo'd it
       because: "test config",

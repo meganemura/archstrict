@@ -31,7 +31,12 @@ describe("checkUncoveredModules (property)", () => {
       });
 
       const graph = buildModuleGraph({ projectRoot: FIXTURE, modulesGlob: "src/*" });
-      const config: Config = { modules: "src/*", kinds, because: "property test" };
+      const config: Config = {
+        configPath: "<test>",
+        modules: "src/*",
+        kinds,
+        because: "property test",
+      };
       const violations = checkUncoveredModules(graph, config);
 
       const expectedUncovered = MODULE_NAMES.filter((_, i) => !covered[i]);
