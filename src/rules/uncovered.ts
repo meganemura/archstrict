@@ -1,7 +1,8 @@
 // Responsibility: rule 3, uncovered modules (deptrac's --fail-on-uncovered).
 // A module that matches no kind in the config fails the check — the
-// implementation of the project's own rule "0 が失敗に見える" (a check that
-// silently skipped a module must not look like that module passed).
+// implementation of the project's own rule that a zero must never look
+// like success when it is really an omission (a check that silently
+// skipped a module must not look like that module passed).
 // Boundary: pure predicate over a ModuleGraph and a Config. No I/O, no
 // output formatting.
 import { assertKindPatternsSupported, kindPatternNames, type Config } from "../config.js";

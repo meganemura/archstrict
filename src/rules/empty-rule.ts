@@ -1,8 +1,9 @@
 // Responsibility: rule 4, the empty rule set (ArchUnitTS's Empty Test
 // Protection). A configured rule that matches zero modules must not look
-// like a pass — the same "0 が失敗に見える" principle as rule 3, from the
-// other direction: rule 3 is "a module no kind covers is a failure"; this
-// is "a kind (or a layer) that covers no module is a failure".
+// like a pass — the same "a zero can look like success when it is really
+// an omission" principle as rule 3, from the other direction: rule 3 is "a
+// module no kind covers is a failure"; this is "a kind (or a layer) that
+// covers no module is a failure".
 // Boundary: a config-vs-graph consistency check, not an edge check. No
 // I/O, no output formatting.
 import {
