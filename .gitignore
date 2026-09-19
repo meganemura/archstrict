@@ -1,0 +1,11 @@
+# Local-only project instructions
+CLAUDE.local.md
+
+# Task specs and worker reports. Never referenced from committed content.
+.claude-team/
+
+node_modules/
+dist/
+
+# Hegel failure database
+.hegel/

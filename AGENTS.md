@@ -1,0 +1,41 @@
+# AGENTS.md
+
+Context for agents that work in this repository.
+
+## What this is
+
+archstrict checks TypeScript module boundaries.
+It is not tsc, not ESLint, and not a type checker; it is architecture linting, in the sense of ArchUnit (Java) and archspec (Ruby).
+It is designed for a reader that starts from an empty context: a coding agent first, a human second.
+
+The shape, in one paragraph.
+A module is one directory under a configured glob (for example `src/*`).
+A module shows the rest of the codebase one file, `public.ts`; anything a module does not export from `public.ts` is private, and an import that reaches past it into the module's internals is a violation.
+A module with no `public.ts` is entirely private: every external import into it is a violation.
+Shape (kinds, layers, direction) lives in one root file, `archstrict.config.ts`, written as a plain TypeScript value; it is never scattered per module.
+Known violations freeze into a per-module todo file that can only shrink; a module marked `strict` cannot add to its todo.
+A violation report always carries a rule id, `path:line:col`, the evidence, the `because` reason, and a `next:` command — enough for an agent to fix its own mistake without asking.
+
+## Layout
+
+- `src/` is the library and CLI.
+- `.claude-team/` holds the task spec, the report, and their working artifacts. It is gitignored; do not reference it from committed content.
+
+## Visibility
+
+This repository is intended for public release.
+Write all committed text in English: code, comments, docs, commit messages.
+Do not reference private tools, private repositories, or internal working documents (including `.claude-team/`) in committed content.
+If you want to cite an internal document, write its substance in place instead.
+
+## Rules
+
+- Do not add dependencies without the owner's approval. Pin exact versions, at least 7 days past release. Prefer language-official packages, then vendor packages, and avoid single-maintainer packages.
+- Write tests with Hegel (`@hegeldev/hegel`, property-based) wherever a property exists: round trips, invariants, monotonicity. Example-based tests cover exact CLI output and JSON shape.
+- Comments say why: the constraint, or the alternative that was refused. Each module starts with its responsibility and its boundary.
+- Violation text never uses the words "strict" or "typed"; a name must not mislead about what fixes a violation.
+- A release, a `npm publish`, or a change of the repository's visibility is the owner's to run.
+
+## Commands
+
+Filled in as the scaffold lands (see the task spec's step 4).
