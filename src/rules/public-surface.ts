@@ -1,8 +1,8 @@
 // Responsibility: rule 1, the public-surface bypass. A module is private by
 // default, the same posture Bazel's build visibility takes: an import from
-// outside a module that reaches a file other than that module's public.ts
-// is a violation, and a module with no public.ts is entirely private, so
-// every external import into it violates.
+// outside a module that reaches a file other than that module's configured
+// public surface is a violation, and a module with no surface file present
+// is entirely private, so every external import into it violates.
 // This counts a type-only (`import type`) edge the same as a value edge:
 // reaching an internal file for its types alone still reaches past the
 // public surface (module-graph.ts's own header has the contrasting
@@ -35,16 +35,16 @@ export type Violation = {
   todoModule: string;
 };
 
-const BECAUSE = "a module's public.ts is its only public surface; everything else is private";
+const BECAUSE = "a module's public surface is its only public surface; everything else is private";
 
 export function checkPublicSurfaceBypass(graph: ModuleGraph): Violation[] {
   const violations: Violation[] = [];
   for (const edge of graph.crossModuleEdges) {
     const targetModule = graph.modules.get(edge.toModule!);
     if (targetModule === undefined) continue; // resolved outside any module; not this rule's concern
-    if (edge.resolvedFile === targetModule.publicTsPath) continue; // reached the public surface itself
+    if (edge.resolvedFile === targetModule.surfacePath) continue; // reached the public surface itself
 
-    violations.push(violationFor(edge, targetModule.name, targetModule.publicTsPath));
+    violations.push(violationFor(edge, targetModule.name, targetModule.surfacePath, graph.surface));
   }
   return violations;
 }
@@ -52,16 +52,17 @@ export function checkPublicSurfaceBypass(graph: ModuleGraph): Violation[] {
 function violationFor(
   edge: Edge,
   targetModuleName: string,
-  publicTsPath: string | undefined,
+  surfacePath: string | undefined,
+  surface: string,
 ): Violation {
   const evidence =
-    publicTsPath === undefined
-      ? `'${edge.specifier}' resolved to module '${targetModuleName}', which has no public.ts`
-      : `'${edge.specifier}' resolved to a file inside module '${targetModuleName}' other than its public.ts`;
+    surfacePath === undefined
+      ? `'${edge.specifier}' resolved to module '${targetModuleName}', which has no ${surface}`
+      : `'${edge.specifier}' resolved to a file inside module '${targetModuleName}' other than its ${surface}`;
   const next =
-    publicTsPath === undefined
-      ? `add a public.ts to ${targetModuleName}/ naming what it exports`
-      : `import from ${targetModuleName}/public.ts instead, or add the needed export there`;
+    surfacePath === undefined
+      ? `add a ${surface} to ${targetModuleName}/ naming what it exports`
+      : `import from ${targetModuleName}/${surface} instead, or add the needed export there`;
 
   return {
     rule: "public-surface-bypass",

@@ -6,8 +6,8 @@
 // idea (warn, don't forbid) with "must not grow" added on top.
 // Boundary: pure predicate over a ModuleGraph and a Config. No I/O, no
 // output formatting. Does not suppress rule 1: a deprecated edge that also
-// bypasses its target's public.ts is still a rule-1 violation — deprecated
-// means "shrinking," not "exempt from every other rule."
+// bypasses its target's public surface is still a rule-1 violation —
+// deprecated means "shrinking," not "exempt from every other rule."
 import { assertDeprecatedModulesExist, type Config } from "../config.js";
 import type { ModuleGraph } from "../module-graph.js";
 

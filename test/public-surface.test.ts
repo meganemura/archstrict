@@ -8,7 +8,11 @@ const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), "fixtures/public-s
 
 describe("checkPublicSurfaceBypass", () => {
   test("flags a bypass of a's public.ts, and every import into b (no public.ts)", () => {
-    const graph = buildModuleGraph({ projectRoot: FIXTURE, modulesGlob: "src/*" });
+    // This fixture's own surface convention is "public.ts", not the
+    // tool's default ("index.ts") - the surface file name is configurable
+    // (a project names its own), and this test exercises the rule itself,
+    // not that default.
+    const graph = buildModuleGraph({ projectRoot: FIXTURE, modulesGlob: "src/*", surface: "public.ts" });
 
     // Sanity: module resolution actually worked (a nodenext moduleResolution
     // change that broke .ts-extension resolution would otherwise show up as

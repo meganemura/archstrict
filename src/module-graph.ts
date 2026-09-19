@@ -40,7 +40,11 @@ export type Module = {
   name: string;
   dir: string;
   files: string[];
-  publicTsPath: string | undefined;
+  // The module's public surface: the one file other modules may import
+  // from. The tool does not fix the file name itself — a project's own
+  // config names it (`surface`, default "index.ts"); this is that file's
+  // path if it exists in this module, undefined otherwise.
+  surfacePath: string | undefined;
 };
 
 export type ModuleGraph = {
@@ -50,12 +54,19 @@ export type ModuleGraph = {
   outsideFiles: string[]; // .ts files under the project root that match no module
   unsupportedSyntaxCount: number; // require(), import x = require(...): out of scope for v0
   unresolvedSpecifierCount: number;
+  // The configured public-surface file name (e.g. "index.ts"), carried on
+  // the graph so a rule can name it in a message without needing the whole
+  // Config passed in just for this one string.
+  surface: string;
 };
 
 export type BuildOptions = {
   projectRoot: string;
   modulesGlob: string; // e.g. "src/*" — only single-level globs are supported in v0
+  surface?: string; // the public-surface file name, default "index.ts"
 };
+
+export const DEFAULT_SURFACE = "index.ts";
 
 // v0's `modules` glob is always one directory level ("src/*"): a fixed
 // prefix directory ("src") whose immediate children are modules. Anything
@@ -70,7 +81,7 @@ function parseModulesGlob(modulesGlob: string): { root: string } {
   return { root: parts[0]! };
 }
 
-function discoverModules(projectRoot: string, glob: string): Map<string, Module> {
+function discoverModules(projectRoot: string, glob: string, surface: string): Map<string, Module> {
   const { root } = parseModulesGlob(glob);
   const rootDir = join(projectRoot, root);
   // init is the one verb that runs before anything else exists in a
@@ -85,12 +96,12 @@ function discoverModules(projectRoot: string, glob: string): Map<string, Module>
   for (const name of readdirSync(rootDir).sort()) {
     const dir = join(rootDir, name);
     if (!statSync(dir).isDirectory()) continue;
-    const publicTs = join(dir, "public.ts");
+    const surfacePath = join(dir, surface);
     modules.set(name, {
       name,
       dir,
       files: [],
-      publicTsPath: ts.sys.fileExists(publicTs) ? publicTs : undefined,
+      surfacePath: ts.sys.fileExists(surfacePath) ? surfacePath : undefined,
     });
   }
   return modules;
@@ -119,8 +130,8 @@ function loadCompilerOptions(projectRoot: string): ts.CompilerOptions {
 }
 
 export function buildModuleGraph(options: BuildOptions): ModuleGraph {
-  const { projectRoot, modulesGlob } = options;
-  const modules = discoverModules(projectRoot, modulesGlob);
+  const { projectRoot, modulesGlob, surface = DEFAULT_SURFACE } = options;
+  const modules = discoverModules(projectRoot, modulesGlob, surface);
   const compilerOptions = loadCompilerOptions(projectRoot);
   const { root } = parseModulesGlob(modulesGlob);
   const rootDir = join(projectRoot, root);
@@ -220,5 +231,6 @@ export function buildModuleGraph(options: BuildOptions): ModuleGraph {
     outsideFiles,
     unsupportedSyntaxCount,
     unresolvedSpecifierCount,
+    surface,
   };
 }

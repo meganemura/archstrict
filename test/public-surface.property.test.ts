@@ -99,7 +99,7 @@ describe("checkPublicSurfaceBypass (property)", () => {
           const root = mkdtempSync(join(tmpdir(), "archstrict-public-surface-"));
           try {
             writeProject(root, hasPublicTs, edges);
-            const graph = buildModuleGraph({ projectRoot: root, modulesGlob: "src/*" });
+            const graph = buildModuleGraph({ projectRoot: root, modulesGlob: "src/*", surface: "public.ts" });
             assert.equal(graph.unresolvedSpecifierCount, 0);
 
             const violations = checkPublicSurfaceBypass(graph);

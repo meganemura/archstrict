@@ -30,6 +30,12 @@ export type Config = {
   // no real file uses a placeholder like "<test>".
   configPath: string;
   modules: string; // e.g. "src/*" — must match module-graph.ts's BuildOptions.modulesGlob
+  // The public-surface file name (module-graph.ts's own `surface` option).
+  // Not fixed by the tool: a project names its own, and `init` writes the
+  // default ("index.ts") explicitly rather than detecting an existing
+  // convention. Optional here so a hand-written config that omits it still
+  // typechecks; module-graph.ts applies the same default when it's absent.
+  surface?: string;
   // kind name -> path pattern. v0 supports exactly two pattern shapes:
   // the modules glob itself (matches every module — the `flat` preset's
   // single catch-all kind), or "<modules-root>/<name>" naming one exact
