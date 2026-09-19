@@ -1,4 +1,4 @@
-// Spike 1 (archstrict-t35.1): does the TypeScript compiler API resolve
+// Spike 1: does the TypeScript compiler API resolve
 // imports and read module exports fast enough for v0's target, a few
 // seconds for a few hundred files? Measured against nukadoko's src/
 // (read-only; never modified), 182 files across 24 top-level directories,

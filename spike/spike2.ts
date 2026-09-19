@@ -1,4 +1,4 @@
-// Spike 2 (archstrict-t35.2): what counts as a "type leak" — a public
+// Spike 2: what counts as a "type leak" — a public
 // surface re-exporting or otherwise exposing an internal module's type
 // without the consumer having a name for it. Three candidate definitions
 // (from the task spec): (1) an inferred return type that structurally
