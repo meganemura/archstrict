@@ -9,3 +9,6 @@ dist/
 
 # Hegel failure database
 .hegel/
+
+# headsign's per-run scratch state
+.headsign/tmp/

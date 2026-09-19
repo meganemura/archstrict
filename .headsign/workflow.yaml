@@ -1,0 +1,156 @@
+# workflow.yaml — one lap = one bd ticket, from this checkout's own stealth
+# bd database (bd init --stealth: .git/info/exclude keeps .beads/ and Dolt
+# state out of git). No ticket id, and no reference to .claude-team/, may
+# reach a commit, a comment, a doc, or a test: both are broken links for a
+# reader who clones a public repository.
+#
+# Shape:
+#
+#   pick ──> implement ──> review ─┬─ APPROVED ──> close ─┬─ ready ticket left ──> pick
+#     │          ↑                 └─ REJECTED ────┘       └─ none ──────────────> $end
+#     └─ nothing ready ──> $end
+#
+# Adapted from headsign's own .headsign/beads.yaml (2026-09-15) and the same
+# shape in pull-request-pane, turnstile, and trackplan. The `assess` idea
+# (reassess and open new tickets when the queue runs dry) comes from
+# solarsql's workflow.yaml, whose own queue is a different, non-bd script.
+#
+# Conventions under .headsign/tmp/ (cleared by `headsign start`):
+#   ticket     — the one ticket this lap claimed, written by `pick`.
+#   base       — the commit the lap started from, written by `pick`.
+#   verdict    — APPROVED / REJECTED for the current review round.
+#   pick-done  — pick's own declaration that it looked at the queue, so an
+#                empty queue ends the run cleanly instead of retrying forever.
+
+version: 0.1
+name: archstrict-v0
+entry: pick
+
+phases:
+  # ── pick ─────────────────────────────────────────────────────────────────
+  pick:
+    description: >
+      Take exactly ONE ticket from `bd ready --json`, skipping any whose type
+      is `epic` (a container, not work): lowest priority number first, oldest
+      first within a priority. Read it with `bd show <id>` and its parent
+      epic for surrounding context. Claim it with `bd update <id> --claim`,
+      write its id alone to `.headsign/tmp/ticket`, and write the starting
+      commit with `git rev-parse HEAD > .headsign/tmp/base`. If nothing is
+      ready, write nothing. Either way, touch `.headsign/tmp/pick-done`. Do
+      not start the ticket's work in this phase.
+    clear:
+      - .headsign/tmp/ticket
+      - .headsign/tmp/base
+      - .headsign/tmp/pick-done
+    ready: "test -f .headsign/tmp/pick-done"
+    gate:
+      checks:
+        - name: bd answers
+          run: "bd list --status in_progress --json | jq -e 'type == \"array\"' >/dev/null"
+        - name: at most one ticket in progress
+          run: >-
+            bd list --status in_progress --json
+            | jq -e '[.[] | select(.issue_type != "epic")] | length <= 1' >/dev/null
+        - name: a claimed lap has a real base commit
+          run: >-
+            test ! -s .headsign/tmp/ticket
+            || git cat-file -e "$(cat .headsign/tmp/base)^{commit}"
+        - name: the recorded ticket is the one in progress
+          run: >-
+            test ! -s .headsign/tmp/ticket
+            || bd list --status in_progress --json
+            | jq -e --arg id "$(cat .headsign/tmp/ticket)" 'any(.[]; .id == $id)' >/dev/null
+    on_pass:
+      - when: "test -s .headsign/tmp/ticket"
+        to: implement
+      - to: "$end"
+    max_attempts: 3
+
+  # ── implement ────────────────────────────────────────────────────────────
+  implement:
+    description: >
+      Do the ticket in `.headsign/tmp/ticket` (`bd show <id>` for the text,
+      `bd comments <id>` for what an earlier lap or review round left). Read
+      the v0 task spec and report.md's prior entries before spike or rule
+      work. Write tests first where a property or an exact CLI/JSON shape
+      exists (Hegel for properties, example tests for exact output). A
+      commit message, a comment, a doc, or a test must not name a ticket id
+      or refer to `.claude-team/` or any other internal note; write the
+      substance in place instead. A ticket whose result is a measurement or
+      a decision (a spike) may leave no commit if report.md records it: the
+      gate allows that. Record findings as a comment on the ticket
+      (`bd comment <id> "..."`) for the next lap and the reviewer.
+    gate:
+      checks:
+        - name: typecheck
+          run: "npm run typecheck"
+        - name: tests
+          run: "npm test"
+          timeout: 300
+        - name: no ticket id in a commit message since base
+          run: >-
+            ids=$(bd list --json | jq -r '.[].id');
+            ! git log --format=%B "$(cat .headsign/tmp/base)..HEAD" | grep -qF "$ids"
+        - name: no ticket id in the tree since base
+          run: >-
+            ids=$(bd list --json | jq -r '.[].id');
+            ! git diff "$(cat .headsign/tmp/base)..HEAD" | grep '^+' | grep -qF "$ids"
+        - name: no reference to internal notes since base
+          run: >-
+            ! { git log --format=%B "$(cat .headsign/tmp/base)..HEAD";
+            git diff "$(cat .headsign/tmp/base)..HEAD" | grep '^+'; }
+            | grep -q 'claude-team/'
+    on_pass: review
+    max_attempts: 5
+
+  # ── review ───────────────────────────────────────────────────────────────
+  review:
+    description: >
+      Have an independent reader who writes nothing check the range
+      `$(cat .headsign/tmp/base)..HEAD` (or, for a spike, report.md's new
+      entry) against the ticket's text and acceptance criteria: does the
+      range deliver what was asked, does it match the v0 task spec's
+      decisions, does any sentence name a ticket id or `.claude-team/`. Have
+      it REPORT exactly APPROVED or REJECTED with reasons, then write that
+      verdict verbatim to `.headsign/tmp/verdict` yourself.
+    clear: [.headsign/tmp/verdict]
+    ready: "test -f .headsign/tmp/verdict"
+    gate:
+      checks:
+        - name: review approved
+          run: "grep -qx APPROVED .headsign/tmp/verdict"
+    on_pass: close
+    on_fail: implement
+    max_attempts: 8
+
+  # ── close ────────────────────────────────────────────────────────────────
+  close:
+    description: >
+      Close the loop in the database: comment what was done and, where
+      there are commits, their hashes (`bd comment <id> "..."`), then
+      `bd close <id> --reason "..."`. Close the parent epic too if this was
+      its last open child. A ticket that turned out blocked or wrong is not
+      closed as done: comment why, then `bd update <id> --status deferred`.
+      Report a milestone to the project owner now if this ticket was one:
+      spike 1's go/no-go, the output shape settling, solarsql/example going
+      green, or nukadoko passing.
+    gate:
+      checks:
+        - name: no ticket left in progress
+          run: >-
+            bd list --status in_progress --json
+            | jq -e '[.[] | select(.issue_type != "epic")] | length == 0' >/dev/null
+    on_pass:
+      - when: >-
+          bd ready --json
+          | jq -e '[.[] | select(.issue_type != "epic")] | length > 0' >/dev/null
+        to: pick
+      - to: "$end"
+    max_attempts: 3
+
+limits:
+  # One lap costs four evaluations when nothing is retried. v0's opening
+  # queue is 16 tickets (4 spikes, 5 rules, 3 verbs, hook, skill, 2 dogfood):
+  # 64 laps clean, more with review rounds. 200 is a runaway backstop above
+  # that, not a budget; reaching it stops the run for the owner to raise it.
+  max_total_iterations: 200
