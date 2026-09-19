@@ -83,8 +83,11 @@ export function freezeOrPrune(
     } else {
       // Prune only: keep an existing entry exactly when its fingerprint
       // still matches a current violation. A strict module's entries
-      // prune the same as any other module's - strict blocks adding, not
-      // shrinking.
+      // prune the same as any other module's - strict blocks this verb
+      // from adding, not from shrinking. It never hides an existing entry
+      // from check, though: check reports any entry in a strict module's
+      // todo as its own violation (clean-module-has-todo), so an entry
+      // that survives pruning here still fails check until it's fixed.
       const kept = current.filter((e) => currentFingerprints.has(e.fingerprint));
       pruned += current.length - kept.length;
       writeTodo(module.dir, kept);
@@ -99,7 +102,7 @@ export function freezeOrPrune(
 export async function todo(projectRoot: string): Promise<TodoResult> {
   const configPath = join(projectRoot, "archstrict.config.ts");
   const config = await loadConfig(configPath);
-  const graph = buildModuleGraph({ projectRoot, modulesGlob: config.modules });
+  const graph = buildModuleGraph({ projectRoot, modulesGlob: config.modules, surface: config.surface });
   const result = runRules(graph, config);
   return freezeOrPrune(projectRoot, graph, config, result.violations);
 }

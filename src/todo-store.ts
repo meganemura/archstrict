@@ -19,11 +19,22 @@ export type TodoEntry = {
 
 // Identity for a violation across runs: rule, importing path, and the
 // evidence text — no line number (a line moving is not a new violation;
-// archspec's own fingerprint makes the same choice). Hashed so the todo
-// file's own key is short and stable regardless of how long the evidence
-// text is.
+// archspec's own fingerprint makes the same choice).
+//
+// One exception: a cycle's own `path` is `firstEdge.fromFile` — the file
+// of one arbitrary edge in the cycle, an implementation detail of which
+// edge the shortest-path search happened to return first, not the
+// cycle's own identity. The cycle itself (`evidence`, e.g. "a -> b -> c
+// -> a") is the identity; if that one file moved but the same cycle
+// still existed, including `path` would change the fingerprint and the
+// frozen entry would go stale for a cycle that never actually changed.
+// Every other rule's `path` names the real thing the violation is about
+// (the importing file, or the config file), so only "cycle" is excluded.
+// Hashed so the todo file's own key is short and stable regardless of how
+// long the evidence text is.
 export function fingerprintOf(v: { rule: string; path: string; evidence: string }): string {
-  return createHash("sha256").update(`${v.rule}\n${v.path}\n${v.evidence}`).digest("hex").slice(0, 12);
+  const key = v.rule === "cycle" ? `${v.rule}\n${v.evidence}` : `${v.rule}\n${v.path}\n${v.evidence}`;
+  return createHash("sha256").update(key).digest("hex").slice(0, 12);
 }
 
 export function todoPath(moduleDir: string): string {

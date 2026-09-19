@@ -33,10 +33,50 @@ describe("loadConfig", () => {
       await expect(loadConfig(join(root, "bad.config.ts"))).rejects.toThrow(/missing required field/);
     });
   });
+
+  test("a config that imports a runtime value (not `import type`) fails with a clear error", async () => {
+    await withTempProject(async (root) => {
+      mkdirSync(join(root, "src", "app"), { recursive: true });
+      writeFileSync(join(root, "src", "app", "module.ts"), "export const app = 1;\n");
+      init(root);
+
+      const configPath = join(root, "archstrict.config.ts");
+      writeFileSync(
+        configPath,
+        `import { Config } from "./archstrict.generated.js";\n` +
+          `export default { modules: "src/*", kinds: { flat: "src/*" }, because: "test" } satisfies Config;\n`,
+      );
+      await expect(loadConfig(configPath)).rejects.toThrow(/may only import types/);
+    });
+  });
+
+  // Node's ESM loader caches a module by its exact URL; calling loadConfig
+  // twice for the same path across a change on disk must not return the
+  // first call's stale result (a real bug, fixed once already — this
+  // guards against a later "simplification" back to a plain file import).
+  test("loadConfig re-reads the file on every call, not the first call's cached module", async () => {
+    await withTempProject(async (root) => {
+      mkdirSync(join(root, "src", "app"), { recursive: true });
+      writeFileSync(join(root, "src", "app", "module.ts"), "export const app = 1;\n");
+      init(root);
+
+      const configPath = join(root, "archstrict.config.ts");
+      const first = await loadConfig(configPath);
+      expect(first.strict).toBeUndefined();
+
+      writeFileSync(
+        configPath,
+        `import type { Config } from "./archstrict.generated.js";\n` +
+          `export default { modules: "src/*", kinds: { flat: "src/*" }, strict: ["app"], because: "test" } satisfies Config;\n`,
+      );
+      const second = await loadConfig(configPath);
+      expect(second.strict).toEqual(["app"]);
+    });
+  });
 });
 
 describe("check", () => {
-  test("init then check on a clean project with the flat preset: every module is uncovered by nothing, but has no public.ts", async () => {
+  test("init then check on a clean project with the flat preset: every module is uncovered by nothing, but has no public surface", async () => {
     await withTempProject(async (root) => {
       mkdirSync(join(root, "src", "app"), { recursive: true });
       writeFileSync(join(root, "src", "app", "module.ts"), "export const app = 1;\n");
@@ -57,7 +97,7 @@ describe("check", () => {
       expect(result.outsideFiles).toBe(0);
       expect(result.unresolvedSpecifiers).toBe(0);
       expect(result.todo).toBe(0);
-      // No public.ts anywhere: the one cross-module edge (app -> shared)
+      // No surface file anywhere: the one cross-module edge (app -> shared)
       // bypasses shared's (nonexistent) public surface.
       expect(result.violations).toHaveLength(1);
       const violation = result.violations[0]!;
@@ -78,7 +118,7 @@ describe("check", () => {
       );
       expect(JSON.parse(JSON.stringify(result))).toEqual({
         modules: 2,
-        modulesWithoutPublicTs: 2,
+        modulesWithoutSurface: 2,
         edges: 1,
         outsideFiles: 0,
         unresolvedSpecifiers: 0,

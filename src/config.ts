@@ -56,10 +56,11 @@ export type Config = {
     because: string;
   }[];
   // Module names whose todo file may only shrink, never gain a new entry -
-  // not even on todo's first run. A strict module with freezable
-  // violations that aren't already in its (possibly pre-existing) todo
-  // simply keeps failing check: strict never adds, so nothing hides those
-  // violations from check.
+  // not even on todo's first run. check treats any existing entry in a
+  // strict module's todo as a violation in its own right (clean means no
+  // debt, not debt frozen at whatever existed when the module was added
+  // here), so marking a module strict never hides a violation from check,
+  // old or new.
   strict?: readonly string[];
   because: string;
 };

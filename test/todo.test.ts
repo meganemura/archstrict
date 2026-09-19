@@ -114,6 +114,27 @@ describe("todo", () => {
     });
   });
 
+  test("a strict module's own existing todo entries are a violation, not silently kept", async () => {
+    await withTempProject(async (root) => {
+      writeBypassProject(root);
+      init(root);
+      await todo(root); // freezes the violation while shared is not yet strict
+
+      // Mark shared strict after the fact - it already has a frozen entry.
+      writeFileSync(
+        join(root, "archstrict.config.ts"),
+        `import type { Config } from "./archstrict.generated.js";\n` +
+          `export default { modules: "src/*", kinds: { flat: "src/*" }, strict: ["shared"], because: "test" } satisfies Config;\n`,
+      );
+
+      const result = await check(root);
+      expect(result.violations.some((v) => v.rule === "clean-module-has-todo")).toBe(true);
+      // The frozen violation itself must not be silently suppressed just
+      // because it happens to be in a todo file: strict means clean.
+      expect(result.todo).toBe(0);
+    });
+  });
+
   test("a stale todo entry (hand-edited to no longer match) is its own violation", async () => {
     await withTempProject(async (root) => {
       writeBypassProject(root);
