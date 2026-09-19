@@ -7,9 +7,22 @@
 // edges and modules; this module only builds the graph and says what it
 // could not analyze (unresolved specifiers, unsupported syntax, files
 // outside the modules glob) as counts, never as silence.
+//
+// Every edge is tagged `isTypeOnly`. Decisions a downstream rule must not
+// reopen: rule 1 (public-surface bypass) counts a type-only edge the same
+// as a value edge — reaching an internal file for its types alone is still
+// reaching past the public surface. Rule 2 (cycles) does NOT count a
+// type-only edge — a type-only cycle has no runtime consequence, and TS
+// itself allows it; counting it would produce violations nobody can act on.
+//
+// `unsupportedSyntaxCount` covers `require(...)` calls and
+// `import x = require(...)`; under `verbatimModuleSyntax` (this project's
+// own tsconfig, and the convention it targets) TS itself already rejects
+// the latter as a syntax error, so in practice this count is driven by the
+// former.
 import ts from "typescript";
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
 
 export type Position = { line: number; column: number };
 
@@ -84,7 +97,7 @@ function moduleForFile(
   const { root } = parseModulesGlob(glob);
   const rel = relative(join(projectRoot, root), filePath);
   if (rel.startsWith("..")) return undefined; // not under the modules root at all
-  const [first, ...rest] = rel.split("/");
+  const [first, ...rest] = rel.split(sep);
   if (first === undefined || rest.length === 0) return undefined; // a loose file directly under the modules root
   return first;
 }

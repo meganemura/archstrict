@@ -9,7 +9,7 @@ import * as hegel from "@hegeldev/hegel";
 import * as gs from "@hegeldev/hegel/generators";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { buildModuleGraph } from "../src/module-graph.js";
 import { checkPublicSurfaceBypass } from "../src/rules/public-surface.js";
 
@@ -104,13 +104,26 @@ describe("checkPublicSurfaceBypass (property)", () => {
 
             const violations = checkPublicSurfaceBypass(graph);
 
-            const expectedViolationCount = edges.filter((edge) => {
+            const expectedViolatingEdges = edges.filter((edge) => {
               const targetHasPublicTs =
                 hasPublicTs[MODULE_NAMES.indexOf(edge.to as (typeof MODULE_NAMES)[number])];
               return !targetHasPublicTs || !edge.hitsPublicTs;
-            }).length;
+            });
 
-            assert.equal(violations.length, expectedViolationCount);
+            assert.equal(violations.length, expectedViolatingEdges.length);
+            // Not just the count: which edges. A rule that flagged the
+            // wrong edges in the right number would still pass a bare
+            // length check, so compare the multiset of (importer module,
+            // exposed module) pairs each side actually names.
+            const sortPairs = (pairs: string[]) => [...pairs].sort();
+            const expectedPairs = sortPairs(
+              expectedViolatingEdges.map((e) => `${e.from}->${e.to}`),
+            );
+            const actualPairs = sortPairs(
+              violations.map((v) => `${basename(dirname(v.path))}->${v.todoModule}`),
+            );
+            assert.deepEqual(actualPairs, expectedPairs);
+
             assert.ok(violations.every((v) => v.rule === "public-surface-bypass"));
             assert.ok(violations.every((v) => v.because.length > 0));
           } finally {

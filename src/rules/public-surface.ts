@@ -2,6 +2,10 @@
 // default (Q28): an import from outside a module that reaches a file other
 // than that module's public.ts is a violation, and a module with no
 // public.ts is entirely private, so every external import into it violates.
+// This counts a type-only (`import type`) edge the same as a value edge:
+// reaching an internal file for its types alone still reaches past the
+// public surface (module-graph.ts's own header has the contrasting
+// decision for cycles).
 // Boundary: pure predicate over a ModuleGraph's cross-module edges. No I/O,
 // no output formatting (that is the `check` verb's job), no todo handling
 // (that is `todo`'s job).
