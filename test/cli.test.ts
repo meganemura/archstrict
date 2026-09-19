@@ -39,4 +39,42 @@ describe("cli", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  test("init then check: exit 1 and a next: todo line when a violation exists", () => {
+    const root = mkdtempSync(join(tmpdir(), "archstrict-cli-check-"));
+    try {
+      mkdirSync(join(root, "src", "app"), { recursive: true });
+      mkdirSync(join(root, "src", "shared"), { recursive: true });
+      writeFileSync(join(root, "src", "shared", "module.ts"), "export const shared = 1;\n");
+      writeFileSync(
+        join(root, "src", "app", "module.ts"),
+        "import { shared } from \"../shared/module.ts\";\nexport const x = shared;\n",
+      );
+      execFileSync("node", [CLI_PATH, "init"], { cwd: root });
+
+      let out = "";
+      let exitCode = 0;
+      try {
+        out = execFileSync("node", [CLI_PATH, "check"], { cwd: root, encoding: "utf8" });
+      } catch (e) {
+        const err = e as { status: number; stdout: string };
+        exitCode = err.status;
+        out = err.stdout;
+      }
+      expect(exitCode).toBe(1);
+      expect(out).toContain("[public-surface-bypass]");
+      expect(out.trim().split("\n").at(-1)).toBe("next: archstrict todo");
+
+      let jsonOut = "";
+      try {
+        jsonOut = execFileSync("node", [CLI_PATH, "check", "--json"], { cwd: root, encoding: "utf8" });
+      } catch (e) {
+        jsonOut = (e as { stdout: string }).stdout;
+      }
+      const json = JSON.parse(jsonOut);
+      expect(json.violations).toHaveLength(1);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
