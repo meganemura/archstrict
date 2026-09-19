@@ -21,6 +21,14 @@
 #   verdict    — APPROVED / REJECTED for the current review round.
 #   pick-done  — pick's own declaration that it looked at the queue, so an
 #                empty queue ends the run cleanly instead of retrying forever.
+#
+# Owner's instruction (2026-09-20): run laps back to back, without ending
+# the turn to check in, until `bd ready` is empty and $end is reached on its
+# own. A design choice that's reversible and within an already-open ticket's
+# scope gets decided and recorded (in the ticket comment and report.md), not
+# raised as a question. Only an irreversible, out-of-scope, or genuinely
+# owner-only decision (new paid dependency, publishing, a spec conflict
+# advisor can't resolve) is worth stopping for.
 
 version: 0.1
 name: archstrict-v0
@@ -37,7 +45,9 @@ phases:
       write its id alone to `.headsign/tmp/ticket`, and write the starting
       commit with `git rev-parse HEAD > .headsign/tmp/base`. If nothing is
       ready, write nothing. Either way, touch `.headsign/tmp/pick-done`. Do
-      not start the ticket's work in this phase.
+      not start the ticket's work in this phase. Do not end the turn here to
+      check in with the owner: run `headsign next` and continue straight
+      into `implement` in the same turn.
     clear:
       - .headsign/tmp/ticket
       - .headsign/tmp/base
@@ -131,9 +141,12 @@ phases:
       `bd close <id> --reason "..."`. Close the parent epic too if this was
       its last open child. A ticket that turned out blocked or wrong is not
       closed as done: comment why, then `bd update <id> --status deferred`.
-      Report a milestone to the project owner now if this ticket was one:
-      spike 1's go/no-go, the output shape settling, solarsql/example going
-      green, or nukadoko passing.
+      Send a short note (SendMessage, not a stop) to the project owner's
+      session if this ticket was one of the named milestones: spike 1's
+      go/no-go, the output shape settling, solarsql/example going green, or
+      nukadoko passing. A sent note does not pause the loop: continue
+      straight to the next `headsign next` in the same turn, on to `pick`
+      or `$end`, whichever the gate below routes to.
     gate:
       checks:
         - name: no ticket left in progress
