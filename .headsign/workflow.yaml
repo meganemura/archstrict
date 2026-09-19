@@ -146,7 +146,9 @@ phases:
       go/no-go, the output shape settling, solarsql/example going green, or
       nukadoko passing. A sent note does not pause the loop: continue
       straight to the next `headsign next` in the same turn, on to `pick`
-      or `$end`, whichever the gate below routes to.
+      or `$end`, whichever the gate below routes to. Once a remote exists
+      (the owner asked for a private repo mid-run), `git push` here too, so
+      every lap ends with the remote current, not just the local commit.
     gate:
       checks:
         - name: no ticket left in progress
