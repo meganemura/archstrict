@@ -83,29 +83,63 @@ function measure(
     return { file };
   }
 
+  // Checks whether `type` itself is an internal declaration, and records a
+  // leak if so. `aliasSymbol` is checked before `getSymbol()`: a property
+  // typed with a named alias whose target is a mapped/utility type (e.g.
+  // `Readonly<Record<...>>`) resolves `getSymbol()` to that utility type's
+  // own anonymous shape, not to the alias a consumer actually sees on
+  // hover — checking the alias first is what a consumer's own experience
+  // of the type matches. Measured: reversing this order silently dropped
+  // `StepFromMap` (an alias over `Readonly<Record<...>>`) from the count.
+  function checkType(type: ts.Type, exportedAs: string, via: Leak["via"]): void {
+    const sym = type.aliasSymbol ?? type.getSymbol();
+    if (sym === undefined) return;
+    const internal = isInternal(sym);
+    if (internal !== undefined) {
+      leaks.push({
+        exportedAs,
+        via,
+        internalType: sym.name,
+        internalFile: internal.file,
+      });
+    }
+  }
+
+  // Walks every type reachable from `type`'s own shape: its properties, its
+  // index signatures' value types, and (for a union) every constituent —
+  // "any property, anywhere in an exported type's shape" (report.md's
+  // definition) requires all three, not just direct properties one level
+  // down. `seen` guards the recursion against a type that references
+  // itself (directly or through a cycle of aliases).
   function walkStructural(
     type: ts.Type,
     exportedAs: string,
     via: Leak["via"],
     depth: number,
+    seen: Set<ts.Type> = new Set(),
   ): void {
-    if (depth <= 0) return;
+    if (depth <= 0 || seen.has(type)) return;
+    seen.add(type);
+
+    if (type.isUnion()) {
+      for (const member of type.types) {
+        checkType(member, exportedAs, via);
+        walkStructural(member, exportedAs, via, depth - 1, seen);
+      }
+      return;
+    }
+
     for (const prop of checker.getPropertiesOfType(type)) {
       const decl = prop.valueDeclaration ?? prop.getDeclarations()?.[0];
       if (decl === undefined) continue;
       const propType = checker.getTypeOfSymbolAtLocation(prop, decl);
-      const sym = propType.getSymbol() ?? propType.aliasSymbol;
-      if (sym !== undefined) {
-        const internal = isInternal(sym);
-        if (internal !== undefined) {
-          leaks.push({
-            exportedAs,
-            via,
-            internalType: sym.name,
-            internalFile: internal.file,
-          });
-        }
-      }
+      checkType(propType, exportedAs, via);
+      walkStructural(propType, exportedAs, via, depth - 1, seen);
+    }
+
+    for (const indexInfo of checker.getIndexInfosOfType(type)) {
+      checkType(indexInfo.type, exportedAs, via);
+      walkStructural(indexInfo.type, exportedAs, via, depth - 1, seen);
     }
   }
 
@@ -115,26 +149,27 @@ function measure(
 
     if (ts.isTypeAliasDeclaration(decl) || ts.isInterfaceDeclaration(decl)) {
       const type = checker.getDeclaredTypeOfSymbol(symbol);
-      walkStructural(type, symbol.name, "structural", 2);
+      walkStructural(type, symbol.name, "structural", 3);
 
-      // Candidate 2: generic type parameters' constraint/default.
-      if (ts.isTypeAliasDeclaration(decl) && decl.typeParameters !== undefined) {
+      // Candidate 2: generic type parameters' constraint/default. Both
+      // declaration kinds carry `typeParameters` (an interface's own
+      // generics, e.g. `StepDefinitionInput<TArgs, TReturns, TFrom>`, are
+      // exactly as eligible as a type alias's) — gating on the alias kind
+      // alone silently skipped every interface. Measured: `StepDefinitionInput`
+      // (an interface) has `TFrom extends FromMap<TFrom, TArgs>`, missed
+      // until this check covered interfaces too.
+      if (decl.typeParameters !== undefined) {
         for (const tp of decl.typeParameters) {
           const constraintNode = tp.constraint ?? tp.default;
           if (constraintNode === undefined) continue;
           const constraintType = checker.getTypeAtLocation(constraintNode);
-          const sym = constraintType.getSymbol() ?? constraintType.aliasSymbol;
-          if (sym !== undefined) {
-            const internal = isInternal(sym);
-            if (internal !== undefined) {
-              leaks.push({
-                exportedAs: symbol.name,
-                via: "generic-parameter",
-                internalType: sym.name,
-                internalFile: internal.file,
-              });
-            }
-          }
+          checkType(constraintType, symbol.name, "generic-parameter");
+          walkStructural(
+            constraintType,
+            symbol.name,
+            "generic-parameter",
+            2,
+          );
         }
       }
       continue;
@@ -163,19 +198,8 @@ function measure(
       // function returning a bare internal type was silently missed,
       // since walkStructural only inspects a type's OWN properties, never
       // asks whether the type itself is the leak.
-      const returnSym = returnType.getSymbol() ?? returnType.aliasSymbol;
-      if (returnSym !== undefined) {
-        const internal = isInternal(returnSym);
-        if (internal !== undefined) {
-          leaks.push({
-            exportedAs: symbol.name,
-            via,
-            internalType: returnSym.name,
-            internalFile: internal.file,
-          });
-        }
-      }
-      walkStructural(returnType, symbol.name, via, 1);
+      checkType(returnType, symbol.name, via);
+      walkStructural(returnType, symbol.name, via, 2);
     }
   }
 
@@ -206,7 +230,12 @@ function main(): void {
   // needs no provisional public.ts written into that checkout.
   measure(
     "nukadoko/src/index.ts (real, read-only)",
-    NUKADOKO,
+    join(NUKADOKO, "src"), // not NUKADOKO itself: node_modules sits there
+    // too, and a dependency's own internal types are not nukadoko's
+    // boundary to keep. Measured: without narrowing to src/, the walk
+    // chased into playwright-core's and zod's own internals and reported
+    // 90 "leaks" that are just how those libraries' public types are
+    // shaped, nothing nukadoko's public.ts convention could fix.
     join(NUKADOKO, "src", "index.ts"),
     join(NUKADOKO, "tsconfig.json"),
   );
