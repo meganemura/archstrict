@@ -69,11 +69,25 @@ function writeProject(root: string, edges: EdgeSpec[]): void {
   );
 }
 
-// Independent reference: does a directed cycle exist among the non-type-only
-// edges? Plain DFS with a recursion stack, deliberately not Tarjan's
-// algorithm — a bug shared between this and the rule's own implementation
-// would otherwise pass unnoticed.
-function hasCycle(edges: EdgeSpec[]): boolean {
+// Independent reference: how many strongly connected components of size > 1
+// exist among the non-type-only edges? Reachability-based (for each pair,
+// is each reachable from the other), deliberately not Tarjan's algorithm —
+// a bug shared between this and the rule's own implementation would
+// otherwise pass unnoticed. Module graphs are small in v0 (a handful of
+// modules), so quadratic reachability is fine for a test.
+function reachableFrom(start: string, adjacency: Map<string, string[]>): Set<string> {
+  const visited = new Set<string>();
+  const stack = [start];
+  while (stack.length > 0) {
+    const node = stack.pop()!;
+    if (visited.has(node)) continue;
+    visited.add(node);
+    for (const next of adjacency.get(node) ?? []) stack.push(next);
+  }
+  return visited;
+}
+
+function stronglyConnectedComponentsOfSizeAbove1(edges: EdgeSpec[]): string[][] {
   const valueEdges = edges.filter((e) => !e.isTypeOnly && e.from !== e.to);
   const adjacency = new Map<string, string[]>();
   for (const e of valueEdges) {
@@ -82,21 +96,16 @@ function hasCycle(edges: EdgeSpec[]): boolean {
     adjacency.set(e.from, list);
   }
 
-  const visited = new Set<string>();
-  const onStack = new Set<string>();
-
-  function dfs(node: string): boolean {
-    visited.add(node);
-    onStack.add(node);
-    for (const next of adjacency.get(node) ?? []) {
-      if (onStack.has(next)) return true;
-      if (!visited.has(next) && dfs(next)) return true;
-    }
-    onStack.delete(node);
-    return false;
+  const seen = new Set<string>();
+  const components: string[][] = [];
+  for (const m of MODULE_NAMES) {
+    if (seen.has(m)) continue;
+    const forward = reachableFrom(m, adjacency);
+    const component = [...forward].filter((other) => reachableFrom(other, adjacency).has(m));
+    for (const member of component) seen.add(member);
+    if (component.length > 1) components.push(component.sort());
   }
-
-  return MODULE_NAMES.some((m) => !visited.has(m) && dfs(m));
+  return components;
 }
 
 describe("checkCycles (property)", () => {
@@ -114,10 +123,16 @@ describe("checkCycles (property)", () => {
             assert.equal(graph.unresolvedSpecifierCount, 0);
 
             const violations = checkCycles(graph);
-            assert.equal(violations.length > 0, hasCycle(edges));
+            const components = stronglyConnectedComponentsOfSizeAbove1(edges);
+            // Count, not just existence: two disjoint cycles must produce
+            // two violations, not one — a bare "some cycle exists" check
+            // cannot tell the two apart.
+            assert.equal(violations.length, components.length);
 
             // Every reported cycle's evidence is a real closed walk over
-            // the actual (non-type-only) edges written to disk.
+            // the actual (non-type-only) edges written to disk, and its
+            // todoModule is that walk's own first node (name-first among
+            // the component's members, by construction).
             const valuePairs = new Set(
               edges.filter((e) => !e.isTypeOnly).map((e) => `${e.from}->${e.to}`),
             );
@@ -125,6 +140,10 @@ describe("checkCycles (property)", () => {
               const path = v.evidence.split(" -> ");
               assert.ok(path.length >= 3); // at least a 2-module cycle plus the repeated start
               assert.equal(path[0], path.at(-1));
+              assert.equal(v.todoModule, path[0]);
+              const component = components.find((c) => c.includes(v.todoModule));
+              assert.ok(component !== undefined);
+              assert.equal(v.todoModule, [...component!].sort()[0]);
               for (let i = 0; i < path.length - 1; i++) {
                 assert.ok(valuePairs.has(`${path[i]}->${path[i + 1]}`));
               }

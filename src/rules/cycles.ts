@@ -119,6 +119,10 @@ function shortestCycleFrom(
       queue.push({ node: to, path: [...path, to], edges: [...edges, edge] });
     }
   }
+  // Invariant, not error handling: every node in a strongly connected
+  // component of size > 1 lies on some cycle within it, so this branch is
+  // unreachable for a genuine SCC. It only fires if `component` was built
+  // wrong (e.g. from a stale or mismatched adjacency).
   throw new Error(`no cycle found from ${start} within its own strongly connected component`);
 }
 
