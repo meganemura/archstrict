@@ -42,6 +42,8 @@ function generatedFileContents(moduleNames: string[]): string {
 // the last init; run init again to regenerate.
 export type ModuleName = ${union};
 
+// configPath is added by the loader, not written here - a config file
+// cannot know its own path.
 export type Config = {
   modules: string;
   kinds: Record<string, string>;
