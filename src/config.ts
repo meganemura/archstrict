@@ -1,10 +1,12 @@
-// Responsibility: the shape of archstrict.config.ts. Minimal for v0: only
-// what rule 3 (uncovered modules) needs. `init` (a later ticket) writes a
-// file of this shape; later rules and the generated-union-type mechanism
-// (spike 4) grow it.
-// Boundary: a plain data type, no behavior. Reading and validating a real
-// config file is the CLI's job (a later ticket); this file only names the
-// shape every reader agrees on.
+// Responsibility: the shape of archstrict.config.ts (minimal for v0; `init`,
+// a later ticket, writes a file of this shape, and later rules and the
+// generated-union-type mechanism (spike 4) grow it), plus the kind-pattern
+// logic rules 3 and 4 both need: matching a pattern against a module name,
+// and validating that every pattern in a config is a shape v0 supports.
+// Boundary: `Config` itself is a plain data type, no behavior. Reading a
+// real config file from disk is the CLI's job (a later ticket); this file
+// only names the shape every reader agrees on and the one piece of logic
+// (pattern matching) two rules would otherwise each reimplement.
 //
 // Two separate namespaces, decided after spike 4 flagged the risk of
 // conflating them: `layers` (not yet used by any v0 rule) will hold *kind*
@@ -26,8 +28,8 @@ export type Config = {
   // single catch-all kind), or "<modules-root>/<name>" naming one exact
   // module. Any other shape (a nested wildcard like "src/features/*", for
   // instance) is out of scope for v0's single-level module model and is a
-  // config error, not a rule violation — kindPatternNames throws rather
-  // than silently treating it as "matches nothing".
+  // config error, not a rule violation — assertKindPatternsSupported throws
+  // rather than a rule silently treating it as "matches nothing".
   kinds: Record<string, string>;
   layers?: readonly string[];
   because: string;

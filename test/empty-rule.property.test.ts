@@ -14,8 +14,10 @@ import { checkEmptyRuleSet } from "../src/rules/empty-rule.js";
 import type { Config } from "../src/config.js";
 
 const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), "fixtures/uncovered"); // a, b, c
-const REAL_MODULES = new Set(["a", "b", "c"]);
-const CANDIDATE_NAMES = ["a", "b", "c", "x", "y"] as const; // x, y name no real module
+// "x" and "y" name no real module; kept alongside the fixture's own names
+// rather than a separately hardcoded list, so drawing one of them always
+// means "doesn't exist" regardless of what the fixture happens to hold.
+const CANDIDATE_NAMES = ["a", "b", "c", "x", "y"] as const;
 
 const kindEntry = gs.record({
   name: gs.fromRegex("kind[0-9]"),
@@ -29,6 +31,10 @@ describe("checkEmptyRuleSet (property)", () => {
     // `kinds` does, so there is no reason to rebuild a ts.Program (an
     // expensive real compile) on every one of hegel's iterations.
     const graph = buildModuleGraph({ projectRoot: FIXTURE, modulesGlob: "src/*" });
+    // Derived from the fixture itself, not hardcoded: if a module is ever
+    // added to fixtures/uncovered/ for rule 3's sake, this stays correct
+    // instead of silently going stale and failing for an unrelated reason.
+    const realModules = new Set(graph.modules.keys());
 
     hegel.test((tc) => {
       const entries = tc.draw(kindEntries);
@@ -45,7 +51,7 @@ describe("checkEmptyRuleSet (property)", () => {
 
       const expectedEmptyKinds = new Set(
         Object.entries(kinds)
-          .filter(([, pattern]) => !REAL_MODULES.has(pattern.slice("src/".length)))
+          .filter(([, pattern]) => !realModules.has(pattern.slice("src/".length)))
           .map(([name]) => name),
       );
 
