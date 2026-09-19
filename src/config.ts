@@ -11,11 +11,16 @@
 // Two separate namespaces, decided after spike 4 flagged the risk of
 // conflating them: `layers` (not yet used by any v0 rule) will hold *kind*
 // names — declared right here in `kinds`, so a structural generic can
-// check them with no generated file. `deprecated.from`/`to` (rule 5, not
-// yet built) will hold *module* names — real directories on disk, which is
-// what spike 4's generated union type exists to check. This type does not
-// yet enforce that separation (deferred to whichever ticket adds
-// `layers`/`deprecated`); recorded here so that ticket does not reopen it.
+// check them with no generated file. `deprecated.from`/`to` (rule 5) hold
+// *module* names — real directories on disk, which is what spike 4's
+// generated union type exists to check. Rule 5 uses plain `string` for
+// both, though, and validates them against `graph.modules` at check time
+// (throwing the same way an unrecognized `kinds` pattern does) — wiring
+// the generated union type into this field is deliberately deferred to
+// `init` (a later ticket), since `init` is what writes the generated file
+// in the first place. `layers` is not enforced against `kinds` by this
+// type either (deferred the same way, to whichever ticket adds real use of
+// `layers`); recorded here so neither ticket reopens the question.
 export type Config = {
   // Required, not optional: every real config comes from a file, and both
   // `check` and rule 4 (a config-vs-graph consistency check, not an edge
@@ -32,6 +37,15 @@ export type Config = {
   // rather than a rule silently treating it as "matches nothing".
   kinds: Record<string, string>;
   layers?: readonly string[];
+  // A from -> to module edge whose count must not increase (rule 5).
+  // `because` is mandatory per Q43 — a deprecated edge is exactly the kind
+  // of root-level rule the spec requires a reason for.
+  deprecated?: readonly {
+    from: string;
+    to: string;
+    count: number;
+    because: string;
+  }[];
   because: string;
 };
 

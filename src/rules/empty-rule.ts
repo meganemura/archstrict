@@ -87,5 +87,26 @@ export function checkEmptyRuleSet(graph: ModuleGraph, config: Config): Violation
     }
   }
 
+  // A deprecated edge whose actual count has fallen to zero is not merely
+  // smaller (rule 5's "update count" suggestion) — the edge is gone
+  // entirely, so the entry itself is moot and checks nothing. Rule 5
+  // deliberately does not report this case (its own header explains why),
+  // so it belongs here instead: an empty-rule-set violation, not a count
+  // to shrink.
+  for (const entry of config.deprecated ?? []) {
+    const actual = graph.crossModuleEdges.filter(
+      (e) => e.fromModule === entry.from && e.toModule === entry.to,
+    ).length;
+    if (actual === 0) {
+      violations.push(
+        violation(
+          config,
+          `deprecated edge '${entry.from} -> ${entry.to}' (declared count ${entry.count}) no longer exists`,
+          `remove the '${entry.from} -> ${entry.to}' entry from deprecated in archstrict.config.ts`,
+        ),
+      );
+    }
+  }
+
   return violations;
 }
