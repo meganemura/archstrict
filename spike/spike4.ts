@@ -35,33 +35,16 @@ function writeGeneratedUnion(moduleNames: string[]): void {
   );
 }
 
-function tscExitCode(configFile: string): number {
-  try {
-    execFileSync(
-      "node",
-      [
-        resolve("node_modules/typescript/bin/tsc"),
-        "--noEmit",
-        "-p",
-        FIXTURE,
-        "--types",
-        "",
-      ],
-      { encoding: "utf8", cwd: FIXTURE, stdio: "pipe" },
-    );
-    return 0;
-  } catch (e) {
-    const err = e as { status?: number };
-    return err.status ?? 1;
-  }
-}
-
 // tsc -p checks every file matching the project's tsconfig, and this
 // fixture's tsconfig has no "include", so it would pick up both
 // archstrict.config.good.ts and archstrict.config.bad.ts together, which
-// tests nothing (the bad one always fails the batch). Point tsc at one
+// tests nothing (the bad one always fails the batch) — an artifact of this
+// spike having two configs side by side to test both outcomes, not a
+// property the real CLI needs: archstrict never runs tsc itself; it writes
+// the generated file, and the project's own `tsc` is what fails or passes
+// on it, exactly as the spec's "綴りは tsc が落とす" says. Point tsc at one
 // config file at a time via a throwaway tsconfig that includes just it.
-function tscOnOneConfig(configFileName: string): number {
+function tscOnOneConfig(configFileName: string): { exitCode: number; firstDiagnosticLine: string | undefined } {
   const oneOff = join(FIXTURE, "tsconfig.oneoff.json");
   writeFileSync(
     oneOff,
@@ -80,10 +63,13 @@ function tscOnOneConfig(configFileName: string): number {
       [resolve("node_modules/typescript/bin/tsc"), "--noEmit", "-p", oneOff],
       { encoding: "utf8", cwd: FIXTURE, stdio: "pipe" },
     );
-    return 0;
+    return { exitCode: 0, firstDiagnosticLine: undefined };
   } catch (e) {
-    const err = e as { status?: number };
-    return err.status ?? 1;
+    const err = e as { status?: number; stdout?: string };
+    return {
+      exitCode: err.status ?? 1,
+      firstDiagnosticLine: err.stdout?.split("\n").find((line) => line.includes("error TS")),
+    };
   }
 }
 
@@ -91,20 +77,21 @@ function main(): void {
   const moduleNames = discoverModuleNames(join(FIXTURE, "src"));
   writeGeneratedUnion(moduleNames);
 
-  const goodExit = tscOnOneConfig("archstrict.config.good.ts");
-  const badExit = tscOnOneConfig("archstrict.config.bad.ts");
+  const good = tscOnOneConfig("archstrict.config.good.ts");
+  const bad = tscOnOneConfig("archstrict.config.bad.ts");
 
   console.log(
     JSON.stringify(
       {
         discoveredModules: moduleNames,
-        goodConfig: { exitCode: goodExit, typechecks: goodExit === 0 },
+        goodConfig: { exitCode: good.exitCode, typechecks: good.exitCode === 0 },
         badConfig: {
-          exitCode: badExit,
-          typoCaughtByTsc: badExit !== 0,
+          exitCode: bad.exitCode,
+          typoCaughtByTsc: bad.exitCode !== 0,
+          diagnostic: bad.firstDiagnosticLine,
         },
         verdict:
-          goodExit === 0 && badExit !== 0
+          good.exitCode === 0 && bad.exitCode !== 0
             ? "go: tsc accepts real module names and rejects a typo"
             : "no-go: see exit codes above",
       },
