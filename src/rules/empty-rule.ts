@@ -52,48 +52,58 @@ export function checkEmptyRuleSet(graph: ModuleGraph, config: Config): Violation
 
   const violations: Violation[] = [];
 
-  // No modules at all: not "a rule matched zero", but "nothing to check" —
-  // reported the same way (a violation, not a thrown error) so it fits the
-  // same 0-is-a-result shape as everything else `check` reports. Returned
-  // immediately rather than falling through to the per-kind loop below:
-  // with zero modules, EVERY kind trivially matches nothing, so the loop
-  // would add one redundant violation per configured kind, all restating
-  // the same root cause this one violation already names. Measured: a
-  // one-kind config produced 2 violations instead of 1 before this guard.
-  if (graph.modules.size === 0) {
-    return [
-      violation(
-        config,
-        `no modules under '${config.modules}'`,
-        `add at least one module directory under ${config.modules}, or check the modules glob in archstrict.config.ts`,
-      ),
-    ];
-  }
+  // No v0-style kinds/modules declared at all - see checkUncoveredModules'
+  // own comment; the kinds/layers-specific checks below have nothing to
+  // check yet for a declaredModules-only project. `deprecated` is checked
+  // regardless below - it's independent of kinds, keyed on module names
+  // directly.
+  if (config.kinds !== undefined && config.modules !== undefined) {
+    const kinds = config.kinds;
+    const modulesGlob = config.modules;
 
-  for (const [kindName, pattern] of Object.entries(config.kinds)) {
-    const matchedAny = [...graph.modules.keys()].some(
-      (moduleName) => kindPatternNames(pattern, config.modules, moduleName) === true,
-    );
-    if (!matchedAny) {
-      violations.push(
+    // No modules at all: not "a rule matched zero", but "nothing to check" —
+    // reported the same way (a violation, not a thrown error) so it fits the
+    // same 0-is-a-result shape as everything else `check` reports. Returned
+    // immediately rather than falling through to the per-kind loop below:
+    // with zero modules, EVERY kind trivially matches nothing, so the loop
+    // would add one redundant violation per configured kind, all restating
+    // the same root cause this one violation already names. Measured: a
+    // one-kind config produced 2 violations instead of 1 before this guard.
+    if (graph.modules.size === 0) {
+      return [
         violation(
           config,
-          `kind '${kindName}' (pattern '${pattern}') matches no discovered module`,
-          `remove '${kindName}' from archstrict.config.ts, or point its pattern at a real module`,
+          `no modules under '${modulesGlob}'`,
+          `add at least one module directory under ${modulesGlob}, or check the modules glob in archstrict.config.ts`,
         ),
-      );
+      ];
     }
-  }
 
-  for (const layerKind of config.layers ?? []) {
-    if (!(layerKind in config.kinds)) {
-      violations.push(
-        violation(
-          config,
-          `layers names '${layerKind}', which is not a key of kinds`,
-          `add '${layerKind}' to kinds in archstrict.config.ts, or remove it from layers`,
-        ),
+    for (const [kindName, pattern] of Object.entries(kinds)) {
+      const matchedAny = [...graph.modules.keys()].some(
+        (moduleName) => kindPatternNames(pattern, modulesGlob, moduleName) === true,
       );
+      if (!matchedAny) {
+        violations.push(
+          violation(
+            config,
+            `kind '${kindName}' (pattern '${pattern}') matches no discovered module`,
+            `remove '${kindName}' from archstrict.config.ts, or point its pattern at a real module`,
+          ),
+        );
+      }
+    }
+
+    for (const layerKind of config.layers ?? []) {
+      if (!(layerKind in kinds)) {
+        violations.push(
+          violation(
+            config,
+            `layers names '${layerKind}', which is not a key of kinds`,
+            `add '${layerKind}' to kinds in archstrict.config.ts, or remove it from layers`,
+          ),
+        );
+      }
     }
   }
 

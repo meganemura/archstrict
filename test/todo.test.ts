@@ -78,14 +78,22 @@ describe("todo", () => {
     });
   });
 
-  test("todo never adds after the first run, even when a new violation appears", async () => {
+  test("todo never adds after the first run, even when a new violation appears in an already-declared module", async () => {
     await withTempProject(async (root) => {
       mkdirSync(join(root, "src", "app"), { recursive: true });
+      mkdirSync(join(root, "src", "shared"), { recursive: true });
+      writeFileSync(join(root, "src", "shared", "module.ts"), "export const shared = 1;\n");
       writeFileSync(join(root, "src", "app", "module.ts"), "export const app = 1;\n");
-      init(root);
+      init(root); // declares both app and shared now, while neither bypasses the other
       await todo(root); // first run: nothing to freeze yet
 
-      writeBypassProject(root); // introduces a new violation
+      // Introduces a real violation, but only within modules init already
+      // declared - no new directory, so no re-declaration is needed for
+      // this specific case.
+      writeFileSync(
+        join(root, "src", "app", "module.ts"),
+        "import { shared } from \"../shared/module.ts\";\nexport const x = shared;\n",
+      );
       const result = await todo(root);
       expect(result.firstRun).toBe(false);
       expect(result.added).toBe(0); // never adds again, even though a real violation now exists
@@ -95,13 +103,56 @@ describe("todo", () => {
     });
   });
 
+  test("a module directory added after init is invisible to check - declare, not discover, even across a re-run", async () => {
+    await withTempProject(async (root) => {
+      mkdirSync(join(root, "src", "app"), { recursive: true });
+      writeFileSync(join(root, "src", "app", "module.ts"), "export const app = 1;\n");
+      init(root); // declares only "app" - "shared" doesn't exist yet
+
+      writeBypassProject(root); // adds src/shared/ AND makes app bypass it, without re-running init
+
+      // Real behavior change from v0: a directory init never declared is
+      // not a module at all, so an edge into it resolves outside every
+      // declared module - not a public-surface-bypass violation, because
+      // there is no declared surface to bypass. This is the direct
+      // consequence of "declare, not discover" (measured wrong under v0's
+      // own index.ts-presence discovery: NestJS's and Drizzle's own real
+      // code showed an undeclared directory is not evidence of an
+      // enforced boundary either way).
+      const beforeReinit = await check(root);
+      expect(beforeReinit.violations).toHaveLength(0);
+      expect(beforeReinit.modules).toBe(1); // only "app" is declared; "shared" isn't a module yet
+
+      // Re-running init does NOT add "shared" to declaredModules either:
+      // init never rewrites an existing archstrict.config.ts (a hand-edited
+      // config must never be clobbered - the same guarantee "is idempotent"
+      // in init.test.ts already covers). It only regenerates
+      // archstrict.generated.ts's own module-name union, which does pick up
+      // "shared" - a real signal a project owner would see (a stale name
+      // appearing in ModuleName that declaredModules doesn't cover yet),
+      // just not one that changes what check itself analyzes. Declaring a
+      // genuinely new module means hand-adding its own declaredModules
+      // entry - the same real trade-off Prisma's own architecture.config.json
+      // makes (a new package there needs its own new config entry too, not
+      // automatic discovery).
+      const reinitResult = init(root);
+      expect(reinitResult.configWritten).toBe(false);
+      expect(reinitResult.moduleNames).toEqual(["app", "shared"]);
+      expect(readFileSync(reinitResult.generatedPath, "utf8")).toContain('"app" | "shared"');
+
+      const afterReinit = await check(root);
+      expect(afterReinit.modules).toBe(1); // declaredModules in the untouched config still names only "app"
+      expect(afterReinit.violations).toHaveLength(0);
+    });
+  });
+
   test("a strict module never gets a todo entry, not even on the first run", async () => {
     await withTempProject(async (root) => {
       writeBypassProject(root);
       writeFileSync(
         join(root, "archstrict.config.ts"),
         `import type { Config } from "./archstrict.generated.js";\n` +
-          `export default { modules: "src/*", kinds: { flat: "src/*" }, strict: ["shared"], because: "test" } satisfies Config;\n`,
+          `export default { declaredModules: [{ name: "app", glob: "src/app/**", surface: "index.ts" }, { name: "shared", glob: "src/shared/**", surface: "index.ts" }], strict: ["shared"], because: "test" } satisfies Config;\n`,
       );
       init(root); // writes archstrict.generated.ts; leaves the hand-written config alone
 
@@ -124,7 +175,7 @@ describe("todo", () => {
       writeFileSync(
         join(root, "archstrict.config.ts"),
         `import type { Config } from "./archstrict.generated.js";\n` +
-          `export default { modules: "src/*", kinds: { flat: "src/*" }, strict: ["shared"], because: "test" } satisfies Config;\n`,
+          `export default { declaredModules: [{ name: "app", glob: "src/app/**", surface: "index.ts" }, { name: "shared", glob: "src/shared/**", surface: "index.ts" }], strict: ["shared"], because: "test" } satisfies Config;\n`,
       );
 
       const result = await check(root);

@@ -22,6 +22,15 @@ const BECAUSE =
   "a module matching no kind is unchecked, not passing (deptrac's --fail-on-uncovered)";
 
 export function checkUncoveredModules(graph: ModuleGraph, config: Config): Violation[] {
+  // No v0-style kinds declared at all (the CLI cutover's own interim
+  // state - a project using only declaredModules/classify has nothing
+  // here to check yet; a later ticket gives this rule a tag-general
+  // equivalent). Returning cleanly, not throwing: an absent kinds field
+  // is a real, honest state a fresh v1 project is in, not a config error.
+  if (config.kinds === undefined || config.modules === undefined) return [];
+  const kinds = config.kinds;
+  const modulesGlob = config.modules;
+
   // Validated up front, independent of graph.modules: an unsupported
   // pattern shape is unsupported whether or not the loop below ever
   // reaches a module that would have exposed it.
@@ -30,8 +39,8 @@ export function checkUncoveredModules(graph: ModuleGraph, config: Config): Viola
   const violations: Violation[] = [];
 
   for (const [name, module] of graph.modules) {
-    const matchingKinds = Object.entries(config.kinds).filter(
-      ([, pattern]) => kindPatternNames(pattern, config.modules, name) === true,
+    const matchingKinds = Object.entries(kinds).filter(
+      ([, pattern]) => kindPatternNames(pattern, modulesGlob, name) === true,
     );
 
     if (matchingKinds.length > 1) {
@@ -47,7 +56,7 @@ export function checkUncoveredModules(graph: ModuleGraph, config: Config): Viola
         path: module.dir,
         line: 1,
         column: 1,
-        evidence: `module '${name}' matches no kind in ${JSON.stringify(config.kinds)}`,
+        evidence: `module '${name}' matches no kind in ${JSON.stringify(kinds)}`,
         because: BECAUSE,
         next: `add '${name}' to an existing kind's pattern, or give it its own kind in archstrict.config.ts`,
       });

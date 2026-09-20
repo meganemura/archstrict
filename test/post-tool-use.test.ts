@@ -62,11 +62,11 @@ describe("post-tool-use hook", () => {
       writeFileSync(importer, "import { shared } from \"../shared/module.ts\";\nexport const x = shared;\n");
       writeFileSync(
         join(root, "archstrict.generated.ts"),
-        "export type ModuleName = \"app\" | \"shared\";\nexport type Config = { modules: string; surface?: string; kinds: Record<string, string>; because: string };\n",
+        "export type ModuleName = \"app\" | \"shared\";\nexport type Config = { surface?: string; declaredModules: readonly { name: string; glob: string; surface: string }[]; because: string };\n",
       );
       writeFileSync(
         join(root, "archstrict.config.ts"),
-        "import type { Config } from \"./archstrict.generated.js\";\nexport default { modules: \"src/*\", kinds: { flat: \"src/*\" }, because: \"test\" } satisfies Config;\n",
+        "import type { Config } from \"./archstrict.generated.js\";\nexport default { declaredModules: [{ name: \"app\", glob: \"src/app/**\", surface: \"index.ts\" }, { name: \"shared\", glob: \"src/shared/**\", surface: \"index.ts\" }], because: \"test\" } satisfies Config;\n",
       );
       installArchstrictBin(root);
 
@@ -91,11 +91,11 @@ describe("post-tool-use hook", () => {
       writeFileSync(clean, "export const app = 1;\n");
       writeFileSync(
         join(root, "archstrict.generated.ts"),
-        "export type ModuleName = \"app\";\nexport type Config = { modules: string; surface?: string; kinds: Record<string, string>; because: string };\n",
+        "export type ModuleName = \"app\";\nexport type Config = { surface?: string; declaredModules: readonly { name: string; glob: string; surface: string }[]; because: string };\n",
       );
       writeFileSync(
         join(root, "archstrict.config.ts"),
-        "import type { Config } from \"./archstrict.generated.js\";\nexport default { modules: \"src/*\", kinds: { flat: \"src/*\" }, because: \"test\" } satisfies Config;\n",
+        "import type { Config } from \"./archstrict.generated.js\";\nexport default { declaredModules: [{ name: \"app\", glob: \"src/app/**\", surface: \"index.ts\" }], because: \"test\" } satisfies Config;\n",
       );
       installArchstrictBin(root);
 
@@ -112,9 +112,9 @@ describe("post-tool-use hook", () => {
       mkdirSync(join(root, "src", "app"), { recursive: true });
       const file = join(root, "src", "app", "module.ts");
       writeFileSync(file, "export const app = 1;\n");
-      // A config missing required fields (kinds, because) - check reports
-      // this as { error: string } with exit 1, not a real CheckResult.
-      writeFileSync(join(root, "archstrict.config.ts"), "export default { modules: 'src/*' };\n");
+      // A config missing required fields (declaredModules, because) - check
+      // reports this as { error: string } with exit 1, not a real CheckResult.
+      writeFileSync(join(root, "archstrict.config.ts"), "export default { surface: 'index.ts' };\n");
       installArchstrictBin(root);
 
       const output = runHook({ tool_name: "Edit", tool_input: { file_path: file }, cwd: root });

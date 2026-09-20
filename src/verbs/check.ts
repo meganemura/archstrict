@@ -80,7 +80,12 @@ export type CheckResult = {
   suggestions: DeprecatedSuggestion[];
 };
 
-const REQUIRED_FIELDS = ["modules", "kinds", "because"] as const;
+// declaredModules replaces modules/kinds as the required field, the same
+// class of config error as a missing kinds used to be: check/todo build
+// their graph from declaredModules unconditionally now, so a config
+// without it cannot be analyzed at all - `archstrict init` is what writes
+// it.
+const REQUIRED_FIELDS = ["declaredModules", "because"] as const;
 
 // A config file cannot know its own path (init.ts's own generated template
 // says the same); the loader is what adds it, after reading the file, not
@@ -290,17 +295,15 @@ export function applyTodo(graph: ModuleGraph, config: Config, result: CheckResul
 export async function check(projectRoot: string, focusFile?: string): Promise<CheckResult> {
   const configPath = resolve(projectRoot, "archstrict.config.ts");
   const config = await loadConfig(configPath);
-  // The config's own modules field is the source of truth, not a
-  // parameter — a config saying modules: "lib/*" must scan lib/, not
-  // whatever the caller happened to hard-code.
-  // config.declaredModules is deliberately not passed here yet: flipping
-  // check's live scope from the modules glob to declaredModules' broader
-  // (whole-project) file discovery is a real behavior change (outsideFiles
-  // widens to include archstrict.config.ts itself, etc.), not something
-  // this ticket's own acceptance criteria asked for. That cutover belongs
-  // with the ticket that also migrates rules 3/4/5 off kinds/layers, so
-  // both changes land together rather than v0 behavior shifting twice.
-  const graph = buildModuleGraph({ projectRoot, modulesGlob: config.modules, surface: config.surface });
+  // declaredModules is the only source of scope now - REQUIRED_FIELDS
+  // above already guarantees a loaded config has it. config.exclude keeps
+  // a project's own root-level files (archstrict.config.ts itself,
+  // dist/, etc.) out of scope entirely; `init` writes one by default.
+  const graph = buildModuleGraph({
+    projectRoot,
+    declaredModules: config.declaredModules,
+    exclude: config.exclude,
+  });
   const result = applyTodo(graph, config, runRules(graph, config));
   return focusFile === undefined ? result : filterToFile(result, focusFile);
 }

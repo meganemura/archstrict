@@ -17,6 +17,14 @@
 // whether or not archstrict is ever published, and matches spike 4's own
 // fixture (a self-contained `Config<ModuleName>` beside the generated
 // file, not a package import).
+//
+// As of the CLI cutover, declaredModules is the only thing init writes
+// for module scope - not modules/kinds (index.ts-presence discovery is
+// gone; a barrel index.ts was measured NOT to be evidence of an enforced
+// boundary in NestJS's or Drizzle's own real code). init still does the
+// SAME discovery walk it always did (buildModuleGraph's own v0 path) to
+// find the directories to declare - discovery survives as init's own
+// one-time suggestion, never as a runtime assumption `check`/`todo` make.
 import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { buildModuleGraph } from "../module-graph.js";
@@ -28,9 +36,9 @@ export type InitResult = {
   moduleNames: string[];
 };
 
-// The flat preset, v0's only one: every module under the glob is the same
-// kind, checked for a public surface and cycles only. `because` is
-// mandatory even for a shipped preset's own rule.
+// The flat preset, the only one init writes: every module under the glob
+// is the same kind, checked for a public surface and cycles only.
+// `because` is mandatory even for a shipped preset's own rule.
 const FLAT_BECAUSE =
   "flat preset: every module under the glob is one kind, checked for its public surface and cycles";
 
@@ -51,14 +59,7 @@ export type ModuleName = ${union};
 // configPath is added by the loader, not written here - a config file
 // cannot know its own path.
 export type Config = {
-  modules: string;
-  // The public-surface file name every module is checked against, e.g.
-  // "index.ts". Not fixed by the tool - a project names its own. Optional:
-  // a hand-edited config that omits it gets the same "index.ts" default
-  // init itself always writes explicitly.
   surface?: string;
-  kinds: Record<string, string>;
-  layers?: readonly string[];
   deprecated?: readonly {
     from: ModuleName;
     to: ModuleName;
@@ -69,16 +70,30 @@ export type Config = {
   // check reports any existing entry in one of these modules' todo as a
   // violation in its own right.
   strict?: readonly ModuleName[];
-  // Declared modules (v1) - the source of truth going forward, replacing
-  // index.ts-presence discovery (measured wrong: a barrel index.ts is not
-  // evidence of an enforced boundary in real code). init writes one entry
-  // per directory it finds; modules/kinds above stay too, until every rule
-  // has migrated off them.
-  declaredModules?: readonly {
+  // A specific known cycle (naming any two modules in it, in either
+  // order) exempted from rule 2 - an entry naming a pair no longer in any
+  // real cycle is itself flagged (stale-cycle-exception).
+  ignoredCycles?: readonly (readonly [string, string])[];
+  // Glob patterns kept out of analysis entirely - not a member of any
+  // module, not a source of edges, not a target either. init writes one
+  // default: this project's own root-level files (archstrict.config.ts,
+  // archstrict.generated.ts) are never module content.
+  exclude?: readonly string[];
+  // glob -> tags, most-specific-glob-wins. Independent of declaredModules
+  // below - tags classify any file; declaredModules says which files form
+  // an enforced module boundary.
+  classify?: readonly { glob: string; tags: readonly string[] }[];
+  // Declared modules - the source of truth for module boundaries.
+  // \`surface\` may itself be a glob (a module's public surface can be
+  // more than one file).
+  declaredModules: readonly {
     name: ModuleName;
     glob: string;
     surface: string;
   }[];
+  // A directory that must hold no code at all (archspec's own
+  // "empty component" idea) - a violation is any file matching the glob.
+  mustBeEmpty?: readonly { glob: string; because: string }[];
   because: string;
 };
 `;
@@ -100,9 +115,11 @@ function configFileContents(modulesGlob: string, surface: string, moduleNames: s
 // that reaches any other file inside a module is a violation. A module
 // with no ${surface} is entirely private - every import into it violates.
 export default {
-  modules: ${JSON.stringify(modulesGlob)},
   surface: ${JSON.stringify(surface)},
-  kinds: { flat: ${JSON.stringify(modulesGlob)} },
+  // Root-level files (this config, the generated union type) are never
+  // module content - kept out of analysis entirely, not just uncounted.
+  exclude: ["*.ts"],
+  classify: [{ glob: ${JSON.stringify(modulesGlob)}, tags: ["kind:flat"] }],
   declaredModules: [
 ${declaredModulesEntries}
   ],

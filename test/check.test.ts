@@ -20,8 +20,7 @@ describe("loadConfig", () => {
       init(root);
 
       const config = await loadConfig(join(root, "archstrict.config.ts"));
-      expect(config.modules).toBe("src/*");
-      expect(config.kinds).toEqual({ flat: "src/*" });
+      expect(config.declaredModules).toEqual([{ name: "app", glob: "src/app/**", surface: "index.ts" }]);
       expect(config.configPath).toBe(join(root, "archstrict.config.ts"));
       expect(config.because.length).toBeGreaterThan(0);
     });
@@ -67,7 +66,7 @@ describe("loadConfig", () => {
       writeFileSync(
         configPath,
         `import type { Config } from "./archstrict.generated.js";\n` +
-          `export default { modules: "src/*", kinds: { flat: "src/*" }, strict: ["app"], because: "test" } satisfies Config;\n`,
+          `export default { declaredModules: [{ name: "app", glob: "src/app/**", surface: "index.ts" }], strict: ["app"], because: "test" } satisfies Config;\n`,
       );
       const second = await loadConfig(configPath);
       expect(second.strict).toEqual(["app"]);

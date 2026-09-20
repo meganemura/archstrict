@@ -29,7 +29,14 @@ export type Config = {
   // check) need somewhere to point a violation at. A test config that has
   // no real file uses a placeholder like "<test>".
   configPath: string;
-  modules: string; // e.g. "src/*" — must match module-graph.ts's BuildOptions.modulesGlob
+  // Optional as of the CLI cutover: `init` no longer writes it (declaredModules
+  // is the source of truth now), and check/todo build the graph from
+  // declaredModules unconditionally. Still read by rules 3/4 (uncovered,
+  // empty-rule-set) and their `kinds` field, both still keyed on it until
+  // a later ticket migrates them onto tags; both rules return no violations
+  // at all when it's absent (an honest interim gap, not a crash) rather
+  // than assuming every project still has it.
+  modules?: string; // e.g. "src/*" — must match module-graph.ts's BuildOptions.modulesGlob
   // The public-surface file name (module-graph.ts's own `surface` option).
   // Not fixed by the tool: a project names its own, and `init` writes the
   // default ("index.ts") explicitly rather than detecting an existing
@@ -43,7 +50,8 @@ export type Config = {
   // instance) is out of scope for v0's single-level module model and is a
   // config error, not a rule violation — assertKindPatternsSupported throws
   // rather than a rule silently treating it as "matches nothing".
-  kinds: Record<string, string>;
+  // Optional for the same reason `modules` is - see its own comment.
+  kinds?: Record<string, string>;
   layers?: readonly string[];
   // A from -> to module edge whose count must not increase (rule 5).
   // `because` is mandatory: a deprecated edge names a real design tradeoff,
@@ -188,9 +196,11 @@ export function invalidKindPatternMessage(pattern: string, modulesGlob: string):
 // pattern through unvalidated. Measured: rule 4's own "no modules at all"
 // case did exactly this.
 export function assertKindPatternsSupported(config: Config): void {
+  if (config.kinds === undefined || config.modules === undefined) return; // no v0-style kinds declared at all: nothing to validate
+  const modules = config.modules;
   for (const pattern of Object.values(config.kinds)) {
-    if (kindPatternNames(pattern, config.modules, "") === "invalid") {
-      throw new Error(invalidKindPatternMessage(pattern, config.modules));
+    if (kindPatternNames(pattern, modules, "") === "invalid") {
+      throw new Error(invalidKindPatternMessage(pattern, modules));
     }
   }
 }

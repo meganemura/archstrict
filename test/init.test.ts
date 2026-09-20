@@ -31,7 +31,8 @@ describe("init", () => {
       expect(generated).toContain('"app" | "shared"');
 
       const config = readFileSync(result.configPath, "utf8");
-      expect(config).toContain('modules: "src/*"');
+      expect(config).toContain('name: "app"');
+      expect(config).toContain('name: "shared"');
       expect(config).toContain("satisfies Config");
     });
   });
@@ -90,19 +91,24 @@ describe("init", () => {
     });
   });
 
-  test("a config using every optional field (layers, deprecated, strict) typechecks against real tsc", () => {
+  test("a config using every optional field (deprecated, strict, ignoredCycles, exclude, classify, mustBeEmpty) typechecks against real tsc", () => {
     withTempProject(["app", "shared"], (root) => {
       init(root);
       writeFileSync(
         join(root, "archstrict.config.ts"),
         `import type { Config } from "./archstrict.generated.js";
 export default {
-  modules: "src/*",
   surface: "index.ts",
-  kinds: { app: "src/app", shared: "src/shared" },
-  layers: ["app", "shared"],
+  exclude: ["*.ts"],
+  classify: [{ glob: "src/*", tags: ["kind:flat"] }],
+  declaredModules: [
+    { name: "app", glob: "src/app/**", surface: "index.ts" },
+    { name: "shared", glob: "src/shared/**", surface: "index.ts" },
+  ],
   deprecated: [{ from: "app", to: "shared", count: 0, because: "test" }],
   strict: ["shared"],
+  ignoredCycles: [["app", "shared"]],
+  mustBeEmpty: [{ glob: "src/legacy/**", because: "test" }],
   because: "test",
 } satisfies Config;
 `,
@@ -140,8 +146,7 @@ export default {
         join(root, "archstrict.config.ts"),
         `import type { Config } from "./archstrict.generated.js";
 export default {
-  modules: "src/*",
-  kinds: { flat: "src/*" },
+  declaredModules: [{ name: "app", glob: "src/app/**", surface: "index.ts" }],
   because: "test",
 } satisfies Config;
 `,
