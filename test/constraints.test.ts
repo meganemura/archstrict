@@ -220,6 +220,31 @@ describe("checkOrder", () => {
     };
     expect(() => checkOrder(fakeGraph([edge({})]), cfg)).toThrow(/does not list 'unlisted'/);
   });
+
+  test("a within-value entirely absent from sequence is out of this rule's scope, not a config error - found by running against Prisma's own real config, whose layerOrder covers only 3 of its 5 real domains", () => {
+    const cfg: Config = {
+      configPath: "<test>",
+      modules: "src/*",
+      kinds: { flat: "src/*" },
+      because: "test config",
+      classify: [
+        { glob: "src/a.ts", tags: ["domain:targets", "layer:core"] },
+        { glob: "src/b.ts", tags: ["domain:targets", "layer:core"] },
+      ],
+      edges: {
+        order: [
+          {
+            tagNamespace: "layer",
+            within: "domain",
+            sequence: { sql: ["core", "runtime"] }, // no "targets" entry at all
+            direction: "downward-only",
+            because: "dependencies flow toward core",
+          },
+        ],
+      },
+    };
+    expect(checkOrder(fakeGraph([edge({})]), cfg)).toEqual([]);
+  });
 });
 
 describe("checkPoint", () => {

@@ -124,6 +124,12 @@ export type BuildOptions = {
   surface?: string; // the public-surface file name, default "index.ts" - v0 discovery only
   // v1 declaration path - takes priority over `modulesGlob` when present.
   declaredModules?: readonly DeclaredModule[];
+  // Glob patterns excluded from the declared-mode file scan entirely -
+  // config.exclude (v1 only; v0 discovery has no equivalent, since its
+  // scope is already narrowed to one modules root). A file matching any
+  // one pattern is invisible to every rule, not just uncounted: it is not
+  // a module member, not a source of edges, not a target either.
+  exclude?: readonly string[];
 };
 
 export const DEFAULT_SURFACE = "index.ts";
@@ -195,14 +201,20 @@ export function toProjectRelativePosix(filePath: string, projectRoot: string): s
 }
 
 // Recursively lists every .ts file under `projectRoot`, excluding
-// node_modules and dist - the candidate set declared-module membership and
-// surface matching both filter from. Declared modules can live anywhere
-// under the project, not one fixed single-level root the way v0's
-// discovery does, so there is no narrower directory to start from.
-function listAllSourceFiles(projectRoot: string): string[] {
+// node_modules, dist, and every config.exclude glob - the candidate set
+// declared-module membership and surface matching both filter from.
+// Declared modules can live anywhere under the project, not one fixed
+// single-level root the way v0's discovery does, so there is no narrower
+// directory to start from.
+function listAllSourceFiles(projectRoot: string, excludeGlobs: readonly string[]): string[] {
+  const compiledExcludes = excludeGlobs.map((g) => compileGlob(g));
   return ts.sys
     .readDirectory(projectRoot, [".ts"], ["**/node_modules/**", "**/dist/**"])
-    .filter((f) => !f.endsWith(".d.ts"));
+    .filter((f) => !f.endsWith(".d.ts"))
+    .filter((f) => {
+      const rel = toProjectRelativePosix(f, projectRoot);
+      return !compiledExcludes.some((glob) => glob.test(rel));
+    });
 }
 
 function buildDeclaredModules(
@@ -266,7 +278,7 @@ function loadCompilerOptions(projectRoot: string): ts.CompilerOptions {
 }
 
 export function buildModuleGraph(options: BuildOptions): ModuleGraph {
-  const { projectRoot, declaredModules, surface = DEFAULT_SURFACE } = options;
+  const { projectRoot, declaredModules, surface = DEFAULT_SURFACE, exclude = [] } = options;
   const compilerOptions = loadCompilerOptions(projectRoot);
 
   let modules: Map<string, Module>;
@@ -276,7 +288,7 @@ export function buildModuleGraph(options: BuildOptions): ModuleGraph {
 
   if (declaredModules !== undefined) {
     rootDir = projectRoot;
-    rootNames = listAllSourceFiles(projectRoot);
+    rootNames = listAllSourceFiles(projectRoot, exclude);
     modules = buildDeclaredModules(projectRoot, declaredModules, rootNames);
     resolveModuleForFile = (filePath) => moduleForDeclaredFile(filePath, projectRoot, declaredModules);
   } else {

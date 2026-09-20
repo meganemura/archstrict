@@ -142,20 +142,28 @@ export function checkAllowDeny(graph: ModuleGraph, config: Config): ConstraintVi
   return violations;
 }
 
-// A tag value not present in its own rule's sequence is a config error
-// (rule 4's territory - a rule that can't place a real value must not
-// silently pass it), validated once up front rather than per edge.
-function assertSequenceCoversValue(rule: OrderRule, withinValue: string | undefined, tag: string): void {
-  const sequence = rule.sequence[withinValue ?? ""];
-  if (sequence === undefined) {
-    throw new Error(
-      `order rule for '${rule.tagNamespace}' has no sequence entry for '${withinValue ?? "(unscoped)"}'`,
-    );
-  }
+// Two different things, confirmed distinct by running against Prisma's own
+// real config: a `within` value absent from `sequence` ENTIRELY (e.g.
+// Prisma's own layerOrder has no "targets" or "extensions" entry at all -
+// those domains simply have no internal layering declared) is not this
+// rule's concern for that domain - silently out of scope, not an error.
+// A `within` value that DOES have a sequence, but doesn't list this
+// specific layer value, is the real config error: classify assigned a
+// value the config's author forgot to place.
+function sequenceFor(rule: OrderRule, withinValue: string | undefined): readonly string[] | undefined {
+  return rule.sequence[withinValue ?? ""];
+}
+
+function assertSequenceListsValue(
+  rule: OrderRule,
+  withinValue: string | undefined,
+  sequence: readonly string[],
+  tag: string,
+): void {
   const value = tag.slice(rule.tagNamespace.length + 1);
   if (!sequence.includes(value)) {
     throw new Error(
-      `order rule for '${rule.tagNamespace}' (within '${withinValue ?? "(unscoped)"}') does not list '${value}' - every value classify assigns must appear in its sequence`,
+      `order rule for '${rule.tagNamespace}' (within '${withinValue ?? "(unscoped)"}') does not list '${value}' - every value classify assigns within that scope must appear in its sequence`,
     );
   }
 }
@@ -186,10 +194,12 @@ export function checkOrder(graph: ModuleGraph, config: Config): ConstraintViolat
         withinValue = sourceWithin.slice(withinPrefix.length);
       }
 
-      assertSequenceCoversValue(rule, withinValue, sourceLayer);
-      assertSequenceCoversValue(rule, withinValue, targetLayer);
+      const sequence = sequenceFor(rule, withinValue);
+      if (sequence === undefined) continue; // this within-value has no declared sequence at all: out of scope, not an error
 
-      const sequence = rule.sequence[withinValue ?? ""]!;
+      assertSequenceListsValue(rule, withinValue, sequence, sourceLayer);
+      assertSequenceListsValue(rule, withinValue, sequence, targetLayer);
+
       const sourceIndex = sequence.indexOf(sourceLayer.slice(namespacePrefix.length));
       const targetIndex = sequence.indexOf(targetLayer.slice(namespacePrefix.length));
 

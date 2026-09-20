@@ -81,6 +81,30 @@ describe("checkCycles against a declared-module graph", () => {
   });
 });
 
+describe("config.exclude", () => {
+  test("a file matching an exclude glob is invisible entirely - not a member, not a source of edges, not a target", () => {
+    // Found necessary by running the constraint engine against a real
+    // cloned project: without it, plain test files sit in the same
+    // `plane:shared` classify entry as the source they cover, and a test
+    // importing straight from an internal module (normal, expected in a
+    // test file) reads as a real tag-boundary violation dependency-cruiser
+    // itself never sees, because dependency-cruiser's own config excludes
+    // test files from analysis entirely.
+    const withoutExclude = buildModuleGraph({ projectRoot: FIXTURE, declaredModules });
+    const consumerFilesBefore = withoutExclude.modules.get("consumer")!.files.length;
+    expect(consumerFilesBefore).toBeGreaterThan(0);
+
+    const withExclude = buildModuleGraph({
+      projectRoot: FIXTURE,
+      declaredModules,
+      exclude: ["src/consumer/**"],
+    });
+    expect(withExclude.modules.get("consumer")!.files).toHaveLength(0);
+    expect(withExclude.edges.some((e) => e.fromFile.includes("/consumer/"))).toBe(false);
+    expect(withExclude.edges.some((e) => e.resolvedFile.includes("/consumer/"))).toBe(false);
+  });
+});
+
 describe("checkTypeLeaks against a declared-module graph", () => {
   test("flags the same 6 leaks the modulesGlob-built graph does", () => {
     const graph = buildModuleGraph({
