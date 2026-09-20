@@ -107,6 +107,22 @@ describe("post-tool-use hook", () => {
     });
   });
 
+  test("surfaces a clear message when the project's own config is broken, without throwing", () => {
+    withTempProject((root) => {
+      mkdirSync(join(root, "src", "app"), { recursive: true });
+      const file = join(root, "src", "app", "module.ts");
+      writeFileSync(file, "export const app = 1;\n");
+      // A config missing required fields (kinds, because) - check reports
+      // this as { error: string } with exit 1, not a real CheckResult.
+      writeFileSync(join(root, "archstrict.config.ts"), "export default { modules: 'src/*' };\n");
+      installArchstrictBin(root);
+
+      const output = runHook({ tool_name: "Edit", tool_input: { file_path: file }, cwd: root });
+      expect(output.hookSpecificOutput?.additionalContext).toContain("archstrict: check did not run");
+      expect(output.hookSpecificOutput?.additionalContext).toContain("missing required field");
+    });
+  });
+
   test("says nothing when the project has no archstrict installed", () => {
     withTempProject((root) => {
       mkdirSync(join(root, "src", "app"), { recursive: true });

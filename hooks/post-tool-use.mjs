@@ -80,6 +80,17 @@ function main() {
   }
 
   const result = JSON.parse(stdout);
+  // A config or missing-file error (a required field absent, an
+  // unsupported kinds pattern shape) reports as { error: string } instead
+  // of a real CheckResult, exit 1, no stdout-less failure - so the branch
+  // above never catches it. Surfaced, not silently ignored: the project
+  // has archstrict installed but something about its own setup is broken,
+  // which the agent editing it needs to know, the same as a real
+  // violation would.
+  if (typeof result.error === "string") {
+    emit(`archstrict: check did not run (${result.error}).`);
+    return;
+  }
   if (result.violations.length === 0) {
     emit();
     return;

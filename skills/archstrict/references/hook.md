@@ -12,7 +12,7 @@ Every one of these is silent by design, not a failure:
 
 ## Why it might report "check did not run"
 
-When `archstrict check` exits without writing any JSON at all - `check` exiting 1 with violations present is expected, normal output, read as data, not this case. A config error writes no JSON before throwing: `archstrict.config.ts` missing a required field, an unsupported `kinds` pattern shape, or the modules glob's root directory not existing yet (run `archstrict init` first).
+When `archstrict check --json` reports `{ "error": "..." }` instead of a real result, or exits with no output at all - `check` exiting 1 with violations present is expected, normal output, read as data, not this case. A config error (`archstrict.config.ts` missing a required field, an unsupported `kinds` pattern shape, the modules glob's root directory not existing yet, `check <file>` naming a file that doesn't exist) reports this way; the message names which one. Run `archstrict init` first if the modules root doesn't exist yet.
 
 ## Path resolution
 
