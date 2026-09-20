@@ -41,6 +41,7 @@ function edge(overrides: Partial<Edge>): Edge {
     fromPosition: { line: 1, column: 1 },
     specifier: "./b.js",
     isTypeOnly: false,
+    isDynamic: false,
     resolvedFile: "/project/src/b.ts",
     toModule: "m",
     externalPackage: undefined,
@@ -258,5 +259,77 @@ describe("checkPoint", () => {
     expect(checkPoint(fakeGraph([fromAdapter]), cfg)).toHaveLength(0);
     const violations = checkPoint(fakeGraph([fromCore]), cfg);
     expect(violations).toHaveLength(1);
+  });
+
+  test("edgeType: \"value\" exempts a type-only edge into the same forbidden target - Prisma's own CLI-control-seam rule", () => {
+    const cfg: Config = {
+      configPath: "<test>",
+      modules: "src/*",
+      kinds: { flat: "src/*" },
+      because: "test config",
+      edges: {
+        point: [
+          {
+            from: "src/commands/**",
+            to: "src/migration/**",
+            edgeType: "value",
+            because: "CLI command modules must reach migration-tools through src/control-api",
+          },
+        ],
+      },
+    };
+    const typeOnly = edge({
+      fromFile: "/project/src/commands/a.ts",
+      resolvedFile: "/project/src/migration/b.ts",
+      isTypeOnly: true,
+    });
+    const value = edge({
+      fromFile: "/project/src/commands/a.ts",
+      resolvedFile: "/project/src/migration/b.ts",
+      isTypeOnly: false,
+    });
+
+    expect(checkPoint(fakeGraph([typeOnly]), cfg)).toHaveLength(0);
+    expect(checkPoint(fakeGraph([value]), cfg)).toHaveLength(1);
+  });
+});
+
+describe("edge filters (edgeType, importForm)", () => {
+  test("importForm: \"static\" exempts a dynamic import(), \"dynamic\" exempts a static one", () => {
+    const cfg: Config = {
+      configPath: "<test>",
+      modules: "src/*",
+      kinds: { flat: "src/*" },
+      because: "test config",
+      edges: {
+        point: [{ from: "src/**", to: "src/internal/**", importForm: "static", because: "no lazy exception here" }],
+      },
+    };
+    const dynamicEdge = edge({ resolvedFile: "/project/src/internal/x.ts", isDynamic: true });
+    const staticEdge = edge({ resolvedFile: "/project/src/internal/x.ts", isDynamic: false });
+
+    expect(checkPoint(fakeGraph([dynamicEdge]), cfg)).toHaveLength(0);
+    expect(checkPoint(fakeGraph([staticEdge]), cfg)).toHaveLength(1);
+  });
+
+  test("allowDeny's own edgeType filter works the same way as point's", () => {
+    const cfg: Config = {
+      configPath: "<test>",
+      modules: "src/*",
+      kinds: { flat: "src/*" },
+      because: "test config",
+      classify: [
+        { glob: "src/a.ts", tags: ["domain:framework"] },
+        { glob: "src/b.ts", tags: ["domain:sql"] },
+      ],
+      edges: {
+        allowDeny: [{ source: "domain:framework", targetNamespace: "domain", allow: [], edgeType: "value", because: "value imports only" }],
+      },
+    };
+    const typeOnly = edge({ isTypeOnly: true });
+    const value = edge({ isTypeOnly: false });
+
+    expect(checkAllowDeny(fakeGraph([typeOnly]), cfg)).toHaveLength(0);
+    expect(checkAllowDeny(fakeGraph([value]), cfg)).toHaveLength(1);
   });
 });

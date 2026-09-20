@@ -15,11 +15,9 @@
 // clear the same edge or each independently condemn it; neither knows the
 // other exists.
 //
-// `edgeType`/`importForm` filters on `point` are NOT applied here - that
-// is a later ticket's job (Edge gaining `isDynamic`, and the filter logic
-// itself); every edge matches every point rule's shape here regardless of
-// type-only/value or static/dynamic.
-//
+// `edgeType`/`importForm` filter which edges a rule can match at all,
+// checked before the rule's own from/to or allow/deny logic runs. Default
+// "both" for each - unfiltered, matching every prior ticket's edges.
 // Boundary: pure predicates over a ModuleGraph and a Config, same as every
 // other rule file. No I/O, no output formatting, no todo handling.
 import { compileGlob } from "../classify.js";
@@ -63,6 +61,18 @@ function targetRelPathForGlob(edge: Edge, rootDir: string): string | undefined {
   return edge.externalPackage !== undefined ? undefined : toProjectRelativePosix(edge.resolvedFile, rootDir);
 }
 
+function matchesEdgeFilters(
+  edge: Edge,
+  edgeType: "value" | "type" | "both" | undefined,
+  importForm: "static" | "dynamic" | "both" | undefined,
+): boolean {
+  if (edgeType === "value" && edge.isTypeOnly) return false;
+  if (edgeType === "type" && !edge.isTypeOnly) return false;
+  if (importForm === "static" && edge.isDynamic) return false;
+  if (importForm === "dynamic" && !edge.isDynamic) return false;
+  return true;
+}
+
 function matchesPredicate(predicate: FromToPredicate, relPath: string | undefined, tags: Set<string>): boolean {
   if (typeof predicate === "string") {
     return relPath !== undefined && compileGlob(predicate).test(relPath);
@@ -98,6 +108,7 @@ export function checkAllowDeny(graph: ModuleGraph, config: Config): ConstraintVi
     if (targetTags.size === 0) continue;
 
     for (const rule of rules) {
+      if (!matchesEdgeFilters(edge, rule.edgeType, rule.importForm)) continue;
       if (!sourceTags.has(rule.source)) continue;
       if (targetTags.has(rule.source)) continue; // same group as source: unconstrained by this rule
       if (isExemptedByGlobPair(edge, rule.exceptions, rootDir)) continue;
@@ -217,6 +228,7 @@ export function checkPoint(graph: ModuleGraph, config: Config): ConstraintViolat
     const targetRel = targetRelPathForGlob(edge, rootDir);
 
     for (const rule of rules) {
+      if (!matchesEdgeFilters(edge, rule.edgeType, rule.importForm)) continue;
       if (!matchesPredicate(rule.from, sourceRel, sourceTags)) continue;
       if (!matchesPredicate(rule.to, targetRel, targetTags)) continue;
 

@@ -49,6 +49,12 @@ export type Edge = {
   fromPosition: Position;
   specifier: string;
   isTypeOnly: boolean;
+  // A dynamic `import(...)` call, not a static import/export declaration -
+  // e.g. Nx's own enforce-module-boundaries treats a lazy-loaded edge
+  // differently from a static one. Always false for a type-only edge (a
+  // dynamic import is itself always a value expression; TypeScript has no
+  // "import type(...)" call form).
+  isDynamic: boolean;
   resolvedFile: string;
   toModule: string | undefined; // undefined when resolvedFile is outside every module (e.g. a package, or an outside-glob file)
   // Set when the resolved file is a genuine external dependency (a real
@@ -305,6 +311,7 @@ export function buildModuleGraph(options: BuildOptions): ModuleGraph {
     ts.forEachChild(sf, function walk(node) {
       let specifier: ts.Expression | undefined;
       let isTypeOnly = false;
+      let isDynamic = false;
 
       if (ts.isImportDeclaration(node)) {
         specifier = node.moduleSpecifier;
@@ -319,6 +326,7 @@ export function buildModuleGraph(options: BuildOptions): ModuleGraph {
         ts.isStringLiteral(node.arguments[0])
       ) {
         specifier = node.arguments[0];
+        isDynamic = true;
       } else if (
         ts.isImportEqualsDeclaration(node) &&
         ts.isExternalModuleReference(node.moduleReference)
@@ -351,6 +359,7 @@ export function buildModuleGraph(options: BuildOptions): ModuleGraph {
             fromPosition: { line: line + 1, column: character + 1 },
             specifier: specifier.text,
             isTypeOnly,
+            isDynamic,
             resolvedFile: `node:${builtin}`,
             toModule: undefined,
             externalPackage: builtin,
@@ -378,6 +387,7 @@ export function buildModuleGraph(options: BuildOptions): ModuleGraph {
               fromPosition: { line: line + 1, column: character + 1 },
               specifier: specifier.text,
               isTypeOnly,
+              isDynamic,
               resolvedFile,
               toModule,
               externalPackage,

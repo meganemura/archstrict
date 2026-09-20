@@ -112,6 +112,14 @@ export type Config = {
       allow?: readonly string[];
       deny?: readonly string[];
       exceptions?: readonly { from: string; to: string; because: string }[];
+      // Default "both" - rule 1's own convention (a type-only edge still
+      // reaches past a public surface). "static"/"dynamic" default "both"
+      // too: Prisma's own domain/plane rules never distinguish; VS Code's
+      // per-layer external-package restrictions are the motivating case
+      // for edgeType (a type-only import of a forbidden package is
+      // arguably not the same risk as a value import of it).
+      edgeType?: "value" | "type" | "both";
+      importForm?: "static" | "dynamic" | "both";
       because: string;
     }[];
     order?: readonly {

@@ -47,6 +47,7 @@ describe("checkAllowDeny (property)", () => {
         fromPosition: { line: 1, column: 1 },
         specifier: "./b.js",
         isTypeOnly: false,
+        isDynamic: false,
         resolvedFile: "/project/src/b.ts",
         toModule: "m",
         externalPackage: undefined,
