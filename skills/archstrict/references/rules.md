@@ -60,7 +60,7 @@ A directory a team decided must hold no code at all - archspec's own "empty comp
 - next: `move '<file>' out of '<glob>', or drop this mustBeEmpty entry in archstrict.config.ts if the restriction no longer applies`
 - Not freezable: a file that shouldn't exist at all isn't debt to track, it's a file to move or a rule to remove.
 
-## Not one of the six: stale-todo, clean-module-has-todo, and stale-cycle-exception
+## Not a rule of its own: stale-todo, clean-module-has-todo, and stale-cycle-exception
 
 `stale-todo`: a todo entry matches no current violation. Prune it with `archstrict todo`, don't leave it - an unmatched entry hides nothing real.
 
