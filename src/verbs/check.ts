@@ -342,7 +342,7 @@ export function formatText(result: CheckResult): string {
   lines.push(`modules: ${result.modules}`);
   lines.push(`modules without a public surface: ${result.modulesWithoutSurface}`);
   lines.push(`edges: ${result.edges}`);
-  lines.push(`outside the modules glob: ${result.outsideFiles}`);
+  lines.push(`not covered by any declared module: ${result.outsideFiles}`);
   lines.push(`unresolved specifiers: ${result.unresolvedSpecifiers}`);
   lines.push(`unsupported syntax: ${result.unsupportedSyntax}`);
   lines.push(`type leaks: ${result.typeLeaks}`);

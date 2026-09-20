@@ -155,6 +155,23 @@ describe("check", () => {
     });
   });
 
+  test("the text summary's uncovered-file label matches the violation's own vocabulary, not v0's 'modules glob'", async () => {
+    await withTempProject(async (root) => {
+      mkdirSync(join(root, "src", "app"), { recursive: true });
+      writeFileSync(join(root, "src", "app", "module.ts"), "export const app = 1;\n");
+      init(root); // declares only "app" - "other" doesn't exist yet at init time
+
+      mkdirSync(join(root, "src", "other"), { recursive: true });
+      writeFileSync(join(root, "src", "other", "module.ts"), "export const other = 1;\n");
+
+      const result = await check(root);
+      expect(result.outsideFiles).toBe(1);
+      const text = formatText(result);
+      expect(text).toContain("not covered by any declared module: 1");
+      expect(text).not.toContain("modules glob");
+    });
+  });
+
   test("check scans the config's own modules glob, not a hard-coded one", async () => {
     await withTempProject(async (root) => {
       mkdirSync(join(root, "lib", "widgets"), { recursive: true });

@@ -40,7 +40,7 @@ export default defineStep({
       );
     }
     if (args.outsideFiles !== args.rootFileCount) {
-      throw new Error(`expected ${args.rootFileCount} files outside the modules glob, check reported ${args.outsideFiles}`);
+      throw new Error(`expected ${args.rootFileCount} files not covered by any declared module, check reported ${args.outsideFiles}`);
     }
     if (args.unresolvedSpecifiers !== args.expectedUnresolvedSpecifiers) {
       throw new Error(
