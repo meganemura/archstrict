@@ -106,7 +106,7 @@ describe("loadConfig", () => {
     });
   });
 
-  test("an unknown field on an edges entry (e.g. edgeType on an order rule, which order doesn't support) throws", async () => {
+  test("an unknown field on an edges entry (a real typo, not a real Config field) throws", async () => {
     await withTempProject(async (root) => {
       mkdirSync(join(root, "src", "app"), { recursive: true });
       writeFileSync(join(root, "src", "app", "module.ts"), "export const app = 1;\n");
@@ -117,9 +117,9 @@ describe("loadConfig", () => {
         configPath,
         `import type { Config } from "./archstrict.generated.js";\n` +
           `export default { declaredModules: [{ name: "app", glob: "src/app/**", surface: "index.ts" }], ` +
-          `edges: { order: [{ tagNamespace: "layer", sequence: { "": ["a", "b"] }, direction: "downward-only", edgeType: "value", because: "test" }] }, because: "test" } satisfies Config;\n`,
+          `edges: { order: [{ tagNamespace: "layer", sequence: { "": ["a", "b"] }, direction: "downward-only", bogusField: true, because: "test" }] }, because: "test" } satisfies Config;\n`,
       );
-      await expect(loadConfig(configPath)).rejects.toThrow(/unknown field 'edgeType'/);
+      await expect(loadConfig(configPath)).rejects.toThrow(/unknown field 'bogusField'/);
     });
   });
 

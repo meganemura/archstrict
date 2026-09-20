@@ -233,6 +233,49 @@ describe("checkOrder", () => {
     };
     expect(checkOrder(fakeGraph([edge({})]), cfg)).toEqual([]);
   });
+
+  test("edgeType: \"value\" excludes a real type-only back-reference from an order rule - typeorm's own *DataSourceOptions pattern", () => {
+    // A driver's own options type extending the base options type via
+    // `import type` - a real, structural back-reference (found via a
+    // config-authoring experiment against typeorm/typeorm) that moves
+    // "upward" against a real layering rule but has no runtime effect,
+    // the same kind of edge allowDeny/point can already exclude with
+    // edgeType: "value" but order never could until now.
+    const cfg: Config = {
+      configPath: "<test>",
+      because: "test config",
+      classify: [
+        { glob: "src/driver.ts", tags: ["layer:driver"] },
+        { glob: "src/orchestration.ts", tags: ["layer:orchestration"] },
+      ],
+      edges: {
+        order: [
+          {
+            tagNamespace: "layer",
+            sequence: { "": ["driver", "orchestration"] },
+            direction: "downward-only",
+            edgeType: "value",
+            because: "a driver may not depend on the orchestration layer",
+          },
+        ],
+      },
+    };
+    const typeOnlyEdge = edge({
+      fromFile: "/project/src/driver.ts",
+      resolvedFile: "/project/src/orchestration.ts",
+      isTypeOnly: true,
+    });
+
+    expect(checkOrder(fakeGraph([typeOnlyEdge]), cfg)).toEqual([]);
+
+    // The same edge, as a real value reference, still violates - proving
+    // the filter excludes the type-only case specifically, not silently
+    // disabling the rule altogether.
+    const valueEdge = edge({ ...typeOnlyEdge, isTypeOnly: false });
+    const violations = checkOrder(fakeGraph([valueEdge]), cfg);
+    expect(violations).toHaveLength(1);
+    expect(violations[0]!.rule).toBe("tag-order");
+  });
 });
 
 describe("checkPoint", () => {

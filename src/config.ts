@@ -119,6 +119,15 @@ export type Config = {
       within?: string;
       sequence: Record<string, readonly string[]>;
       direction: "downward-only";
+      // Same convention as allowDeny/point's own edgeType/importForm:
+      // default "both". A real, motivating case (typeorm/typeorm's own
+      // *DataSourceOptions extending its base options type via
+      // `import type`): a structural back-reference that's real but
+      // benign, contaminating an order rule's own findings with the same
+      // recurring pattern unless it can be excluded the way an allowDeny
+      // rule already could.
+      edgeType?: "value" | "type" | "both";
+      importForm?: "static" | "dynamic" | "both";
       because: string;
     }[];
     point?: readonly {
@@ -209,7 +218,7 @@ const ALLOW_DENY_KEYS = [
   "importForm",
   "because",
 ];
-const ORDER_KEYS = ["tagNamespace", "within", "sequence", "direction", "because"];
+const ORDER_KEYS = ["tagNamespace", "within", "sequence", "direction", "edgeType", "importForm", "because"];
 const POINT_KEYS = ["from", "to", "edgeType", "importForm", "because"];
 
 export function assertEdgesShapeValid(config: Config): void {

@@ -64,7 +64,7 @@ edges: {
 },
 ```
 
-`sequence` is `Record<string, string[]>`, never a flat `string[]` - see [rules.md](rules.md#7-tag-boundary--tag-order--point-rule-the-constraint-engine) for what each key means. `edgeType`/`importForm` exist on `allowDeny` and `point` only - `order` currently has no such filter at all (a real, tracked design gap, not a documented limitation to work around).
+`sequence` is `Record<string, string[]>`, never a flat `string[]` - see [rules.md](rules.md#7-tag-boundary--tag-order--point-rule-the-constraint-engine) for what each key means. `edgeType`/`importForm` exist on all three of `allowDeny`, `order`, and `point`, with the same default (`"both"`) and the same semantics on each.
 
 ## tsconfig.json resolution
 

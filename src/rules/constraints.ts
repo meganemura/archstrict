@@ -215,6 +215,8 @@ function computeOrder(
     const targetTags = tagsForTarget(edge, config, rootDir);
 
     rules.forEach((rule, i) => {
+      if (!matchesEdgeFilters(edge, rule.edgeType, rule.importForm)) return;
+
       const namespacePrefix = `${rule.tagNamespace}:`;
       const sourceLayer = [...sourceTags].find((t) => t.startsWith(namespacePrefix));
       const targetLayer = [...targetTags].find((t) => t.startsWith(namespacePrefix));
