@@ -58,6 +58,16 @@ export type ModuleGraph = {
   // the graph so a rule can name it in a message without needing the whole
   // Config passed in just for this one string.
   surface: string;
+  // The modules root directory (e.g. "<projectRoot>/src") - rule 6 (type
+  // leak) needs it as the boundary a declaration must fall inside to count
+  // as internal (a dependency's own types, under node_modules, are not this
+  // project's boundary to keep).
+  rootDir: string;
+  // The program and checker built over every module file - shared here so
+  // a rule needing type information (rule 6) does not build its own
+  // second program over the same files.
+  program: ts.Program;
+  checker: ts.TypeChecker;
 };
 
 export type BuildOptions = {
@@ -232,5 +242,8 @@ export function buildModuleGraph(options: BuildOptions): ModuleGraph {
     unsupportedSyntaxCount,
     unresolvedSpecifierCount,
     surface,
+    rootDir,
+    program,
+    checker: program.getTypeChecker(),
   };
 }
