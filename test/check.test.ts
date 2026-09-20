@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { init } from "../src/verbs/init.js";
@@ -204,7 +204,12 @@ describe("check", () => {
 
       const focused = await check(root, join(root, "src", "app", "a.ts"));
       expect(focused.violations).toHaveLength(1);
-      expect(focused.violations[0]!.path).toBe(join(root, "src", "app", "a.ts"));
+      // buildModuleGraph now realpaths its own projectRoot up front (a
+      // platform's own tmp-directory symlink, e.g. macOS's
+      // /var -> /private/var, would otherwise make every reported path
+      // disagree with `root` as mkdtempSync returned it) - compare against
+      // the same realpath'd form the violation itself now always carries.
+      expect(focused.violations[0]!.path).toBe(realpathSync(join(root, "src", "app", "a.ts")));
     });
   });
 

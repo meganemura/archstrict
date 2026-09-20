@@ -21,7 +21,7 @@
 // the latter as a syntax error, so in practice this count is driven by the
 // former.
 import ts from "typescript";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { builtinModules } from "node:module";
 import { compileGlob, mostSpecificMatch } from "./classify.js";
@@ -58,12 +58,20 @@ export type Edge = {
   resolvedFile: string;
   toModule: string | undefined; // undefined when resolvedFile is outside every module (e.g. a package, or an outside-glob file)
   // Set when the resolved file is a genuine external dependency (a real
-  // npm package, resolved through node_modules or a workspace's own
-  // package.json - TS flags this `isExternalLibraryImport`), not a file
-  // this project's own modules glob covers. A leading "node:" is stripped
-  // so `import "fs"` and `import "node:fs"` name the same package. This is
-  // the raw fact a later rule synthesizes a `pkg:` tag from - this module
-  // does not itself know about tags.
+  // npm package TS resolves through node_modules - TS flags this
+  // `isExternalLibraryImport`) whose real target file is NOT itself
+  // inside this project. A leading "node:" is stripped so `import "fs"`
+  // and `import "node:fs"` name the same package. This is the raw fact a
+  // later rule synthesizes a `pkg:` tag from - this module does not
+  // itself know about tags.
+  //
+  // Undefined for a workspace-sibling import too, even though TS also
+  // marks that `isExternalLibraryImport` (a monorepo's own package
+  // symlinked into node_modules resolves exactly like a real dependency
+  // does) - see `isWorkspaceSiblingResolution`'s own comment for how that
+  // case is told apart from a genuine external one. When it is, the
+  // edge's target gets this project's own `classify` tags instead of a
+  // synthesized `pkg:` one.
   externalPackage: string | undefined;
 };
 
@@ -206,6 +214,28 @@ export function toProjectRelativePosix(filePath: string, projectRoot: string): s
 // Declared modules can live anywhere under the project, not one fixed
 // single-level root the way v0's discovery does, so there is no narrower
 // directory to start from.
+// True when a `resolvedFileName` TS itself flagged `isExternalLibraryImport`
+// (per that field's own contract: "comes from node_modules") is actually a
+// workspace's own sibling package - a package manager symlinks a sibling
+// package into node_modules exactly like a real dependency, but following
+// that symlink lands back on a real file this project owns, outside
+// node_modules entirely (measured directly: a real workspace-symlink
+// resolution's own `resolvedFileName` already comes back as the real,
+// symlink-followed path, e.g. `<root>/packages/b/src/index.ts`, not
+// `<root>/node_modules/<pkg>/src/index.ts`). A genuine external dependency
+// resolves to a real file that, however it's laid out (a plain copy, or a
+// pnpm content-addressed store under its own `node_modules/.pnpm/...`),
+// never escapes SOME `node_modules` directory - `isExternalLibraryImport`
+// itself guarantees the file came from one. So: still under a node_modules
+// segment after resolution -> genuinely external; escaped every
+// node_modules segment and lands inside this project's own root -> a
+// workspace sibling, not an external target.
+function isWorkspaceSiblingResolution(resolvedFile: string, rootDir: string): boolean {
+  if (resolvedFile.split(sep).includes("node_modules")) return false;
+  const rel = relative(rootDir, resolvedFile);
+  return !(rel.startsWith("..") || rel === resolvedFile);
+}
+
 function listAllSourceFiles(projectRoot: string, excludeGlobs: readonly string[]): string[] {
   const compiledExcludes = excludeGlobs.map((g) => compileGlob(g));
   return ts.sys
@@ -278,7 +308,17 @@ function loadCompilerOptions(projectRoot: string): ts.CompilerOptions {
 }
 
 export function buildModuleGraph(options: BuildOptions): ModuleGraph {
-  const { projectRoot, declaredModules, surface = DEFAULT_SURFACE, exclude = [] } = options;
+  // Realpath'd up front, not just at whichever comparison happens to need
+  // it: TypeScript's own resolver already returns a symlink-resolved
+  // `resolvedFileName` for any import that passes through one (measured
+  // directly - a workspace package symlinked into node_modules, and
+  // separately, a platform's own tmp-directory symlink like macOS's
+  // /tmp -> /private/tmp), so a non-realpath'd `projectRoot` would make
+  // every relative-path computation downstream (toProjectRelativePosix,
+  // declaredModules glob matching, exclude glob matching) silently
+  // disagree with the paths TypeScript itself already resolved to.
+  const { declaredModules, surface = DEFAULT_SURFACE, exclude = [] } = options;
+  const projectRoot = realpathSync(options.projectRoot);
   const compilerOptions = loadCompilerOptions(projectRoot);
 
   let modules: Map<string, Module>;
@@ -390,9 +430,10 @@ export function buildModuleGraph(options: BuildOptions): ModuleGraph {
           } else {
             const resolvedFile = resolvedModule.resolvedFileName;
             const toModule = resolveModuleForFile(resolvedFile);
-            const externalPackage = resolvedModule.isExternalLibraryImport
-              ? (resolvedModule.packageId?.name ?? specifier.text.replace(/^node:/, ""))
-              : undefined;
+            const externalPackage =
+              resolvedModule.isExternalLibraryImport && !isWorkspaceSiblingResolution(resolvedFile, projectRoot)
+                ? (resolvedModule.packageId?.name ?? specifier.text.replace(/^node:/, ""))
+                : undefined;
             edges.push({
               fromFile: sf.fileName,
               fromModule,
