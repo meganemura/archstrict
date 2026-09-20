@@ -1,4 +1,4 @@
-# The six rules
+# The rules
 
 Every rule's violation carries `rule`, `path`, `line`, `column`, `evidence`, `because`, `next`. Rules 1, 2, and 6 also carry `todoModule` - the module a violation belongs to, and the only three rules `archstrict todo` can freeze (a violation with no `todoModule` names a module directory, a module pair, or the config file, none of which `todo` has anywhere to freeze it into).
 
@@ -18,6 +18,8 @@ A module-level cycle: two or more modules import each other, directly or through
 - evidence: the shortest simple cycle within the component, e.g. `a -> b -> c -> a`
 - next: `break the cycle at <m1> -> <m2>, or merge the modules involved`
 - `todoModule`: the name-first module among the ones in the component
+
+A known cycle can be exempted by naming any two of its modules in config's `ignoredCycles` (order doesn't matter): `ignoredCycles: [["a", "b"]]` suppresses the whole component both belong to, not just that one edge - a cycle is one finding regardless of how many modules or edges it spans. An `ignoredCycles` pair that no longer matches any real cycle is itself a violation (`stale-cycle-exception`, below) - an exception that hides nothing real must be visible, not silently kept.
 
 ## 3. uncovered-module
 
@@ -49,8 +51,19 @@ A module's surface file re-exports or otherwise exposes an internal declaration 
 - next: `export '<InternalType>' by name from <surface absolute path> (it's declared in <relative path>), or change '<Exported>' to not expose it` - `<surface absolute path>` is the surface file's full absolute path (e.g. `/project/src/m/index.ts`), unlike rule 1's own `<surface>` placeholder above, which is the bare file name
 - `todoModule`: the module owning the leaking surface (a leak is a self-violation, not a cross-module edge)
 
-## Not one of the six: stale-todo and clean-module-has-todo
+## must-be-empty
+
+A directory a team decided must hold no code at all - archspec's own "empty component" idea (e.g. a project that keeps rich models and no service objects declares `app/services` must stay empty, an anti-pattern guard). Distinct from rule 4 (`empty-rule-set`): that rule flags a rule that structurally cannot match anything; this one flags a real file existing where config says none should. A violation is any file matching config's `mustBeEmpty` glob at all - zero matches is a clean pass, not silence.
+
+- because: whatever `mustBeEmpty`'s own entry gives (mandatory, same as every other root-level rule with a reason to record)
+- `path`: the matching file itself; `line`/`column` are always `1`/`1` (no single line is "the" violation - the file's existence is)
+- next: `move '<file>' out of '<glob>', or drop this mustBeEmpty entry in archstrict.config.ts if the restriction no longer applies`
+- Not freezable: a file that shouldn't exist at all isn't debt to track, it's a file to move or a rule to remove.
+
+## Not one of the six: stale-todo, clean-module-has-todo, and stale-cycle-exception
 
 `stale-todo`: a todo entry matches no current violation. Prune it with `archstrict todo`, don't leave it - an unmatched entry hides nothing real.
 
 `clean-module-has-todo`: a module in the config's `strict` list has any todo entries at all, existing or new. Staying clean means no debt, not debt frozen at whatever existed when the module was marked - fix the violation(s), then run `archstrict todo` to prune.
+
+`stale-cycle-exception`: an `ignoredCycles` entry names two modules that aren't part of any real cycle at all (never were, or no longer are). `path` is the config file. Remove the entry - same reasoning as `stale-todo`: an exception that hides nothing real must be visible, not silently kept.

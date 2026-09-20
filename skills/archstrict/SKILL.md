@@ -9,7 +9,7 @@ TypeScript module boundary checking: architecture linting, in the sense of ArchU
 
 A module is one directory under a configured glob (for example `src/*`). A module shows the rest of the codebase one file, named by the root config's own `surface` field (default `index.ts`); anything a module does not export from that file is private, and an import that reaches past it into the module's internals is a violation. A module with no public-surface file present is entirely private. Shape (kinds, layers, direction, the surface file name) lives in one root file, `archstrict.config.ts`, written as a plain TypeScript value satisfying the generated `Config` type - never scattered per module.
 
-Every violation carries a rule id, `path:line:col`, the `evidence` (what was found), the `because` reason, and a `next:` command - enough to fix the mistake without asking. The six rules, in full: [references/rules.md](references/rules.md).
+Every violation carries a rule id, `path:line:col`, the `evidence` (what was found), the `because` reason, and a `next:` command - enough to fix the mistake without asking. Every rule, in full: [references/rules.md](references/rules.md).
 
 ## Workflow
 
