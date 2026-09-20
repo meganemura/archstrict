@@ -39,7 +39,7 @@
 # advisor can't resolve) is worth stopping for.
 
 version: 0.1
-name: archstrict-v0
+name: archstrict
 entry: pick
 
 phases:
@@ -89,8 +89,8 @@ phases:
     description: >
       Do the ticket in `.headsign/tmp/ticket` (`bd show <id>` for the text,
       `bd comments <id>` for what an earlier lap or review round left). Read
-      the v0 task spec and report.md's prior entries before spike or rule
-      work. Write tests first where a property or an exact CLI/JSON shape
+      the current epic's own tickets and report.md's prior entries before
+      spike or rule work. Write tests first where a property or an exact CLI/JSON shape
       exists (Hegel for properties, example tests for exact output). A
       commit message, a comment, a doc, or a test must not name a ticket id
       or refer to `.claude-team/` or any other internal note; write the
@@ -127,7 +127,7 @@ phases:
       Have an independent reader who writes nothing check the range
       `$(cat .headsign/tmp/base)..HEAD` (or, for a spike, report.md's new
       entry) against the ticket's text and acceptance criteria: does the
-      range deliver what was asked, does it match the v0 task spec's
+      range deliver what was asked, does it match this epic's own design
       decisions, does any sentence name a ticket id or `.claude-team/`. Have
       it REPORT exactly APPROVED or REJECTED with reasons, then write that
       verdict verbatim to `.headsign/tmp/verdict` yourself.
@@ -189,8 +189,8 @@ phases:
       violation whose `next` didn't actually say what to do. For each
       concrete, real gap this turns up - a wrong claim, a missing doc, a
       confusing error, a rough edge in the hook or CLI - file it as a new
-      `bd create` ticket under this project's own v0 epic (`bd list --json`
-      names it; open a fresh epic if that one is fully closed), with a
+      `bd create` ticket under this project's own current epic (`bd list
+      --json` names the open one; open a fresh epic if none is open), with a
       clear, testable acceptance
       criterion, same as any other ticket this workflow already runs. Do
       not invent a gap to keep the queue non-empty: a genuinely clean pass
@@ -212,8 +212,9 @@ phases:
     max_attempts: 3
 
 limits:
-  # One lap costs four evaluations when nothing is retried. v0's opening
-  # queue is 16 tickets (4 spikes, 5 rules, 3 verbs, hook, skill, 2 dogfood):
-  # 64 laps clean, more with review rounds. 200 is a runaway backstop above
-  # that, not a budget; reaching it stops the run for the owner to raise it.
+  # One lap costs four evaluations when nothing is retried. v1's opening
+  # queue is 9 tickets: 64 laps clean for v0's original 16-ticket queue is
+  # the baseline this number was set from; kept at 200 as a runaway backstop
+  # above whatever the current queue costs, not a budget - reaching it stops
+  # the run for the owner to raise it.
   max_total_iterations: 200
