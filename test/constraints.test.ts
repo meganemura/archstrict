@@ -1,18 +1,52 @@
 // A dedicated fixture, not the prisma-shape/vscode-shape design fixtures:
 // those are pure config-shape proofs with no corresponding source tree on
 // disk (packages/1-framework/... doesn't exist as real files) - nothing to
-// run buildModuleGraph against. This fixture exercises the identical
-// three shapes (a domain allow-matrix, a per-domain layer order, a point
-// rule) with the same real-world semantics, on files small enough to
-// reason about by hand. The prisma-shape/vscode-shape fixtures themselves
-// get run for real against actual source trees in the converter and oracle
-// tickets, where a real tree exists to run them against.
+// run buildModuleGraph against. The prisma-shape/vscode-shape fixtures
+// themselves get run for real against actual source trees in the
+// converter and oracle tickets, where a real tree exists to run them
+// against.
+//
+// This file's own dedicated fixture covers the shapes' common case (a
+// domain allow-matrix, a per-domain layer order, a glob point rule) on
+// files small enough to reason about by hand. The feature surface those
+// two named fixtures were built to demonstrate but this fixture's files
+// don't reach - a deny list, exceptions, a tag-predicate point rule with
+// exclude, an external pkg: target, and the order rule's own config-error
+// throw - is covered separately below with a fabricated graph instead
+// (checkAllowDeny/checkOrder/checkPoint only ever read `edges` and
+// `rootDir`, and classifyFile needs only path strings, not real files).
 import { describe, expect, test } from "vitest";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { buildModuleGraph } from "../src/module-graph.js";
 import { checkAllowDeny, checkOrder, checkPoint } from "../src/rules/constraints.js";
 import type { Config } from "../src/config.js";
+import type { Edge, ModuleGraph } from "../src/module-graph.js";
+
+// A fabricated graph, not a real fixture tree: checkAllowDeny/checkOrder/
+// checkPoint only ever read `edges` and `rootDir` off a ModuleGraph, and
+// classifyFile needs only project-relative path strings, never a real
+// file on disk. Used below for shapes the dedicated fixture doesn't reach
+// on its own: deny lists, a tag-predicate point rule with `exclude`,
+// `exceptions` on allowDeny, an external `pkg:` target, and the order
+// rule's own config-error throw.
+function fakeGraph(edges: Edge[]): ModuleGraph {
+  return { edges, rootDir: "/project" } as ModuleGraph;
+}
+
+function edge(overrides: Partial<Edge>): Edge {
+  return {
+    fromFile: "/project/src/a.ts",
+    fromModule: "m",
+    fromPosition: { line: 1, column: 1 },
+    specifier: "./b.js",
+    isTypeOnly: false,
+    resolvedFile: "/project/src/b.ts",
+    toModule: "m",
+    externalPackage: undefined,
+    ...overrides,
+  };
+}
 
 const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), "fixtures/constraints");
 
@@ -64,6 +98,87 @@ describe("checkAllowDeny", () => {
     expect(violations[0]!.rule).toBe("tag-boundary");
     expect(violations[0]!.evidence).toContain("domain:sql");
   });
+
+  test("a deny list flags a listed value and lets everything else through", () => {
+    const cfg: Config = {
+      configPath: "<test>",
+      modules: "src/*",
+      kinds: { flat: "src/*" },
+      because: "test config",
+      classify: [
+        { glob: "src/shared.ts", tags: ["plane:shared"] },
+        { glob: "src/runtime.ts", tags: ["plane:runtime"] },
+        { glob: "src/migration.ts", tags: ["plane:migration"] },
+      ],
+      edges: {
+        allowDeny: [
+          { source: "plane:shared", targetNamespace: "plane", deny: ["migration", "runtime"], because: "shared must not depend on either concrete plane" },
+        ],
+      },
+    };
+    const graph = fakeGraph([
+      edge({ resolvedFile: "/project/src/runtime.ts", fromFile: "/project/src/shared.ts" }),
+      edge({ resolvedFile: "/project/src/migration.ts", fromFile: "/project/src/shared.ts" }),
+    ]);
+
+    const violations = checkAllowDeny(graph, cfg);
+    expect(violations).toHaveLength(2);
+    expect(violations.every((v) => v.rule === "tag-boundary")).toBe(true);
+  });
+
+  test("an exceptions glob pair exempts an otherwise-forbidden edge", () => {
+    const cfg: Config = {
+      configPath: "<test>",
+      modules: "src/*",
+      kinds: { flat: "src/*" },
+      because: "test config",
+      classify: [
+        { glob: "src/a.ts", tags: ["domain:framework"] },
+        { glob: "src/b.ts", tags: ["domain:sql"] },
+      ],
+      edges: {
+        allowDeny: [
+          {
+            source: "domain:framework",
+            targetNamespace: "domain",
+            allow: [],
+            exceptions: [{ from: "src/a.ts", to: "src/b.ts", because: "a documented one-off exception" }],
+            because: "framework may not import other domains",
+          },
+        ],
+      },
+    };
+
+    expect(checkAllowDeny(fakeGraph([edge({})]), cfg)).toHaveLength(0);
+  });
+
+  test("a target's synthesized pkg: tag composes with allowDeny the same as any internal tag", () => {
+    const cfg: Config = {
+      configPath: "<test>",
+      modules: "src/*",
+      kinds: { flat: "src/*" },
+      because: "test config",
+      classifyByDirectoryName: { tagNamespace: "env", names: ["browser", "node"] },
+      edges: {
+        allowDeny: [
+          { source: "env:browser", targetNamespace: "pkg", allow: [], because: "browser code must not depend on node builtins" },
+        ],
+      },
+    };
+    const graph = fakeGraph([
+      edge({
+        fromFile: "/project/src/browser/thing.ts",
+        specifier: "node:fs",
+        resolvedFile: "node:fs",
+        toModule: undefined,
+        externalPackage: "fs",
+      }),
+    ]);
+
+    const violations = checkAllowDeny(graph, cfg);
+    expect(violations).toHaveLength(1);
+    expect(violations[0]!.evidence).toContain("pkg:fs");
+  });
 });
 
 describe("checkOrder", () => {
@@ -79,6 +194,31 @@ describe("checkOrder", () => {
     const violations = checkOrder(graph(), config);
     expect(violations.some((v) => v.path.endsWith("sql/core/a.ts"))).toBe(false);
   });
+
+  test("a tag value absent from its own sequence is a config error, not a silent pass", () => {
+    const cfg: Config = {
+      configPath: "<test>",
+      modules: "src/*",
+      kinds: { flat: "src/*" },
+      because: "test config",
+      classify: [
+        { glob: "src/a.ts", tags: ["domain:sql", "layer:unlisted"] },
+        { glob: "src/b.ts", tags: ["domain:sql", "layer:core"] },
+      ],
+      edges: {
+        order: [
+          {
+            tagNamespace: "layer",
+            within: "domain",
+            sequence: { sql: ["core", "runtime"] }, // "unlisted" is not here
+            direction: "downward-only",
+            because: "dependencies flow toward core",
+          },
+        ],
+      },
+    };
+    expect(() => checkOrder(fakeGraph([edge({})]), cfg)).toThrow(/does not list 'unlisted'/);
+  });
 });
 
 describe("checkPoint", () => {
@@ -88,5 +228,35 @@ describe("checkPoint", () => {
 
     expect(flaggedFiles).toEqual(["core/reaches-internal.ts"]);
     expect(violations[0]!.rule).toBe("point-rule");
+  });
+
+  test("a tag-predicate point rule with exclude: drivers reachable only from adapters", () => {
+    const cfg: Config = {
+      configPath: "<test>",
+      modules: "src/*",
+      kinds: { flat: "src/*" },
+      because: "test config",
+      classify: [
+        { glob: "src/adapters/**", tags: ["domain:sql", "layer:adapters"] },
+        { glob: "src/core/**", tags: ["domain:sql", "layer:core"] },
+        { glob: "src/drivers/**", tags: ["domain:sql", "layer:drivers"] },
+      ],
+      edges: {
+        point: [
+          {
+            from: { tags: ["domain:sql"], exclude: { tags: ["layer:adapters"] } },
+            to: { tags: ["domain:sql", "layer:drivers"] },
+            because: "drivers can only be imported by adapters",
+          },
+        ],
+      },
+    };
+
+    const fromAdapter = edge({ fromFile: "/project/src/adapters/a.ts", resolvedFile: "/project/src/drivers/d.ts" });
+    const fromCore = edge({ fromFile: "/project/src/core/c.ts", resolvedFile: "/project/src/drivers/d.ts" });
+
+    expect(checkPoint(fakeGraph([fromAdapter]), cfg)).toHaveLength(0);
+    const violations = checkPoint(fakeGraph([fromCore]), cfg);
+    expect(violations).toHaveLength(1);
   });
 });
