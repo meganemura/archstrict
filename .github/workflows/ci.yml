@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: typecheck, build, test (typescript 6.0.3, the pinned dependency)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm test
+
+  ts7-probe:
+    name: probe typescript 7's unstable surface (never fails the workflow)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      # typescript 7.0.2 replaces the pinned 6.0.3 in node_modules for this
+      # job only (--no-save: never touches package.json or the lockfile) -
+      # archstrict's own real analysis always uses its pinned dependency;
+      # this job exists only to measure the unstable surface, not to run
+      # archstrict itself against it.
+      - run: npm install --no-save typescript@7.0.2
+      # Fails loudly if the install above didn't actually land 7.0.2 (a
+      # registry hiccup, a future rename) - without this, the probe script's
+      # own "typescript 7 not installed" path would report attempted: false
+      # and still exit 0, a green job that measured nothing. That is exactly
+      # the "a zero can look like success when it is really an omission"
+      # case this project's own rules exist to refuse, here in its own CI.
+      - run: |
+          node -e "
+            const { version } = require('./node_modules/typescript/package.json');
+            if (version !== '7.0.2') { console.error('expected typescript 7.0.2, got ' + version); process.exit(1); }
+          "
+      - run: npm run ci:ts7-probe
