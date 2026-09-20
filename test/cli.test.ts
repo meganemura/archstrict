@@ -77,4 +77,101 @@ describe("cli", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  test("a config error prints a clean message, not a raw stack trace", () => {
+    const root = mkdtempSync(join(tmpdir(), "archstrict-cli-config-error-"));
+    try {
+      writeFileSync(join(root, "archstrict.config.ts"), "export default { modules: 'src/*' };\n");
+
+      let out = "";
+      let errOut = "";
+      let exitCode = 0;
+      try {
+        out = execFileSync("node", [CLI_PATH, "check"], { cwd: root, encoding: "utf8" });
+      } catch (e) {
+        const err = e as { status: number; stdout: string; stderr: string };
+        exitCode = err.status;
+        out = err.stdout;
+        errOut = err.stderr;
+      }
+
+      expect(exitCode).toBe(1);
+      expect(out).toBe("");
+      expect(errOut).toContain("missing required field");
+      expect(errOut).not.toMatch(/^\s+at /m);
+      expect(errOut.trim().split("\n")).toHaveLength(1);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("init on a project with no src/ prints a clean message, not a raw stack trace", () => {
+    const root = mkdtempSync(join(tmpdir(), "archstrict-cli-init-error-"));
+    try {
+      let errOut = "";
+      let exitCode = 0;
+      try {
+        execFileSync("node", [CLI_PATH, "init"], { cwd: root, encoding: "utf8" });
+      } catch (e) {
+        const err = e as { status: number; stderr: string };
+        exitCode = err.status;
+        errOut = err.stderr;
+      }
+
+      expect(exitCode).toBe(1);
+      expect(errOut).toContain("does not exist");
+      expect(errOut).not.toMatch(/^\s+at /m);
+      expect(errOut.trim().split("\n")).toHaveLength(1);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a config error with --json prints a structured error object", () => {
+    const root = mkdtempSync(join(tmpdir(), "archstrict-cli-config-error-json-"));
+    try {
+      writeFileSync(join(root, "archstrict.config.ts"), "export default { modules: 'src/*' };\n");
+
+      let out = "";
+      let exitCode = 0;
+      try {
+        out = execFileSync("node", [CLI_PATH, "check", "--json"], { cwd: root, encoding: "utf8" });
+      } catch (e) {
+        const err = e as { status: number; stdout: string };
+        exitCode = err.status;
+        out = err.stdout;
+      }
+
+      expect(exitCode).toBe(1);
+      const json = JSON.parse(out);
+      expect(json.error).toContain("missing required field");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("check <nonexistent-file> prints a clean message, not a raw stack trace", () => {
+    const root = mkdtempSync(join(tmpdir(), "archstrict-cli-missing-file-"));
+    try {
+      mkdirSync(join(root, "src", "app"), { recursive: true });
+      writeFileSync(join(root, "src", "app", "module.ts"), "export const app = 1;\n");
+      execFileSync("node", [CLI_PATH, "init"], { cwd: root });
+
+      let errOut = "";
+      let exitCode = 0;
+      try {
+        execFileSync("node", [CLI_PATH, "check", "src/app/missing.ts"], { cwd: root, encoding: "utf8" });
+      } catch (e) {
+        const err = e as { status: number; stderr: string };
+        exitCode = err.status;
+        errOut = err.stderr;
+      }
+
+      expect(exitCode).toBe(1);
+      expect(errOut).toContain("no such file");
+      expect(errOut).not.toMatch(/^\s+at /m);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

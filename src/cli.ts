@@ -46,11 +46,29 @@ async function main(argv: string[]): Promise<number> {
     process.stderr.write("usage: archstrict <init|check|todo> [args]\n");
     return 1;
   }
-  if (verb === "init") return runInit();
-  if (verb === "check") return runCheck(rest);
-  if (verb === "todo") return runTodo();
-  process.stderr.write(`archstrict: '${verb}' is not implemented yet\n`);
-  return 1;
+  try {
+    if (verb === "init") return runInit();
+    if (verb === "check") return await runCheck(rest);
+    if (verb === "todo") return await runTodo();
+    process.stderr.write(`archstrict: '${verb}' is not implemented yet\n`);
+    return 1;
+  } catch (error) {
+    // A config or missing-file error (a required field absent, an
+    // unsupported kinds pattern shape, check <file> naming a file that
+    // doesn't exist, the modules glob's root not existing yet) throws
+    // before any real output - previously an unhandled exception, a raw
+    // stack trace with no rule id, no because, no next:. Every other
+    // error this tool reports carries those; this is the one path that
+    // didn't, and it's the path a first attempt (a hand-written config
+    // with a typo, a mistyped file path) is most likely to hit.
+    const message = error instanceof Error ? error.message : String(error);
+    if (rest.includes("--json")) {
+      process.stdout.write(`${JSON.stringify({ error: message })}\n`);
+    } else {
+      process.stderr.write(`archstrict: ${message}\n`);
+    }
+    return 1;
+  }
 }
 
 process.exitCode = await main(process.argv.slice(2));
