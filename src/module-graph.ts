@@ -184,7 +184,7 @@ function moduleGlobBaseDir(glob: string): string {
   return prefix.replace(/\/+$/, "");
 }
 
-function toProjectRelativePosix(filePath: string, projectRoot: string): string {
+export function toProjectRelativePosix(filePath: string, projectRoot: string): string {
   return relative(projectRoot, filePath).split(sep).join("/");
 }
 
