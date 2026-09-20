@@ -139,6 +139,87 @@ export default {
     });
   });
 
+  // scope/classifyByDirectoryName/edges are the fields a fresh `init` used
+  // to leave out of its own generated Config type entirely - a real config
+  // using any of them would fail `tsc` with "does not exist in type
+  // 'Config'", an existence error easy to misread as "this feature isn't
+  // supported" rather than the real problem, whatever it was. Confirmed
+  // directly this file matches the real Config in src/config.ts by
+  // typechecking a config that uses all three, plus edges's own three
+  // rule shapes (allowDeny/order/point) together.
+  test("a config using scope, classifyByDirectoryName, and edges (allowDeny/order/point) typechecks against real tsc", () => {
+    withTempProject(["app", "shared"], (root) => {
+      init(root);
+      writeFileSync(
+        join(root, "archstrict.config.ts"),
+        `import type { Config } from "./archstrict.generated.js";
+export default {
+  scope: "src/**",
+  classify: [{ glob: "src/app/**", tags: ["kind:app"] }, { glob: "src/shared/**", tags: ["kind:shared"] }],
+  classifyByDirectoryName: { tagNamespace: "env", names: ["app", "shared"] },
+  declaredModules: [
+    { name: "app", glob: "src/app/**", surface: "index.ts" },
+    { name: "shared", glob: "src/shared/**", surface: "index.ts" },
+  ],
+  edges: {
+    allowDeny: [
+      {
+        source: "kind:app",
+        targetNamespace: "kind",
+        allow: ["shared"],
+        exceptions: [{ from: "src/app/**", to: "src/shared/**", because: "test" }],
+        edgeType: "value",
+        importForm: "static",
+        because: "test",
+      },
+    ],
+    order: [
+      {
+        tagNamespace: "kind",
+        within: "env",
+        sequence: { app: ["shared", "app"] },
+        direction: "downward-only",
+        because: "test",
+      },
+    ],
+    point: [
+      {
+        from: { tags: ["kind:app"], exclude: { tags: ["kind:shared"] } },
+        to: { tags: ["kind:shared"] },
+        because: "test",
+      },
+    ],
+  },
+  because: "test",
+} satisfies Config;
+`,
+      );
+      writeFileSync(
+        join(root, "tsconfig.json"),
+        JSON.stringify(
+          {
+            compilerOptions: {
+              target: "esnext",
+              module: "nodenext",
+              moduleResolution: "nodenext",
+              strict: true,
+              skipLibCheck: true,
+              noEmit: true,
+            },
+            include: ["archstrict.config.ts", "archstrict.generated.ts"],
+          },
+          null,
+          2,
+        ),
+      );
+
+      const tscPath = new URL("../node_modules/typescript/bin/tsc", import.meta.url).pathname;
+      expect(() =>
+        execFileSync("node", [tscPath, "--noEmit", "-p", root], { cwd: root, stdio: "pipe" }),
+      ).not.toThrow();
+    });
+  });
+
   test("a config that omits surface entirely still typechecks against the generated Config", () => {
     withTempProject(["app"], (root) => {
       init(root);

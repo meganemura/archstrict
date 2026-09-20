@@ -74,6 +74,10 @@ export type Config = {
   // order) exempted from rule 2 - an entry naming a pair no longer in any
   // real cycle is itself flagged (stale-cycle-exception).
   ignoredCycles?: readonly (readonly [string, string])[];
+  // An analysis boundary narrower than the whole project - not yet read
+  // by any rule or verb (declared here for forward compatibility; wiring
+  // it in is separate, later work).
+  scope?: string;
   // Glob patterns kept out of analysis entirely - not a member of any
   // module, not a source of edges, not a target either. init writes one
   // default: this project's own root-level files (archstrict.config.ts,
@@ -83,6 +87,14 @@ export type Config = {
   // below - tags classify any file; declaredModules says which files form
   // an enforced module boundary.
   classify?: readonly { glob: string; tags: readonly string[] }[];
+  // Ambient tagging by directory-name segment: the nearest path segment
+  // matching one of \`names\`, walking from the file outward, becomes
+  // \`\${tagNamespace}:\${name}\`. Independent of \`classify\` above - a file
+  // can carry tags from both mechanisms at once.
+  classifyByDirectoryName?: {
+    tagNamespace: string;
+    names: readonly string[];
+  };
   // Declared modules - the source of truth for module boundaries.
   // \`surface\` may itself be a glob (a module's public surface can be
   // more than one file).
@@ -94,6 +106,38 @@ export type Config = {
   // A directory that must hold no code at all (archspec's own
   // "empty component" idea) - a violation is any file matching the glob.
   mustBeEmpty?: readonly { glob: string; because: string }[];
+  // The constraint engine: allowDeny/order/point rules over classify
+  // tags, generalizing the fixed module vocabulary above. \`allowDeny\`'s
+  // own \`exceptions\`: a from/to glob or tag-predicate pair that overrides
+  // that rule either way for one specific edge - \`point\` has no
+  // exceptions of its own, its from/to predicates already being as
+  // explicit as a rule gets.
+  edges?: {
+    allowDeny?: readonly {
+      source: string;
+      targetNamespace: string;
+      allow?: readonly string[];
+      deny?: readonly string[];
+      exceptions?: readonly { from: string; to: string; because: string }[];
+      edgeType?: "value" | "type" | "both";
+      importForm?: "static" | "dynamic" | "both";
+      because: string;
+    }[];
+    order?: readonly {
+      tagNamespace: string;
+      within?: string;
+      sequence: Record<string, readonly string[]>;
+      direction: "downward-only";
+      because: string;
+    }[];
+    point?: readonly {
+      from: string | { tags: readonly string[]; exclude?: { tags: readonly string[] } };
+      to: string | { tags: readonly string[] };
+      edgeType?: "value" | "type" | "both";
+      importForm?: "static" | "dynamic" | "both";
+      because: string;
+    }[];
+  };
   because: string;
 };
 `;
