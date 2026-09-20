@@ -59,7 +59,7 @@ function runSyncProbe(sync) {
   }
 }
 
-function runSyncProbeIn({ API }, dir) {
+function runSyncProbeIn({ API, SignatureKind }, dir) {
   const tsconfigPath = join(dir, "tsconfig.json");
   const entryPath = join(dir, "entry.ts");
   writeFileSync(
@@ -127,20 +127,27 @@ function runSyncProbeIn({ API }, dir) {
     const props = wrapsType && attempt("getPropertiesOfType", () => checker.getPropertiesOfType(wrapsType));
     if (wrapsType !== undefined) attempt("getIndexInfosOfType", () => checker.getIndexInfosOfType(wrapsType));
 
+    // A declaration here is a NodeHandle (a lazy index+kind+path reference into a
+    // project), not the RemoteNode getTypeOfSymbolAtLocation's `location` parameter
+    // needs - resolve() decodes it into the real node first. Confirmed by direct
+    // testing: passing the raw handle throws "getNodeId requires a RemoteNode", not
+    // a typescript defect, just a two-step handle in this unstable surface.
     const recordProp = props?.find((p) => p.name === "record");
     if (recordProp !== undefined) {
       attempt("getTypeOfSymbolAtLocation", () =>
-        checker.getTypeOfSymbolAtLocation(recordProp, recordProp.declarations[0]),
+        checker.getTypeOfSymbolAtLocation(recordProp, recordProp.declarations[0].resolve()),
       );
     }
 
     if (fnSym !== undefined) {
       const fnType = attempt("getTypeOfSymbolAtLocation(function)", () =>
-        checker.getTypeOfSymbolAtLocation(fnSym, fnSym.declarations[0]),
+        checker.getTypeOfSymbolAtLocation(fnSym, fnSym.declarations[0].resolve()),
       );
       if (fnType !== undefined) {
-        attempt("getCallSignatures/getReturnTypeOfSignature", () => {
-          const [sig] = fnType.getCallSignatures();
+        // A Type here has no getCallSignatures() method of its own (unlike the
+        // classic API) - call signatures come from the checker, keyed by kind.
+        attempt("getSignaturesOfType/getReturnTypeOfSignature", () => {
+          const [sig] = checker.getSignaturesOfType(fnType, SignatureKind.Call);
           return checker.getReturnTypeOfSignature(sig);
         });
       }
