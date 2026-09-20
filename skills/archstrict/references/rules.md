@@ -43,7 +43,7 @@ A `deprecated` entry in the config names an edge between two modules and a `coun
 
 ## 6. type-leak
 
-A module's surface file re-exports or otherwise exposes an internal declaration - one that lives outside the surface file, inside the project's own checked modules root, and was never itself exported by name from that surface - without the consumer ever having a name for it. A structural leak: recurses through an exported symbol's properties, index signatures, and union members, and a function's return type directly. A generic type parameter (a substitutable variable, not a declaration) and an anonymous type literal are excluded - neither has a name a consumer could fail to import.
+A module's surface file re-exports or otherwise exposes an internal declaration - one that lives outside the surface file, inside the project's own checked modules root, and was never itself exported by name from that surface - without the consumer ever having a name for it. A structural leak: recurses through an exported symbol's properties, index signatures, union members, a generic type reference's own type arguments (`Promise<Internal>`, `Map<K, Internal>`, `Array<Internal>`), and a function's return type directly. A generic type parameter (a substitutable variable, not a declaration) and an anonymous type literal are excluded - neither has a name a consumer could fail to import.
 
 - because: "a consumer needs a name for every type it receives from a public surface, not just the type doing the exposing"
 - next: `export '<InternalType>' by name from <surface> (it's declared in <relative path>), or change '<Exported>' to not expose it`
