@@ -1,11 +1,11 @@
 #!/usr/bin/env node
-// Responsibility: reproduce the Prisma oracle comparison (archstrict-4bn.8's
-// own spike: archstrict's converted config vs dependency-cruiser's real
-// domain/plane/layer rules) through the actual shipped CLI (dist/cli.js
-// check --json), not by calling checkAllowDeny/checkOrder/checkPoint
-// directly the way that spike did - check/todo could not consume
-// declaredModules/edges at all until this epic. Copies the clone into a
-// disposable scratch directory; never writes into the clone itself.
+// Responsibility: reproduce the Prisma oracle comparison (archstrict's
+// converted config vs dependency-cruiser's real domain/plane/layer rules)
+// through the actual shipped CLI (dist/cli.js check --json), not by
+// calling checkAllowDeny/checkOrder/checkPoint directly against a
+// buildModuleGraph result - an earlier measurement did that, before
+// check/todo could consume declaredModules/edges at all. Copies the clone
+// into a disposable scratch directory; never writes into the clone itself.
 //
 // One declared module covering the whole `packages/**` tree, not one per
 // real Prisma package: buildModuleGraph only collects a file's own edges
@@ -33,8 +33,8 @@ const CLI_PATH = join(HERE, "..", "dist", "cli.js");
 // dependency-cruiser.config.mjs's own real `exclude.path` list (regex
 // fragments matched anywhere in the path), translated to archstrict's
 // glob shape by hand - a mismatch here is a real drift to notice, same as
-// any other vendored fixture. `**/*.test-d.ts` matters specifically:
-// archstrict-4bn.8's own 78 false positives all came from test files this
+// any other vendored fixture. `**/*.test-d.ts` matters specifically: an
+// earlier measurement's 78 false positives all came from test files this
 // exact entry excludes.
 const EXCLUDE = [
   "**/*.test.ts",
@@ -114,10 +114,10 @@ function main() {
     // framework) does NOT work as a control: measured directly, every
     // real workspace-to-workspace specifier in this clone is unresolved
     // without a full `pnpm build` (package.json `exports` point at dist/
-    // output that doesn't exist from install alone - archstrict-4bn.8's
-    // own recorded caveat), so module-graph.ts never creates an edge for
-    // one at all; a point rule targeting that direction would trivially
-    // read 0 whether or not the engine works. A resolvable npm dependency
+    // output that doesn't exist from install alone - a known, previously
+    // recorded caveat), so module-graph.ts never creates an edge for one
+    // at all; a point rule targeting that direction would trivially read
+    // 0 whether or not the engine works. A resolvable npm dependency
     // (`pathe`, a real, unremarkable dependency many packages import) is
     // real, resolves without a build step, and forbidding it must produce
     // many point-rule violations - if it doesn't, the engine isn't

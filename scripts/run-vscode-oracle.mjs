@@ -1,15 +1,15 @@
 #!/usr/bin/env node
-// Responsibility: reproduce the VS Code oracle comparison (archstrict-4bn.9's
-// own spike: code-layering.ts's real environment-layering rule vs
-// archstrict's converted config) through the actual shipped CLI (dist/cli.js
-// check --json), not by calling checkAllowDeny directly the way that spike
-// did. Copies src/ into a disposable scratch directory (never writes into
-// the clone itself, never symlinks src/ - a symlinked directory's
-// sf.fileName may not match what ts.createProgram realpaths, measured
-// directly while building the Prisma oracle script). Unlike the Prisma
-// oracle, no node_modules copy is needed: code-layering.ts's own rule is
-// pure static analysis over directory names and import specifiers, no
-// package resolution required.
+// Responsibility: reproduce the VS Code oracle comparison (code-layering.ts's
+// real environment-layering rule vs archstrict's converted config) through
+// the actual shipped CLI (dist/cli.js check --json), not by calling
+// checkAllowDeny directly against a buildModuleGraph result the way an
+// earlier measurement did. Copies src/ into a disposable scratch directory
+// (never writes into the clone itself, never symlinks src/ - a symlinked
+// directory's sf.fileName may not match what ts.createProgram realpaths,
+// measured directly while building the Prisma oracle script). Unlike the
+// Prisma oracle, no node_modules copy is needed: code-layering.ts's own
+// rule is pure static analysis over directory names and import
+// specifiers, no package resolution required.
 //
 // One declared module covering the whole `src/vs/**` tree, for the same
 // reason the Prisma oracle script uses one: a file only enters graph.edges
@@ -30,9 +30,9 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const CLI_PATH = join(HERE, "..", "dist", "cli.js");
 // Vendored, not read from the clone's own eslint.config.js (a JS object
 // literal embedded in a huge config file, not a standalone data file) -
-// archstrict-0j9.4's own verification confirmed this matches the clone's
-// current 'local/code-layering' rule options byte-for-byte; re-diff by
-// hand if VS Code's own layering table ever changes.
+// hand-verified to match the clone's current 'local/code-layering' rule
+// options byte-for-byte; re-diff by hand if VS Code's own layering table
+// ever changes.
 const LAYERING_TABLE_PATH = join(HERE, "..", "test", "fixtures", "vendored", "vscode-code-layering.json");
 
 const EXCLUDE = ["**/test/**", "**/*.test.ts"];
