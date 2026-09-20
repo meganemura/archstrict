@@ -16,8 +16,11 @@ import { fingerprintOf, readTodo, writeTodo } from "../todo-store.js";
 import { loadConfig, runRules, type AnyViolation } from "./check.js";
 
 // Only a violation with its own todoModule can be frozen: rule 1 (public-
-// surface bypass) and rule 2 (cycles) are per-edge/per-relationship
-// findings that accumulate as real, gradually-shrinkable debt. Rules 3
+// surface bypass), rule 2 (cycles), rule 6 (type-leak), and rule 7 (the
+// constraint engine: tag-boundary/tag-order/point-rule) are per-edge or
+// per-relationship findings that accumulate as real, gradually-shrinkable
+// debt - a team may want to accept a known architectural violation while
+// blocking new growth, the same precedent rule 1 already set. Rules 3
 // and 4 are config-vs-graph consistency checks (the config itself doesn't
 // match reality) - freezing those would hide a broken config rather than
 // track debt. Rule 5 already has its own freeze mechanism (the declared

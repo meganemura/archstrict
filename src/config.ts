@@ -48,13 +48,9 @@ export type Config = {
   ignoredCycles?: readonly (readonly [string, string])[];
   because: string;
 
-  // --- v1 schema (additive; wired into rules by later tickets, not this
-  // one). `modules`/`kinds`/`layers` above stay authoritative for every v0
-  // rule until each has migrated - removing them here would break every
-  // rule and verb that reads them in the same commit that adds this shape,
-  // which the implement-phase gate (typecheck + test, every ticket) does
-  // not allow. Their removal is itself a later ticket's job, once nothing
-  // reads them anymore.
+  // --- v1 schema (the only schema now that modules/kinds/layers are gone;
+  // see the header comment above). Every field below is wired into a real
+  // rule.
 
   // Analysis boundary (was `modules`' role under v0's discovery model).
   // Under v1, module boundaries come from `declaredModules` instead of
@@ -93,8 +89,9 @@ export type Config = {
   // not silence, the same convention every other rule here follows.
   mustBeEmpty?: readonly { glob: string; because: string }[];
 
-  // Constraint engine shape (typed here, implemented in a later ticket).
-  // One `exceptions` shape shared across `allowDeny` and `point`: a from/to
+  // Constraint engine shape - checked by src/rules/constraints.ts, wired
+  // into runRules (rule 7: tag-boundary/tag-order/point-rule). One
+  // `exceptions` shape shared across `allowDeny` and `point`: a from/to
   // glob or tag-predicate pair that overrides the enclosing rule either way.
   edges?: {
     allowDeny?: readonly {

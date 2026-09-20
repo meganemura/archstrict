@@ -25,6 +25,12 @@ import {
 } from "../rules/deprecated.js";
 import { checkTypeLeaks, type Violation as TypeLeakViolation } from "../rules/type-leak.js";
 import { checkMustBeEmpty, type Violation as MustBeEmptyViolation } from "../rules/must-be-empty.js";
+import {
+  checkAllowDeny,
+  checkOrder,
+  checkPoint,
+  type ConstraintViolation,
+} from "../rules/constraints.js";
 import { fingerprintOf, readTodo } from "../todo-store.js";
 
 // Not one of the six rules: reported when a todo entry matches no current
@@ -65,7 +71,8 @@ export type AnyViolation =
   | StaleTodoViolation
   | CleanModuleHasTodoViolation
   | StaleCycleExceptionViolation
-  | MustBeEmptyViolation;
+  | MustBeEmptyViolation
+  | ConstraintViolation;
 
 export type CheckResult = {
   modules: number;
@@ -155,6 +162,9 @@ export function runRules(graph: ModuleGraph, config: Config): CheckResult {
     ...checkUncoveredModules(graph),
     ...checkEmptyRuleSet(graph, config),
     ...checkMustBeEmpty(allProjectRelativeFiles(graph), config),
+    ...checkAllowDeny(graph, config),
+    ...checkOrder(graph, config),
+    ...checkPoint(graph, config),
   ];
   const deprecated = checkDeprecatedEdges(graph, config);
   violations.push(...deprecated.violations);

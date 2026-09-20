@@ -197,6 +197,68 @@ describe("cli", () => {
     }
   });
 
+  test("a real config's classify + edges.allowDeny produces a tag-boundary violation through check, and todo freezes it", () => {
+    const root = mkdtempSync(join(tmpdir(), "archstrict-cli-constraints-"));
+    try {
+      mkdirSync(join(root, "src", "core"), { recursive: true });
+      mkdirSync(join(root, "src", "feature"), { recursive: true });
+      writeFileSync(join(root, "src", "core", "index.ts"), "export const core = 1;\n");
+      writeFileSync(
+        join(root, "src", "feature", "module.ts"),
+        "import { core } from \"../core/index.ts\";\nexport const x = core;\n",
+      );
+      writeFileSync(
+        join(root, "archstrict.config.ts"),
+        `import type { Config } from "./archstrict.generated.js";\n` +
+          `export default {\n` +
+          `  declaredModules: [\n` +
+          `    { name: "core", glob: "src/core/**", surface: "index.ts" },\n` +
+          `    { name: "feature", glob: "src/feature/**", surface: "index.ts" },\n` +
+          `  ],\n` +
+          `  exclude: ["*.ts"],\n` +
+          `  classify: [\n` +
+          `    { glob: "src/core/**", tags: ["domain:core"] },\n` +
+          `    { glob: "src/feature/**", tags: ["domain:feature"] },\n` +
+          `  ],\n` +
+          `  edges: {\n` +
+          `    allowDeny: [\n` +
+          `      { source: "domain:feature", targetNamespace: "domain", allow: [], because: "feature must not depend on core directly" },\n` +
+          `    ],\n` +
+          `  },\n` +
+          `  because: "test",\n` +
+          `} satisfies Config;\n`,
+      );
+
+      let out = "";
+      try {
+        out = execFileSync("node", [CLI_PATH, "check"], { cwd: root, encoding: "utf8" });
+      } catch (e) {
+        out = (e as { stdout: string }).stdout;
+      }
+      expect(out).toContain("[tag-boundary]");
+
+      let jsonOut = "";
+      try {
+        jsonOut = execFileSync("node", [CLI_PATH, "check", "--json"], { cwd: root, encoding: "utf8" });
+      } catch (e) {
+        jsonOut = (e as { stdout: string }).stdout;
+      }
+      const json = JSON.parse(jsonOut);
+      expect(json.violations).toHaveLength(1);
+      expect(json.violations[0].rule).toBe("tag-boundary");
+      expect(json.violations[0].todoModule).toBe("feature");
+
+      const todoResult = JSON.parse(execFileSync("node", [CLI_PATH, "todo", "--json"], { cwd: root, encoding: "utf8" }));
+      expect(todoResult).toEqual({ firstRun: true, added: 1, pruned: 0 });
+
+      const afterFreeze = JSON.parse(execFileSync("node", [CLI_PATH, "check", "--json"], { cwd: root, encoding: "utf8" }));
+      expect(afterFreeze.violations).toHaveLength(0);
+      expect(afterFreeze.todo).toBe(1);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("todo --json on a broken config prints a structured error object, not the text next: line", () => {
     const root = mkdtempSync(join(tmpdir(), "archstrict-cli-todo-json-error-"));
     try {

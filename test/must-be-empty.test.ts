@@ -46,14 +46,16 @@ describe("checkMustBeEmpty", () => {
 describe("runRules wiring (check.ts)", () => {
   test("a real fixture's own file matching mustBeEmpty surfaces through the full check pipeline", () => {
     const graph = buildModuleGraph({ projectRoot: FIXTURE, modulesGlob: "src/*", surface: "public.ts" });
-    // Glob is relative to graph.rootDir, not the project root - under v0
-    // discovery, rootDir IS the modules root (here, ".../src"), so "b/**"
-    // names module b, not "src/b/**". Declared-mode's rootDir equals the
-    // project root instead, so a v1 project's own mustBeEmpty globs read
-    // as project-root-relative - a real, small inconsistency between the
-    // two modes, not fixed here (in scope for the eventual CLI cutover
-    // that already needs to reconcile several rootDir-relative
-    // conventions, not this rule alone).
+    // Glob is relative to graph.rootDir, not the project root - this test
+    // builds a v0-discovery graph directly (modulesGlob, not
+    // declaredModules), where rootDir IS the modules root (here,
+    // ".../src"), so "b/**" names module b, not "src/b/**". The CLI cutover
+    // resolved the inconsistency this comment used to flag between v0 and
+    // declared-mode rootDir: check/todo only ever build a declared-mode
+    // graph now (rootDir == the project root always), so a real project's
+    // mustBeEmpty globs are consistently project-root-relative. Only this
+    // low-level unit test still exercises v0 discovery directly, to prove
+    // runRules doesn't hardcode either convention.
     const config: Config = {
       configPath: "<test>",
       because: "test config",

@@ -9,11 +9,12 @@ It is not tsc, not ESLint, and not a type checker; it is architecture linting, i
 It is designed for a reader that starts from an empty context: a coding agent first, a human second.
 
 The shape, in one paragraph.
-A module is one directory under a configured glob (for example `src/*`).
+A module is one directory, declared explicitly in config (`declaredModules`) rather than discovered by convention - a barrel `index.ts` is not evidence of an enforced boundary.
 A module shows the rest of the codebase one file, named by the config's own `surface` field (default `index.ts`); anything a module does not export from that file is private, and an import that reaches past it into the module's internals is a violation.
 A module with no public-surface file present is entirely private: every external import into it is a violation.
 A module's surface file can also leak an internal type it never exported by name - a property, a return type, or a generic constraint that structurally reaches past the surface - which is its own violation, distinct from an import bypassing the surface from outside.
-Shape (kinds, layers, direction, the surface file name) lives in one root file, `archstrict.config.ts`, written as a plain TypeScript value; it is never scattered per module.
+A file can also carry tags (`classify`/`classifyByDirectoryName`, glob or ambient directory-name -> tag) independent of module membership, and a constraint engine (`edges`: `allowDeny`, `order`, `point`) checks edges between tags - the same domain/layer/plane shapes tools like dependency-cruiser and Nx's `depConstraints` express, generalized over tags instead of a fixed vocabulary.
+Shape (scope, exclude, classify, declaredModules, edges, the surface file name) lives in one root file, `archstrict.config.ts`, written as a plain TypeScript value; it is never scattered per module.
 A known cycle can be named as an exception (`ignoredCycles`), and a directory a project decided must hold no code at all can be declared with `mustBeEmpty` - see [skills/archstrict/references/rules.md](skills/archstrict/references/rules.md) for both.
 Known violations freeze into a per-module todo file that can only shrink; a module marked `strict` in config can never accumulate a todo entry, existing or new — any entry there is itself a violation.
 A violation report always carries a rule id, `path:line:col`, the evidence, the `because` reason, and a `next:` command — enough for an agent to fix its own mistake without asking.

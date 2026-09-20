@@ -1,6 +1,6 @@
 # The rules
 
-Every rule's violation carries `rule`, `path`, `line`, `column`, `evidence`, `because`, `next`. Rules 1, 2, and 6 also carry `todoModule` - the module a violation belongs to, and the only three rules `archstrict todo` can freeze (a violation with no `todoModule` names a module directory, a module pair, or the config file, none of which `todo` has anywhere to freeze it into).
+Every rule's violation carries `rule`, `path`, `line`, `column`, `evidence`, `because`, `next`. Rules 1, 2, 6, and 7 (the constraint engine) also carry `todoModule` - the module a violation belongs to, and the only rules `archstrict todo` can freeze (a violation with no `todoModule` names a module directory, a module pair, or the config file, none of which `todo` has anywhere to freeze it into).
 
 ## 1. public-surface-bypass
 
@@ -23,14 +23,15 @@ A known cycle can be exempted by naming any two of its modules in config's `igno
 
 ## 3. uncovered-module
 
-A module matches no `kind` pattern in the config. Not freezable - a module either matches a kind or it doesn't; there is no per-module state to suppress here, only a config change.
+A real, in-scope file (not excluded, and inside `scope` if set) matches no `declaredModules` entry - the same fact `graph.outsideFiles` already tracks, reported here instead of silently skipped. Not freezable: the file belongs to no module, so there is no module directory to freeze it into - the only fix is a config change (declare a module for it, or exclude it).
 
-- because: "a module matching no kind is unchecked, not passing (deptrac's --fail-on-uncovered)"
-- next: `add '<module>' to an existing kind's pattern, or give it its own kind in archstrict.config.ts`
+- because: "a file matching no declared module is unchecked, not passing (deptrac's --fail-on-uncovered)"
+- `path`: the file itself
+- next: `add a declaredModules entry covering '<file>' in archstrict.config.ts, or add it to exclude if it isn't module content`
 
 ## 4. empty-rule-set
 
-A configured rule that structurally cannot match anything: zero modules at all, a `kinds` pattern matching zero modules, a `layers` entry naming a kind nothing declares, or a `deprecated` entry whose actual edge count is exactly 0 (handed off from rule 5, which deliberately does not report that case itself). ArchUnitTS's own "Empty Test Protection": a rule that checks nothing must not look like a pass.
+A configured rule that structurally cannot match anything: zero `declaredModules` entries at all, a `classify` glob matching zero real files in scope, or a `deprecated` entry whose actual edge count is exactly 0 (handed off from rule 5, which deliberately does not report that case itself). ArchUnitTS's own "Empty Test Protection": a rule that checks nothing must not look like a pass.
 
 - because: "a rule that checks nothing must not look like a pass (ArchUnitTS's Empty Test Protection)"
 - `path`: the config file, not a module
@@ -45,15 +46,41 @@ A `deprecated` entry in the config names an edge between two modules and a `coun
 
 ## 6. type-leak
 
-A module's surface file re-exports or otherwise exposes an internal declaration - one that lives outside the surface file, inside the project's own checked modules root, and was never itself exported by name from that surface - without the consumer ever having a name for it. A structural leak: recurses through an exported symbol's properties, index signatures, union members, a generic type reference's own type arguments (`Promise<Internal>`, `Map<K, Internal>`, `Array<Internal>`), and a function's return type directly. A generic type parameter (a substitutable variable, not a declaration) and an anonymous type literal are excluded - neither has a name a consumer could fail to import.
+A module's surface file re-exports or otherwise exposes an internal declaration - one declared inside a real declared module's own directory (never a loose file outside every module) and never itself exported by name from that module's surface - without the consumer ever having a name for it. A structural leak: recurses through an exported symbol's properties, index signatures, union members, a generic type reference's own type arguments (`Promise<Internal>`, `Map<K, Internal>`, `Array<Internal>`), and a function's return type directly. A generic type parameter (a substitutable variable, not a declaration) and an anonymous type literal are excluded - neither has a name a consumer could fail to import. A type declared outside every declared module's own directory (a loose root-level file, or one inside a module that isn't declared) is never flagged by this rule at all - it belongs to no module's own boundary, so it can't leak from one.
 
 - because: "a consumer needs a name for every type it receives from a public surface, not just the type doing the exposing"
 - next: `export '<InternalType>' by name from <surface absolute path> (it's declared in <relative path>), or change '<Exported>' to not expose it` - `<surface absolute path>` is the surface file's full absolute path (e.g. `/project/src/m/index.ts`), unlike rule 1's own `<surface>` placeholder above, which is the bare file name
 - `todoModule`: the module owning the leaking surface (a leak is a self-violation, not a cross-module edge)
 
+## 7. tag-boundary / tag-order / point-rule (the constraint engine)
+
+Three shapes over `config.edges`, generalizing rules 1/2's fixed module vocabulary to tags (`classify`/`classifyByDirectoryName`). Each rule is evaluated independently, blind to every other rule's namespace: an edge violates if ANY ONE applicable rule says no. A rule scoped to a tag namespace says nothing about a target with no tag in that namespace at all (that's rule 3's territory, not this rule's concern) - an edge into an untagged file or an untagged external package simply never matches. `edgeType` (`"value"`/`"type"`/`"both"`, default `"both"`) and `importForm` (`"static"`/`"dynamic"`/`"both"`, default `"both"`) filter which edges a given `allowDeny`/`point` rule can match at all, checked before its own allow/deny or from/to logic runs.
+
+An edge reaching an external target (a real npm package, a node builtin, a workspace dependency outside `scope`) carries a synthesized `pkg:<name>` tag instead of the real file's classify tags - a `targetNamespace: "pkg"` rule constrains what a source may import from outside the project at all (VS Code's own per-layer external-package restrictions are the motivating case).
+
+**`allowDeny`** (`rule: "tag-boundary"`): a `source` tag's allow-or-deny list over one `targetNamespace` at a time (dependency-cruiser's own `mayImportFrom`/`forbid` generators, unified into one shape). A target sharing the source's own tag value is unconstrained by that rule - "the same group as source" is never restricted. An `exceptions` list (`{ from, to, because }[]`, glob pairs on the real file paths) overrides the rule either way for a specific edge, same shape `point` uses below.
+
+- because: whatever the `allowDeny` entry's own `because` gives (mandatory)
+- evidence: `'<specifier>' (from '<source tag>') reaches '<violating tag>'`
+- next: `remove this edge, or add '<value>' to '<source>'s allow list in archstrict.config.ts and record why`
+- `todoModule`: the edge's own source module
+
+**`order`** (`rule: "tag-order"`): a `tagNamespace`'s values must appear in `sequence`, in declared order, `direction: "downward-only"` meaning a source may depend on its own layer or an earlier one, never a later one (dependency-cruiser's own layer generator). `within` scopes the rule to edges sharing the same value in a second namespace (e.g. one `sequence` per `domain`) - a `within` value with no `sequence` entry at all is silently out of scope for that rule, not an error (a domain legitimately needing no internal layering); a `within` value that DOES have a `sequence` but doesn't list one of the two layer values classify actually assigned is a thrown config error (a real omission, not a design choice).
+
+- because: whatever the `order` entry's own `because` gives (mandatory)
+- evidence: `'<specifier>' reaches '<target layer>' from '<source layer>' (<namespace> sequence: <a> -> <b> -> ...)`
+- next: `move this edge to depend only on '<namespace>' values at or before '<source layer>' in archstrict.config.ts's sequence, or restructure the code so it does`
+- `todoModule`: the edge's own source module
+
+**`point`** (`rule: "point-rule"`): an explicit forbidden `from -> to` edge, each side either a glob (matched against the real project-relative path; never matches an external target) or a tag predicate (`{ tags, exclude? }` - every listed tag must be present, and if `exclude` is given, none of its tags may all be present at once). The narrowest, most explicit of the three shapes - a specific pair a broader `allowDeny`/`order` rule doesn't already cover.
+
+- because: whatever the `point` entry's own `because` gives (mandatory)
+- evidence: `'<specifier>' matches a forbidden edge`
+- `todoModule`: the edge's own source module
+
 ## must-be-empty
 
-A directory a team decided must hold no code at all - archspec's own "empty component" idea (e.g. a project that keeps rich models and no service objects declares `app/services` must stay empty, an anti-pattern guard). Distinct from rule 4 (`empty-rule-set`): that rule flags a rule that structurally cannot match anything; this one flags a real file existing where config says none should. A violation is any file matching config's `mustBeEmpty` glob at all - zero matches is a clean pass, not silence.
+A directory a team decided must hold no code at all - archspec's own "empty component" idea (e.g. a project that keeps rich models and no service objects declares `app/services` must stay empty, an anti-pattern guard). Distinct from rule 4 (`empty-rule-set`): that rule flags a rule that structurally cannot match anything; this one flags a real file existing where config says none should. A violation is any file matching config's `mustBeEmpty` glob at all - zero matches is a clean pass, not silence. The glob is project-root-relative, the same convention every rule follows now that `check`/`todo` only ever build a declared-mode module graph.
 
 - because: whatever `mustBeEmpty`'s own entry gives (mandatory, same as every other root-level rule with a reason to record)
 - `path`: the matching file itself; `line`/`column` are always `1`/`1` (no single line is "the" violation - the file's existence is)
