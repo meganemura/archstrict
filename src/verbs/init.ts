@@ -101,7 +101,9 @@ export type Config = {
   declaredModules: readonly {
     name: ModuleName;
     glob: string;
-    surface: string;
+    // A single glob, or several - a real package can publish more than
+    // one real, differently-shaped public entry point at once.
+    surface: string | readonly string[];
     // Rule 1's own "friend" exception: \`file\` (relative to this module,
     // may itself be a glob) is public to exactly the importers \`from\`
     // (a project-relative glob) matches, private to everyone else -

@@ -68,16 +68,24 @@ function violationFor(
   edge: Edge,
   targetModuleName: string,
   surfaceFiles: readonly string[],
-  surface: string,
+  surface: string | readonly string[],
 ): Violation {
+  const surfaceList = Array.isArray(surface) ? surface : [surface as string];
+  // Singular reads exactly as before (existing messages, unchanged);
+  // plural names every real, configured entry point instead of picking
+  // one arbitrarily.
+  const surfaceDisplay = surfaceList.join(", ");
+  const addArticle = surfaceList.length === 1 ? "a" : "one of";
+  const importTargets = surfaceList.map((s) => `${targetModuleName}/${s}`).join(", ");
+
   const evidence =
     surfaceFiles.length === 0
-      ? `'${edge.specifier}' resolved to module '${targetModuleName}', which has no ${surface}`
-      : `'${edge.specifier}' resolved to a file inside module '${targetModuleName}' other than its ${surface}`;
+      ? `'${edge.specifier}' resolved to module '${targetModuleName}', which has no ${surfaceDisplay}`
+      : `'${edge.specifier}' resolved to a file inside module '${targetModuleName}' other than its ${surfaceDisplay}`;
   const next =
     surfaceFiles.length === 0
-      ? `add a ${surface} to ${targetModuleName}/ naming what it exports`
-      : `import from ${targetModuleName}/${surface} instead, or add the needed export there`;
+      ? `add ${addArticle} ${surfaceDisplay} to ${targetModuleName}/ naming what it exports`
+      : `import from ${importTargets} instead, or add the needed export there`;
 
   return {
     rule: "public-surface-bypass",

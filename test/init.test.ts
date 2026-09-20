@@ -146,9 +146,10 @@ export default {
   // supported" rather than the real problem, whatever it was. Confirmed
   // directly this file matches the real Config in src/config.ts by
   // typechecking a config that uses all three, plus edges's own three
-  // rule shapes (allowDeny/order/point) and a declaredModules entry's own
-  // friends field, together.
-  test("a config using scope, classifyByDirectoryName, edges (allowDeny/order/point), and a declaredModules friends entry typechecks against real tsc", () => {
+  // rule shapes (allowDeny/order/point), a declaredModules entry's own
+  // friends field, and a declaredModules entry's own surface as an array
+  // of globs, together.
+  test("a config using scope, classifyByDirectoryName, edges (allowDeny/order/point), a declaredModules friends entry, and a declaredModules array surface typechecks against real tsc", () => {
     withTempProject(["app", "shared"], (root) => {
       init(root);
       writeFileSync(
@@ -159,7 +160,7 @@ export default {
   classify: [{ glob: "src/app/**", tags: ["kind:app"] }, { glob: "src/shared/**", tags: ["kind:shared"] }],
   classifyByDirectoryName: { tagNamespace: "env", names: ["app", "shared"] },
   declaredModules: [
-    { name: "app", glob: "src/app/**", surface: "index.ts" },
+    { name: "app", glob: "src/app/**", surface: ["index.ts", "http.ts"] },
     {
       name: "shared",
       glob: "src/shared/**",

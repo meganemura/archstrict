@@ -86,11 +86,13 @@ export type Module = {
   // than one file (Prisma's package.json `exports` has subpaths) - sorted,
   // for a deterministic message when a rule names "the" surface file.
   surfaceFiles: string[];
-  // This module's own configured surface name/glob - rule 1's own message
-  // used to name the graph's global default here instead, wrong whenever
-  // a specific module overrides it (a real, measured case: a package
-  // whose own surface is "types.d.ts", not the project's own default).
-  surfaceName: string;
+  // This module's own configured surface name/glob (or array of them) -
+  // rule 1's own message used to name the graph's global default here
+  // instead, wrong whenever a specific module overrides it (a real,
+  // measured case: a package whose own surface is "types.d.ts", not the
+  // project's own default). Carried in its original, un-normalized form -
+  // display formatting (singular vs. plural) is rule 1's own job.
+  surfaceName: string | readonly string[];
   // Rule 1's own "friend" exception - `fileGlob` is a project-relative
   // glob (resolved from the config's own module-relative `file`, the same
   // way `surfaceFiles` resolves `surface`), public to exactly the
@@ -112,7 +114,10 @@ export type Module = {
 export type DeclaredModule = {
   name: string;
   glob: string;
-  surface: string;
+  // A single glob, or several - a real package can publish more than one
+  // real, differently-shaped public entry point at once (a package.json
+  // `exports` map naming several real paths, not just its default `main`).
+  surface: string | readonly string[];
   friends?: readonly { file: string; from: string; because: string }[];
 };
 
@@ -270,10 +275,16 @@ function isWorkspaceSiblingResolution(resolvedFile: string, rootDir: string): bo
 // otherwise - a `.d.ts` a declaredModules entry's own `surface` glob
 // explicitly names is the one, narrow exception: an explicit config
 // choice, not a blanket re-inclusion of every declaration file.
+// `dm.surface` relative to its own module's base directory (moduleGlobBaseDir
+// of `dm.glob`), one project-relative glob per surface entry - a single
+// string normalizes to one entry, an array to one per element.
+function surfaceGlobsFor(dm: DeclaredModule): string[] {
+  const entries = Array.isArray(dm.surface) ? dm.surface : [dm.surface as string];
+  return entries.map((s) => `${moduleGlobBaseDir(dm.glob)}/${s}`.replace(/\/{2,}/g, "/"));
+}
+
 function surfaceGlobsAllowingDts(declaredModules: readonly DeclaredModule[]): string[] {
-  return declaredModules
-    .map((dm) => `${moduleGlobBaseDir(dm.glob)}/${dm.surface}`.replace(/\/{2,}/g, "/"))
-    .filter((g) => g.endsWith(".d.ts"));
+  return declaredModules.flatMap((dm) => surfaceGlobsFor(dm)).filter((g) => g.endsWith(".d.ts"));
 }
 
 // A named import/export clause is type-only either as a whole
@@ -355,10 +366,7 @@ function buildDeclaredModules(
   );
 
   const surfaceGlobs = new Map(
-    declaredModules.map((dm) => [
-      dm.name,
-      `${moduleGlobBaseDir(dm.glob)}/${dm.surface}`.replace(/\/{2,}/g, "/"),
-    ]),
+    declaredModules.map((dm) => [dm.name, surfaceGlobsFor(dm).map((g) => compileGlob(g))]),
   );
 
   for (const file of allFiles) {
@@ -368,8 +376,11 @@ function buildDeclaredModules(
     // Only surfaceFiles is populated here - `files` (every file, not just
     // the surface) is populated once, in buildModuleGraph's shared walk
     // loop, the same way v0 discovery populates it - not duplicated here.
-    const surfaceGlob = surfaceGlobs.get(name)!;
-    if (compileGlob(surfaceGlob).test(rel)) {
+    // surfaceFiles is the UNION of every configured surface glob's own
+    // matches - a real package can publish more than one real, equally
+    // public entry point at once.
+    const globs = surfaceGlobs.get(name)!;
+    if (globs.some((g) => g.test(rel))) {
       modules.get(name)!.surfaceFiles.push(file);
     }
   }

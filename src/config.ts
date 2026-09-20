@@ -81,7 +81,11 @@ export type Config = {
   declaredModules?: readonly {
     name: string;
     glob: string;
-    surface: string;
+    // A single glob, or several - a real package can publish more than
+    // one real, differently-shaped public entry point at once (a
+    // package.json `exports` map naming several real paths, not just its
+    // default `main`); surfaceFiles is the union of every glob's matches.
+    surface: string | readonly string[];
     // Rule 1's own "friend" exception (ArchUnit's term): `file` (relative
     // to this module, may itself be a glob) is public to exactly the
     // importers `from` (a project-relative glob) matches, private to
