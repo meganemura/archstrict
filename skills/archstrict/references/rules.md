@@ -19,7 +19,7 @@ A module-level cycle: two or more modules import each other, directly or through
 - next: `break the cycle at <m1> -> <m2>, or merge the modules involved`
 - `todoModule`: the name-first module among the ones in the component
 
-## 3. uncovered
+## 3. uncovered-module
 
 A module matches no `kind` pattern in the config. Not freezable - a module either matches a kind or it doesn't; there is no per-module state to suppress here, only a config change.
 
@@ -33,12 +33,12 @@ A configured rule that structurally cannot match anything: zero modules at all, 
 - because: "a rule that checks nothing must not look like a pass (ArchUnitTS's Empty Test Protection)"
 - `path`: the config file, not a module
 
-## 5. deprecated
+## 5. deprecated-edge-increased / deprecated-edge-decreased
 
-A `deprecated` entry in the config names an edge between two modules and a `count` it must not exceed - tach's own deprecated-dependency idea (warn, don't forbid), with "must not grow" added on top. The actual edge count exceeding the declared `count` is a violation; the actual count falling strictly between 0 and the declared count is a `suggestion` (informational, never affects the exit code - the edge shrank, which is progress, not a failure). `because` is mandatory in the config; deprecating an edge without a reason is a decision no future reader can judge.
+A `deprecated` entry in the config names an edge between two modules and a `count` it must not exceed - tach's own deprecated-dependency idea (warn, don't forbid), with "must not grow" added on top. The actual edge count exceeding the declared `count` is a violation (`rule: "deprecated-edge-increased"`); the actual count falling strictly between 0 and the declared count is a `suggestion` under a different rule id (`rule: "deprecated-edge-decreased"`, informational, never affects the exit code - the edge shrank, which is progress, not a failure). `because` is mandatory in the config; deprecating an edge without a reason is a decision no future reader can judge.
 
-- violation next: `reduce <from> -> <to> back to <count> edges, or raise count in archstrict.config.ts and record why the increase was accepted`
-- suggestion next: `update count to <actual> for <from> -> <to> in archstrict.config.ts`
+- violation (`deprecated-edge-increased`) next: `reduce <from> -> <to> back to <count> edges, or raise count in archstrict.config.ts and record why the increase was accepted`
+- suggestion (`deprecated-edge-decreased`) next: `update count to <actual> for <from> -> <to> in archstrict.config.ts`
 - Does not suppress rule 1: a deprecated edge that also bypasses its target's surface is still a rule-1 violation.
 
 ## 6. type-leak
