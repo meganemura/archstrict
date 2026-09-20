@@ -79,6 +79,19 @@ function tagsForTarget(edge: Edge, config: Config, rootDir: string): Set<string>
     const tags = new Set([`pkg:${edge.externalPackage}`]);
     const barePackage = bareNameFromTypesPackage(edge.externalPackage);
     if (barePackage !== undefined) tags.add(`pkg:${barePackage}`);
+    // A node builtin's own resolvedFile is synthesized as "node:<name>"
+    // (module-graph.ts's own convention - no real file exists for one) -
+    // the one reliable signal distinguishing it from a real npm package,
+    // whose resolvedFile is always a genuine filesystem path. Without
+    // this, a rule author who wants to ban every Node builtin from a
+    // browser-runtime layer or similar has to enumerate each bare name
+    // (pkg:fs, pkg:path, ...) individually, which silently under-protects
+    // against a future builtin nobody thought to add when writing the
+    // rule - a real, measured case, authoring a rule against a real
+    // bundler tool's own source. `pkg:node` matches every builtin at
+    // once; a rule naming one specific builtin still works exactly as
+    // before, since its own bare-name tag is unchanged.
+    if (edge.resolvedFile.startsWith("node:")) tags.add("pkg:node");
     return tags;
   }
   return classifyFile(toProjectRelativePosix(edge.resolvedFile, rootDir), config);

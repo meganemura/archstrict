@@ -172,6 +172,62 @@ describe("checkAllowDeny", () => {
     expect(violations).toHaveLength(1);
     expect(violations[0]!.evidence).toContain("pkg:fs");
   });
+
+  test("a single rule targeting the pkg:node umbrella tag catches every distinct real builtin at once", () => {
+    const cfg: Config = {
+      configPath: "<test>",
+      because: "test config",
+      classifyByDirectoryName: { tagNamespace: "env", names: ["browser"] },
+      edges: {
+        allowDeny: [{ source: "env:browser", targetNamespace: "pkg", deny: ["node"], because: "test" }],
+      },
+    };
+    const graph = fakeGraph([
+      edge({
+        fromFile: "/project/src/browser/a.ts",
+        specifier: "node:fs",
+        resolvedFile: "node:fs",
+        toModule: undefined,
+        externalPackage: "fs",
+      }),
+      edge({
+        fromFile: "/project/src/browser/b.ts",
+        specifier: "node:path",
+        resolvedFile: "node:path",
+        toModule: undefined,
+        externalPackage: "path",
+      }),
+    ]);
+
+    const violations = checkAllowDeny(graph, cfg);
+    expect(violations).toHaveLength(2);
+    expect(violations.map((v) => v.path).sort()).toEqual([
+      "/project/src/browser/a.ts",
+      "/project/src/browser/b.ts",
+    ]);
+  });
+
+  test("a real external npm package (not a builtin) never gets the pkg:node umbrella tag", () => {
+    const cfg: Config = {
+      configPath: "<test>",
+      because: "test config",
+      classifyByDirectoryName: { tagNamespace: "env", names: ["browser"] },
+      edges: {
+        allowDeny: [{ source: "env:browser", targetNamespace: "pkg", deny: ["node"], because: "test" }],
+      },
+    };
+    const graph = fakeGraph([
+      edge({
+        fromFile: "/project/src/browser/c.ts",
+        specifier: "lodash",
+        resolvedFile: "/project/node_modules/lodash/index.js",
+        toModule: undefined,
+        externalPackage: "lodash",
+      }),
+    ]);
+
+    expect(checkAllowDeny(graph, cfg)).toHaveLength(0);
+  });
 });
 
 describe("checkOrder", () => {
