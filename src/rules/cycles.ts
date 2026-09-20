@@ -19,6 +19,7 @@
 // the name-first module among the ones in it — an arbitrary but stable
 // and deterministic choice, so re-running `check` always picks the same
 // module for the same cycle.
+import type { Config } from "../config.ts";
 import type { Edge, ModuleGraph } from "../module-graph.ts";
 
 export type Violation = {
@@ -32,7 +33,22 @@ export type Violation = {
   todoModule: string;
 };
 
+// A declared ignoredCycles entry naming a pair that isn't actually part of
+// any real cycle anymore - config drift, not a real finding, same shape
+// (and same reasoning) as rule 3's own stale-todo: an unmatched exception
+// hides nothing real, so it must be visible, not silently tolerated.
+export type StaleExceptionViolation = {
+  rule: "stale-cycle-exception";
+  path: string;
+  line: number;
+  column: number;
+  evidence: string;
+  because: string;
+  next: string;
+};
+
 const BECAUSE = "modules that import each other cannot be reasoned about, tested, or replaced independently";
+const STALE_BECAUSE = "an ignoredCycles entry naming no real cycle hides nothing - it is dead configuration, not a decision anyone can still judge";
 
 type ModuleEdge = { to: string; edge: Edge };
 
@@ -126,13 +142,25 @@ function shortestCycleFrom(
   throw new Error(`no cycle found from ${start} within its own strongly connected component`);
 }
 
-export function checkCycles(graph: ModuleGraph): Violation[] {
+export function checkCycles(
+  graph: ModuleGraph,
+  config?: Pick<Config, "ignoredCycles" | "configPath">,
+): Violation[] {
   const adjacency = buildAdjacency(graph);
   const nodes = [...graph.modules.keys()];
   const components = stronglyConnectedComponents(nodes, adjacency).filter((c) => c.length > 1);
+  const ignoredCycles = config?.ignoredCycles ?? [];
 
   const violations: Violation[] = [];
   for (const component of components) {
+    const memberSet = new Set(component);
+    // A pair named in either order is ignored the moment both its modules
+    // are in the same component - the whole component, not just that one
+    // edge, since a cycle spanning more than two modules is one finding
+    // either way (this rule reports one violation per component already).
+    const ignored = ignoredCycles.some(([a, b]) => memberSet.has(a) && memberSet.has(b));
+    if (ignored) continue;
+
     const sorted = [...component].sort();
     const anchor = sorted[0]!;
     const { modules, edges } = shortestCycleFrom(anchor, new Set(component), adjacency);
@@ -147,6 +175,37 @@ export function checkCycles(graph: ModuleGraph): Violation[] {
       because: BECAUSE,
       next: `break the cycle at ${modules[0]} -> ${modules[1]}, or merge the modules involved`,
       todoModule: anchor,
+    });
+  }
+  return violations;
+}
+
+// A declared pair not found together in any real strongly connected
+// component at all (ignored or not) is stale - checked against every
+// component, not just the ignored ones, since a pair that never cycled in
+// the first place is just as stale as one that used to but no longer does.
+export function checkStaleCycleExceptions(
+  graph: ModuleGraph,
+  config: Pick<Config, "ignoredCycles" | "configPath">,
+): StaleExceptionViolation[] {
+  const adjacency = buildAdjacency(graph);
+  const nodes = [...graph.modules.keys()];
+  const components = stronglyConnectedComponents(nodes, adjacency).filter((c) => c.length > 1);
+  const componentSets = components.map((c) => new Set(c));
+
+  const violations: StaleExceptionViolation[] = [];
+  for (const [a, b] of config.ignoredCycles ?? []) {
+    const stillCycles = componentSets.some((members) => members.has(a) && members.has(b));
+    if (stillCycles) continue;
+
+    violations.push({
+      rule: "stale-cycle-exception",
+      path: config.configPath,
+      line: 1,
+      column: 1,
+      evidence: `ignoredCycles entry ['${a}', '${b}'] names no real cycle`,
+      because: STALE_BECAUSE,
+      next: `remove ['${a}', '${b}'] from ignoredCycles in archstrict.config.ts`,
     });
   }
   return violations;

@@ -62,6 +62,12 @@ export type Config = {
   // here), so marking a module strict never hides a violation from check,
   // old or new.
   strict?: readonly string[];
+  // A specific known cycle (naming any two modules in it, in either
+  // order - Nx's own enforce-module-boundaries convention) exempted from
+  // rule 2. An entry naming a pair no longer in any real cycle is itself
+  // flagged (a distinct "stale-cycle-exception" violation - a stale
+  // exception hides nothing real, same reasoning as stale-todo).
+  ignoredCycles?: readonly (readonly [string, string])[];
   because: string;
 
   // --- v1 schema (additive; wired into rules by later tickets, not this

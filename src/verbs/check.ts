@@ -10,7 +10,12 @@ import ts from "typescript";
 import { buildModuleGraph, type ModuleGraph } from "../module-graph.js";
 import type { Config } from "../config.js";
 import { checkPublicSurfaceBypass, type Violation as PublicSurfaceViolation } from "../rules/public-surface.js";
-import { checkCycles, type Violation as CycleViolation } from "../rules/cycles.js";
+import {
+  checkCycles,
+  checkStaleCycleExceptions,
+  type StaleExceptionViolation as StaleCycleExceptionViolation,
+  type Violation as CycleViolation,
+} from "../rules/cycles.js";
 import { checkUncoveredModules, type Violation as UncoveredViolation } from "../rules/uncovered.js";
 import { checkEmptyRuleSet, type Violation as EmptyRuleViolation } from "../rules/empty-rule.js";
 import {
@@ -57,7 +62,8 @@ export type AnyViolation =
   | DeprecatedViolation
   | TypeLeakViolation
   | StaleTodoViolation
-  | CleanModuleHasTodoViolation;
+  | CleanModuleHasTodoViolation
+  | StaleCycleExceptionViolation;
 
 export type CheckResult = {
   modules: number;
@@ -132,7 +138,8 @@ export async function loadConfig(configPath: string): Promise<Config> {
 export function runRules(graph: ModuleGraph, config: Config): CheckResult {
   const violations: AnyViolation[] = [
     ...checkPublicSurfaceBypass(graph),
-    ...checkCycles(graph),
+    ...checkCycles(graph, config),
+    ...checkStaleCycleExceptions(graph, config),
     ...checkUncoveredModules(graph, config),
     ...checkEmptyRuleSet(graph, config),
   ];
