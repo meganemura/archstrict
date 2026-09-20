@@ -61,13 +61,11 @@ export function detectTypeLeaks(checker: ts.TypeChecker, entrySf: ts.SourceFile,
     // Also excludes a generic type parameter (a variable substituted at
     // the call site, not a declaration - its own declaration site,
     // wherever the generic function or type was written, is meaningless
-    // here): TypeParameter is never one of the flags above on the same
-    // symbol.
+    // here) and an anonymous type literal (TS names it "__type",
+    // "__object", ... - it has no name a consumer could fail to import,
+    // its shape already fully expanded wherever it appears): TypeParameter
+    // and TypeLiteral are never among the flags above on the same symbol.
     if (!(symbol.flags & NAMED_TYPE_DECLARATION)) return undefined;
-    // An anonymous type literal (TS names it "__type", "__object", ...)
-    // has no name a consumer could fail to import: its shape is already
-    // fully expanded wherever it appears.
-    if (symbol.name.startsWith("__")) return undefined;
     const file = declaredIn(symbol);
     if (file === undefined) return undefined;
     if (file === entrySf.fileName) return undefined; // declared at the surface itself
