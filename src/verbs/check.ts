@@ -82,6 +82,14 @@ export type CheckResult = {
   edges: number;
   outsideFiles: number;
   unresolvedSpecifiers: number;
+  // The top distinct unresolved-specifier prefixes and their counts, most
+  // frequent first - a bare count alone couldn't tell "one specifier, many
+  // uses" from "many distinct specifiers," which cost real diagnosis time in
+  // a large monorepo tracking down one missing tsconfig paths entry (measured
+  // directly, authoring a config against nrwl/nx's own packages/). Capped at
+  // the top 10 so this stays readable even when unresolvedSpecifiers itself
+  // is in the thousands.
+  unresolvedSpecifierBreakdown: { prefix: string; count: number }[];
   unsupportedSyntax: number;
   typeLeaks: number; // how many type-leak violations rule 6 found — 0 is a result, not silence
   todo: number; // how many violations were suppressed by a frozen todo entry
@@ -166,6 +174,30 @@ function allProjectRelativeFiles(graph: ModuleGraph): string[] {
   return files.map((f) => toProjectRelativePosix(f, graph.rootDir));
 }
 
+// A scoped specifier's own two segments ("@scope/name") are the meaningful
+// grouping unit - "@scope" alone would merge every package under one scope
+// into a single, useless bucket. A relative or unscoped specifier groups by
+// its own first segment only.
+function specifierPrefix(specifier: string): string {
+  const segments = specifier.split("/");
+  if (specifier.startsWith("@") && segments.length > 1) {
+    return `${segments[0]}/${segments[1]}`;
+  }
+  return segments[0]!;
+}
+
+function unresolvedSpecifierBreakdown(specifiers: string[]): { prefix: string; count: number }[] {
+  const counts = new Map<string, number>();
+  for (const specifier of specifiers) {
+    const prefix = specifierPrefix(specifier);
+    counts.set(prefix, (counts.get(prefix) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, 10)
+    .map(([prefix, count]) => ({ prefix, count }));
+}
+
 export function runRules(graph: ModuleGraph, config: Config): CheckResult {
   const violations: AnyViolation[] = [
     ...checkPublicSurfaceBypass(graph),
@@ -195,6 +227,7 @@ export function runRules(graph: ModuleGraph, config: Config): CheckResult {
     edges: graph.crossModuleEdges.length,
     outsideFiles: graph.outsideFiles.length,
     unresolvedSpecifiers: graph.unresolvedSpecifierCount,
+    unresolvedSpecifierBreakdown: unresolvedSpecifierBreakdown(graph.unresolvedSpecifiers),
     unsupportedSyntax: graph.unsupportedSyntaxCount,
     typeLeaks: typeLeaks.length,
     todo: 0,
@@ -357,6 +390,10 @@ export function formatText(result: CheckResult): string {
   lines.push(`edges: ${result.edges}`);
   lines.push(`not covered by any declared module: ${result.outsideFiles}`);
   lines.push(`unresolved specifiers: ${result.unresolvedSpecifiers}`);
+  if (result.unresolvedSpecifierBreakdown.length > 0) {
+    const breakdown = result.unresolvedSpecifierBreakdown.map((b) => `${b.prefix} (${b.count})`).join(", ");
+    lines.push(`  top unresolved prefixes: ${breakdown}`);
+  }
   lines.push(`unsupported syntax: ${result.unsupportedSyntax}`);
   lines.push(`type leaks: ${result.typeLeaks}`);
   lines.push(`todo: ${result.todo}`);

@@ -193,6 +193,7 @@ describe("check", () => {
         edges: 1,
         outsideFiles: 0,
         unresolvedSpecifiers: 0,
+        unresolvedSpecifierBreakdown: [],
         unsupportedSyntax: 0,
         typeLeaks: 0,
         todo: 0,
@@ -361,6 +362,37 @@ describe("check", () => {
       // The vacuous second rule surfaces as its own violation too - the
       // coverage field and rule 4 agree about the same real fact.
       expect(result.violations.some((v) => v.rule === "empty-rule-set")).toBe(true);
+    });
+  });
+
+  test("unresolvedSpecifierBreakdown groups by specifier prefix, most frequent first", async () => {
+    await withTempProject(async (root) => {
+      mkdirSync(join(root, "src", "app"), { recursive: true });
+      writeFileSync(
+        join(root, "src", "app", "module.ts"),
+        [
+          `import { a } from "@totally-fake-scope/one";`,
+          `import { b } from "@totally-fake-scope/one/sub-path";`,
+          `import { c } from "another-fake-package";`,
+          `export const x = [a, b, c];`,
+        ].join("\n"),
+      );
+      init(root);
+
+      const result = await check(root);
+      // Two distinct subpath specifiers of the same scoped package
+      // ("@totally-fake-scope/one" itself, and its own "/sub-path") share
+      // that package's own scope+name prefix, so it outranks the single,
+      // unrelated "another-fake-package" specifier.
+      expect(result.unresolvedSpecifiers).toBe(3);
+      expect(result.unresolvedSpecifierBreakdown).toEqual([
+        { prefix: "@totally-fake-scope/one", count: 2 },
+        { prefix: "another-fake-package", count: 1 },
+      ]);
+
+      const text = formatText(result);
+      expect(text).toContain("unresolved specifiers: 3");
+      expect(text).toContain("top unresolved prefixes: @totally-fake-scope/one (2), another-fake-package (1)");
     });
   });
 });

@@ -113,6 +113,13 @@ export type ModuleGraph = {
   outsideFiles: string[]; // .ts files under the project root that match no module
   unsupportedSyntaxCount: number; // require(), import x = require(...): out of scope for v0
   unresolvedSpecifierCount: number;
+  // The raw specifier text of every unresolved import, in encounter order -
+  // a bare count alone gave no way to tell "one specifier, many uses" from
+  // "many distinct specifiers," which cost real diagnosis time tracking down
+  // a missing tsconfig paths entry in a large monorepo (measured directly,
+  // authoring a config against nrwl/nx's own packages/). check.ts derives a
+  // by-prefix breakdown from this list rather than duplicating the walk.
+  unresolvedSpecifiers: string[];
   // The configured public-surface file name (e.g. "index.ts"), carried on
   // the graph so a rule can name it in a message without needing the whole
   // Config passed in just for this one string.
@@ -467,6 +474,7 @@ export function buildModuleGraph(options: BuildOptions): ModuleGraph {
   const edges: Edge[] = [];
   let unsupportedSyntaxCount = 0;
   let unresolvedSpecifierCount = 0;
+  const unresolvedSpecifiers: string[] = [];
 
   for (const sf of program.getSourceFiles()) {
     if (!rootNames.includes(sf.fileName)) continue; // lib.d.ts, node_modules, etc.
@@ -544,6 +552,7 @@ export function buildModuleGraph(options: BuildOptions): ModuleGraph {
           const resolvedModule = resolved.resolvedModule;
           if (resolvedModule === undefined) {
             unresolvedSpecifierCount++;
+            unresolvedSpecifiers.push(specifier.text);
           } else {
             const resolvedFile = resolvedModule.resolvedFileName;
             const toModule = resolveModuleForFile(resolvedFile);
@@ -581,6 +590,7 @@ export function buildModuleGraph(options: BuildOptions): ModuleGraph {
     outsideFiles,
     unsupportedSyntaxCount,
     unresolvedSpecifierCount,
+    unresolvedSpecifiers,
     surface,
     rootDir,
     program,
