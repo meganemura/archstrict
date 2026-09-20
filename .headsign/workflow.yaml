@@ -91,7 +91,13 @@ phases:
       `bd comments <id>` for what an earlier lap or review round left). Read
       the current epic's own tickets and report.md's prior entries before
       spike or rule work. Write tests first where a property or an exact CLI/JSON shape
-      exists (Hegel for properties, example tests for exact output). A
+      exists (Hegel for properties, example tests for exact output). For a
+      ticket touching module-graph resolution or which rules run against
+      the live CLI, also run `npm run dogfood:nukadoko` before considering
+      it done - unit tests alone missed two real regressions this run
+      (node-builtin resolution inflating unresolvedSpecifierCount; a
+      declared-mode scope change silently widening what check scans) that
+      the real dogfood scenario caught immediately. A
       commit message, a comment, a doc, or a test must not name a ticket id
       or refer to `.claude-team/` or any other internal note; write the
       substance in place instead. A ticket whose result is a measurement or
