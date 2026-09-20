@@ -44,9 +44,22 @@ function probeUnstableSync() {
     .catch((error) => ({ attempted: false, reason: `import failed (typescript 7 likely not installed): ${error.message}` }));
 }
 
+// A failure setting up the fixture (parseConfigFile, updateSnapshot,
+// getProject, getSourceFile) is not an import failure - conflating the two
+// would report "typescript 7 likely not installed" for a real regression in
+// a typescript 7 that plainly IS installed, the same "measured nothing but
+// looked green" shape the CI job's own version-check step already guards
+// against one layer up.
 function runSyncProbe(sync) {
-  const { API } = sync;
   const dir = mkdtempSync(join(tmpdir(), "archstrict-ts7-probe-"));
+  try {
+    return runSyncProbeIn(sync, dir);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+function runSyncProbeIn({ API }, dir) {
   const tsconfigPath = join(dir, "tsconfig.json");
   const entryPath = join(dir, "entry.ts");
   writeFileSync(
@@ -91,12 +104,18 @@ function runSyncProbe(sync) {
 
   const api = new API();
   try {
-    api.parseConfigFile(tsconfigPath);
-    const snapshot = api.updateSnapshot({ openProjects: [tsconfigPath] });
-    const project = snapshot.getProject(tsconfigPath);
-    const checker = project.checker;
-    const program = project.program;
-    const sf = program.getSourceFile(entryPath);
+    let checker;
+    let sf;
+    try {
+      api.parseConfigFile(tsconfigPath);
+      const snapshot = api.updateSnapshot({ openProjects: [tsconfigPath] });
+      const project = snapshot.getProject(tsconfigPath);
+      checker = project.checker;
+      sf = project.program.getSourceFile(entryPath);
+    } catch (error) {
+      return { attempted: true, setupFailed: true, reason: error.message, supported: 0, unsupported: 0, results: {} };
+    }
+
     const moduleSymbol = attempt("getSymbolAtLocation", () => checker.getSymbolAtLocation(sf));
 
     const exports = attempt("getExportsOfModule", () => checker.getExportsOfModule(moduleSymbol)) ?? [];
@@ -132,7 +151,6 @@ function runSyncProbe(sync) {
     }
   } finally {
     api.close();
-    rmSync(dir, { recursive: true, force: true });
   }
 
   const supported = Object.values(results).filter((r) => r.status === "ok").length;
