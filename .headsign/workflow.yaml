@@ -189,8 +189,9 @@ phases:
       violation whose `next` didn't actually say what to do. For each
       concrete, real gap this turns up - a wrong claim, a missing doc, a
       confusing error, a rough edge in the hook or CLI - file it as a new
-      `bd create` ticket under the `archstrict-t35` epic (or a fresh epic if
-      that one is fully closed), with a clear, testable acceptance
+      `bd create` ticket under this project's own v0 epic (`bd list --json`
+      names it; open a fresh epic if that one is fully closed), with a
+      clear, testable acceptance
       criterion, same as any other ticket this workflow already runs. Do
       not invent a gap to keep the queue non-empty: a genuinely clean pass
       is a real answer too, and gets recorded as a `bd comment` on the epic
