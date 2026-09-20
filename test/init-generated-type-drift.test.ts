@@ -4,19 +4,24 @@
 // archstrict.generated.ts, kept in sync by hand since a runtime
 // derivation from src/config.ts isn't possible (types are erased at
 // runtime, and the published package ships dist/ only). That fix patched
-// the known instance; nothing stopped the NEXT field from drifting the
-// same way - confirmed the very next lap, when order gained edgeType/
-// importForm and init.ts's own copy was missed on the first pass.
+// the known instance; nothing stopped the NEXT top-level field from
+// drifting the same way. A second drift (edges.order gaining edgeType/
+// importForm without init.ts's copy) happened around the same time, but
+// inside edges's own nested shape - a distinct, narrower class this file
+// does not cover; see below.
 //
-// Two layers, so a future field can't drift silently through either one:
-// (1) a compile-time assertion that EXPECTED_GENERATED_FIELDS's own
-// literal union still matches Config's real top-level keys - `tsc` fails
-// the moment someone adds a field to Config here without also deciding
-// whether it belongs in the generated type; (2) a runtime check that
-// every one of those field names actually appears in what `archstrict
-// init` really writes to disk - `tsc` alone can't make sure a maintainer
-// who updated the list above also updated generatedFileContents's own
-// template string, so this is what forces that second step.
+// Two layers, so a future TOP-LEVEL Config field can't drift silently
+// through either one: (1) a compile-time assertion that
+// EXPECTED_GENERATED_FIELDS's own literal union still matches Config's
+// real top-level keys - `tsc` fails the moment someone adds a field to
+// Config here without also deciding whether it belongs in the generated
+// type; (2) a runtime check that every one of those field names actually
+// appears, at Config's own top-level indent, in what `archstrict init`
+// really writes to disk - `tsc` alone can't make sure a maintainer who
+// updated the list above also updated generatedFileContents's own
+// template string, so this is what forces that second step. Neither
+// layer reaches a field nested inside `edges`'s own allowDeny/order/point
+// shapes - that stays a maintainer's own responsibility, same as before.
 import { describe, expect, test } from "vitest";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -77,8 +82,13 @@ describe("init's generated Config type stays in sync with the real Config", () =
       const generated = readFileSync(generatedPath, "utf8");
 
       for (const field of EXPECTED_GENERATED_FIELDS) {
-        expect(generated, `expected '${field}' to appear as a field in the generated Config type`).toMatch(
-          new RegExp(`^\\s*${field}\\??:`, "m"),
+        // Anchored to exactly two spaces - Config's own top-level indent in
+        // the template below - not `^\s*`: a top-level field whose name
+        // also recurs nested (because, surface) matched at any indent, so a
+        // deleted top-level line still passed as long as a nested line of
+        // the same name survived.
+        expect(generated, `expected '${field}' to appear as a top-level field in the generated Config type`).toMatch(
+          new RegExp(`^  ${field}\\??:`, "m"),
         );
       }
     } finally {
