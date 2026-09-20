@@ -7,6 +7,12 @@ CLAUDE.local.md
 node_modules/
 dist/
 
+# A fixture's own workspace dependency: TS's real node module resolution
+# looks for a directory literally named `node_modules`, so this can't be
+# renamed - only the fixture's own subtree is un-ignored.
+!test/fixtures/package-resolution/node_modules/
+!test/fixtures/package-resolution/node_modules/**
+
 # Hegel failure database
 .hegel/
 

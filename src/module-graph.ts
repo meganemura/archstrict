@@ -34,6 +34,14 @@ export type Edge = {
   isTypeOnly: boolean;
   resolvedFile: string;
   toModule: string | undefined; // undefined when resolvedFile is outside every module (e.g. a package, or an outside-glob file)
+  // Set when the resolved file is a genuine external dependency (a real
+  // npm package, resolved through node_modules or a workspace's own
+  // package.json - TS flags this `isExternalLibraryImport`), not a file
+  // this project's own modules glob covers. A leading "node:" is stripped
+  // so `import "fs"` and `import "node:fs"` name the same package. This is
+  // the raw fact a later rule synthesizes a `pkg:` tag from - this module
+  // does not itself know about tags.
+  externalPackage: string | undefined;
 };
 
 export type Module = {
@@ -199,30 +207,33 @@ export function buildModuleGraph(options: BuildOptions): ModuleGraph {
       }
 
       if (specifier !== undefined && ts.isStringLiteral(specifier)) {
-        if (specifier.text.startsWith(".")) {
-          const resolved = ts.resolveModuleName(
-            specifier.text,
-            sf.fileName,
-            compilerOptions,
-            host,
-          );
-          const resolvedFile = resolved.resolvedModule?.resolvedFileName;
-          if (resolvedFile === undefined) {
-            unresolvedSpecifierCount++;
-          } else {
-            const start = specifier.getStart(sf);
-            const { line, character } = sf.getLineAndCharacterOfPosition(start);
-            const toModule = moduleForFile(resolvedFile, projectRoot, modulesGlob);
-            edges.push({
-              fromFile: sf.fileName,
-              fromModule,
-              fromPosition: { line: line + 1, column: character + 1 },
-              specifier: specifier.text,
-              isTypeOnly,
-              resolvedFile,
-              toModule,
-            });
-          }
+        // Resolved regardless of a leading "." - a bare specifier
+        // (`@internal/a`, `lodash`) is resolved the same way a relative one
+        // is; TS's own resolver already follows a workspace package's
+        // package.json `exports` under nodenext, so the only thing gating
+        // that path before was this project's own code, not TypeScript.
+        const resolved = ts.resolveModuleName(specifier.text, sf.fileName, compilerOptions, host);
+        const resolvedModule = resolved.resolvedModule;
+        if (resolvedModule === undefined) {
+          unresolvedSpecifierCount++;
+        } else {
+          const resolvedFile = resolvedModule.resolvedFileName;
+          const start = specifier.getStart(sf);
+          const { line, character } = sf.getLineAndCharacterOfPosition(start);
+          const toModule = moduleForFile(resolvedFile, projectRoot, modulesGlob);
+          const externalPackage = resolvedModule.isExternalLibraryImport
+            ? (resolvedModule.packageId?.name ?? specifier.text.replace(/^node:/, ""))
+            : undefined;
+          edges.push({
+            fromFile: sf.fileName,
+            fromModule,
+            fromPosition: { line: line + 1, column: character + 1 },
+            specifier: specifier.text,
+            isTypeOnly,
+            resolvedFile,
+            toModule,
+            externalPackage,
+          });
         }
       }
 
