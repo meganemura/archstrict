@@ -5,8 +5,9 @@ import { init } from "./verbs/init.js";
 import { check, formatText } from "./verbs/check.js";
 import { todo } from "./verbs/todo.js";
 
-function runInit(): number {
-  const result = init(process.cwd());
+function runInit(args: string[]): number {
+  const [modulesGlob] = args;
+  const result = init(process.cwd(), modulesGlob);
   process.stdout.write(`wrote ${result.generatedPath}\n`);
   if (result.configWritten) {
     process.stdout.write(`wrote ${result.configPath}\n`);
@@ -52,7 +53,7 @@ async function main(argv: string[]): Promise<number> {
     return 1;
   }
   try {
-    if (verb === "init") return runInit();
+    if (verb === "init") return runInit(rest);
     if (verb === "check") return await runCheck(rest);
     if (verb === "todo") return await runTodo(rest);
     process.stderr.write(`archstrict: '${verb}' is not implemented yet\n`);
