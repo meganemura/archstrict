@@ -31,6 +31,13 @@ describe("classifyByGlob", () => {
     expect(classifyByGlob("elsewhere/file.ts", [{ glob: "packages/**", tags: ["x"] }])).toBeUndefined();
   });
 
+  test("a mid-pattern ** matches zero segments as well as one or more", () => {
+    const entries = [{ glob: "a/**/b.ts", tags: ["x"] }];
+    expect(classifyByGlob("a/b.ts", entries)).toEqual(["x"]);
+    expect(classifyByGlob("a/x/b.ts", entries)).toEqual(["x"]);
+    expect(classifyByGlob("a/x/y/b.ts", entries)).toEqual(["x"]);
+  });
+
   test("two equally-specific entries disagreeing about the same file throw", () => {
     // Same literal-prefix length (16: "packages/shared/") and same
     // wildcard count (1) on both, and both match "packages/shared/x.ts" -

@@ -33,7 +33,16 @@ function compileGlob(glob: string): { test: (path: string) => boolean; literalPr
   let pattern = "";
   let i = 0;
   while (i < glob.length) {
-    if (glob.startsWith("**", i)) {
+    if (glob.startsWith("/**/", i)) {
+      // `a/**/b.ts` must match `a/b.ts` too (zero segments between the two
+      // literal slashes), not just `a/x/b.ts` - translating `**` to `.*` in
+      // isolation while keeping both surrounding slashes as literals would
+      // require at least one segment. Fold the trailing slash into an
+      // optional group instead: one literal slash, then an optional
+      // "anything, ending in a slash" group.
+      pattern += "/(?:.*/)?";
+      i += 4;
+    } else if (glob.startsWith("**", i)) {
       pattern += ".*";
       i += 2;
     } else if (glob[i] === "*") {
