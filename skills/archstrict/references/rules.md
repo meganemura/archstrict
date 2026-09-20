@@ -10,6 +10,18 @@ An import from outside a module reaches a file other than that module's surface 
 - next: `add a <surface> to <module>/ naming what it exports`, or `import from <module>/<surface> instead, or add the needed export there`
 - `todoModule`: the module whose surface was bypassed (the import's target, not its source)
 
+### Design note: rule 1 has no per-consumer exception (not yet implemented)
+
+A module currently has exactly one surface: public to every importer, or private to all. There's no way to say "this specific internal file is public to exactly one named consumer, private to everyone else" - ArchUnit's own "friend" idea. A real, motivating case: a large monorepo's own semi-private internal-utilities file documented two legitimate consumer classes (that package's own implementation code, plus a specific first-party group of other packages routed through one particular re-export) with different rules for each - a shape rule 1 cannot express today, since it only ever grants or denies visibility project-wide.
+
+Decided shape: a `friends` field on a `declaredModules[]` entry, not a new top-level `Config` field - this is a property of one module's own surface, not a project-wide rule. Something like `{ file: string; from: string; because: string }[]`: `file` names the specific internal file (relative to the module) that becomes public, `from` is a glob naming who may reach it, and rule 1 suppresses a bypass whose importer matches `from` and whose target matches `file`; every other importer of that file still violates as before.
+
+Alternative refused: `edges.allowDeny`'s own `exceptions` field already has the right shape (`{ from, to, because }` glob pairs) and could in principle be read by rule 1 too, adding zero new schema. Refused because `exceptions` lives inside one specific `allowDeny` rule's own evaluation loop (confirmed: `isExemptedByGlobPair` in src/rules/constraints.ts is only ever called from within `computeAllowDeny`'s per-rule pass) - a project with no `edges` rules at all, but one real friend relationship, would have to author a vacuous `allowDeny` rule purely to host the exception. A dedicated field on `declaredModules[]` needs no such rule to exist first.
+
+Not the same gap as a package's own multiple real entry points (see the `surface`-as-glob guidance in config.md): a public entry point covers everyone equally, and `surface` already handles that (a glob matching every entry point a package's own `exports` map names). `friends` is for a file that is genuinely private to most importers and public to a specific, named few - a narrower, different relationship.
+
+This is a design decision, not yet implemented - see the tracked follow-up ticket for the real field, the rule-1 suppression logic, and its own tests.
+
 ## 2. cycle
 
 A module-level cycle: two or more modules import each other, directly or through a chain, forming a strongly-connected component. One violation per component, regardless of its size or how many edges it contains. Only non-type-only edges count - a type-only cycle has no runtime consequence, and TypeScript itself allows it.
