@@ -1,0 +1,17 @@
+{
+  "description": "archstrict - runs check on the just-edited file and returns any violation into the agent's own context",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v node >/dev/null 2>&1 && exec node \"${CLAUDE_PLUGIN_ROOT}/hooks/post-tool-use.mjs\" || exit 0",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

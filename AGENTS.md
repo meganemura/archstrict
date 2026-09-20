@@ -51,3 +51,7 @@ The CLI itself:
 - `archstrict init [modulesGlob]` — write `archstrict.generated.ts` (the module-name union type) and, if absent, `archstrict.config.ts` with a default flat preset. Re-run any time modules are added or removed; it regenerates the first file and leaves a hand-edited config alone.
 - `archstrict check [file] [--json]` — analyze the whole project and report violations. With a file argument, analysis still covers the whole project (resolving an edge needs it), but the report is scoped to that file's own violations.
 - `archstrict todo` — on a project's first run, freeze every current freezable violation into its owning module's todo file; on every later run, only prune entries that no longer match a current violation. Never adds after the first run.
+
+## Claude Code plugin
+
+This repository is itself a Claude Code plugin (`.claude-plugin/plugin.json`). Its `PostToolUse` hook (`hooks/post-tool-use.mjs`) runs the edited project's own installed `archstrict check <file>` right after an Edit/Write/MultiEdit and returns any violation into the agent's own context - the same moment a human editor's red squiggly would appear. It shells out to that project's `node_modules/.bin/archstrict`, never to this repository's own build, and says nothing when the edited project has no `archstrict` installed at all or the edited file has no violation.
