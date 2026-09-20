@@ -286,29 +286,33 @@ export type Violation = {
 const BECAUSE = "a consumer needs a name for every type it receives from a public surface, not just the type doing the exposing";
 
 export function checkTypeLeaks(graph: {
-  modules: Map<string, { name: string; surfacePath: string | undefined }>;
+  modules: Map<string, { name: string; surfaceFiles: string[] }>;
   program: ts.Program;
   checker: ts.TypeChecker;
   rootDir: string;
 }): Violation[] {
   const violations: Violation[] = [];
   for (const [name, module] of graph.modules) {
-    if (module.surfacePath === undefined) continue;
-    const sf = graph.program.getSourceFile(module.surfacePath);
-    if (sf === undefined) continue;
-    const findings = detectTypeLeaks(graph.checker, sf, graph.rootDir);
-    for (const finding of findings) {
-      const relativeInternalFile = relative(graph.rootDir, finding.internalFile);
-      violations.push({
-        rule: "type-leak",
-        path: module.surfacePath,
-        line: finding.line,
-        column: finding.column,
-        evidence: `'${finding.exportedAs}' (${finding.via}) references '${finding.internalType}', declared in '${relativeInternalFile}', which module '${name}' never exports by name`,
-        because: BECAUSE,
-        next: `export '${finding.internalType}' by name from ${module.surfacePath} (it's declared in ${relativeInternalFile}), or change '${finding.exportedAs}' to not expose it`,
-        todoModule: name,
-      });
+    // A module's surface can be more than one file (a glob, not a single
+    // name) - each is walked independently; a leak is reported against the
+    // actual file it was found in, not a fixed single surface path.
+    for (const surfacePath of module.surfaceFiles) {
+      const sf = graph.program.getSourceFile(surfacePath);
+      if (sf === undefined) continue;
+      const findings = detectTypeLeaks(graph.checker, sf, graph.rootDir);
+      for (const finding of findings) {
+        const relativeInternalFile = relative(graph.rootDir, finding.internalFile);
+        violations.push({
+          rule: "type-leak",
+          path: surfacePath,
+          line: finding.line,
+          column: finding.column,
+          evidence: `'${finding.exportedAs}' (${finding.via}) references '${finding.internalType}', declared in '${relativeInternalFile}', which module '${name}' never exports by name`,
+          because: BECAUSE,
+          next: `export '${finding.internalType}' by name from ${surfacePath} (it's declared in ${relativeInternalFile}), or change '${finding.exportedAs}' to not expose it`,
+          todoModule: name,
+        });
+      }
     }
   }
   return violations;

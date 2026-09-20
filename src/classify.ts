@@ -24,8 +24,10 @@ export type ClassifyByDirectoryName = { tagNamespace: string; names: readonly st
 // Converts one glob into a matcher plus its specificity. Supports `**`
 // (any number of path segments, including zero) and `*` (any characters
 // within one path segment - no `/`). Anything else in the pattern is a
-// literal character, escaped for use in a RegExp.
-function compileGlob(glob: string): { test: (path: string) => boolean; literalPrefixLength: number; wildcardCount: number } {
+// literal character, escaped for use in a RegExp. Exported: declared-module
+// membership (module-graph.ts) uses the same precedence rule as tag
+// classification does, and shouldn't reimplement it.
+export function compileGlob(glob: string): { test: (path: string) => boolean; literalPrefixLength: number; wildcardCount: number } {
   const firstWildcard = glob.search(/\*/);
   const literalPrefixLength = firstWildcard === -1 ? glob.length : firstWildcard;
   const wildcardCount = (glob.match(/\*/g) ?? []).length;
@@ -70,16 +72,45 @@ function compareSpecificity(
   return b.wildcardCount - a.wildcardCount; // fewer wildcards = more specific
 }
 
-function sameTags(a: readonly string[], b: readonly string[]): boolean {
-  return a.length === b.length && a.every((tag, i) => tag === b[i]);
-}
-
 export class AmbiguousClassifyError extends Error {
   constructor(path: string, glob1: string, glob2: string) {
     super(
-      `'${path}' matches two equally-specific classify entries ('${glob1}' and '${glob2}') with no way to prefer one - narrow one of the globs`,
+      `'${path}' matches two equally-specific entries ('${glob1}' and '${glob2}') with no way to prefer one - narrow one of the globs`,
     );
   }
+}
+
+// Shared precedence engine: the most-specific of several glob-keyed entries
+// matching `path` wins, config order is irrelevant, and a genuine tie
+// (equal specificity, different `value`s per `sameValue`) throws. Used both
+// for tag classification (`value` is a tag array) and declared-module
+// membership (`value` is a module name) - two different callers, one
+// precedence rule, so they can't quietly drift apart.
+export function mostSpecificMatch<T>(
+  path: string,
+  entries: readonly { glob: string; value: T }[],
+  sameValue: (a: T, b: T) => boolean,
+): T | undefined {
+  let best: { value: T; glob: string; literalPrefixLength: number; wildcardCount: number } | undefined;
+  for (const entry of entries) {
+    const compiled = compileGlob(entry.glob);
+    if (!compiled.test(path)) continue;
+    if (best === undefined) {
+      best = { value: entry.value, glob: entry.glob, ...compiled };
+      continue;
+    }
+    const cmp = compareSpecificity(compiled, best);
+    if (cmp > 0) {
+      best = { value: entry.value, glob: entry.glob, ...compiled };
+    } else if (cmp === 0 && !sameValue(entry.value, best.value)) {
+      throw new AmbiguousClassifyError(path, best.glob, entry.glob);
+    }
+  }
+  return best?.value;
+}
+
+function sameTags(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((tag, i) => tag === b[i]);
 }
 
 // Relative path (project-root-relative, forward-slash-separated) -> the
@@ -89,25 +120,11 @@ export function classifyByGlob(
   path: string,
   entries: readonly ClassifyEntry[],
 ): readonly string[] | undefined {
-  let best: { tags: readonly string[]; glob: string; literalPrefixLength: number; wildcardCount: number } | undefined;
-  for (const entry of entries) {
-    const compiled = compileGlob(entry.glob);
-    if (!compiled.test(path)) continue;
-    if (best === undefined) {
-      best = { tags: entry.tags, glob: entry.glob, ...compiled };
-      continue;
-    }
-    const cmp = compareSpecificity(compiled, best);
-    if (cmp > 0) {
-      best = { tags: entry.tags, glob: entry.glob, ...compiled };
-    } else if (cmp === 0 && !sameTags(entry.tags, best.tags)) {
-      // Equal specificity: harmless when the two entries would assign the
-      // same tags anyway (the same glob repeated, or two globs that happen
-      // to agree) - ambiguous only when they'd actually disagree.
-      throw new AmbiguousClassifyError(path, best.glob, entry.glob);
-    }
-  }
-  return best?.tags;
+  return mostSpecificMatch(
+    path,
+    entries.map((e) => ({ glob: e.glob, value: e.tags })),
+    sameTags,
+  );
 }
 
 // The nearest directory-name segment (innermost first) matching one of

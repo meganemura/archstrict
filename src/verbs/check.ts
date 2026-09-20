@@ -144,7 +144,7 @@ export function runRules(graph: ModuleGraph, config: Config): CheckResult {
 
   let modulesWithoutSurface = 0;
   for (const m of graph.modules.values()) {
-    if (m.surfacePath === undefined) modulesWithoutSurface++;
+    if (m.surfaceFiles.length === 0) modulesWithoutSurface++;
   }
 
   return {
@@ -278,6 +278,13 @@ export async function check(projectRoot: string, focusFile?: string): Promise<Ch
   // The config's own modules field is the source of truth, not a
   // parameter — a config saying modules: "lib/*" must scan lib/, not
   // whatever the caller happened to hard-code.
+  // config.declaredModules is deliberately not passed here yet: flipping
+  // check's live scope from the modules glob to declaredModules' broader
+  // (whole-project) file discovery is a real behavior change (outsideFiles
+  // widens to include archstrict.config.ts itself, etc.), not something
+  // this ticket's own acceptance criteria asked for. That cutover belongs
+  // with the ticket that also migrates rules 3/4/5 off kinds/layers, so
+  // both changes land together rather than v0 behavior shifting twice.
   const graph = buildModuleGraph({ projectRoot, modulesGlob: config.modules, surface: config.surface });
   const result = applyTodo(graph, config, runRules(graph, config));
   return focusFile === undefined ? result : filterToFile(result, focusFile);

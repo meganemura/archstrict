@@ -42,9 +42,9 @@ export function checkPublicSurfaceBypass(graph: ModuleGraph): Violation[] {
   for (const edge of graph.crossModuleEdges) {
     const targetModule = graph.modules.get(edge.toModule!);
     if (targetModule === undefined) continue; // resolved outside any module; not this rule's concern
-    if (edge.resolvedFile === targetModule.surfacePath) continue; // reached the public surface itself
+    if (targetModule.surfaceFiles.includes(edge.resolvedFile)) continue; // reached the public surface itself
 
-    violations.push(violationFor(edge, targetModule.name, targetModule.surfacePath, graph.surface));
+    violations.push(violationFor(edge, targetModule.name, targetModule.surfaceFiles, graph.surface));
   }
   return violations;
 }
@@ -52,15 +52,15 @@ export function checkPublicSurfaceBypass(graph: ModuleGraph): Violation[] {
 function violationFor(
   edge: Edge,
   targetModuleName: string,
-  surfacePath: string | undefined,
+  surfaceFiles: readonly string[],
   surface: string,
 ): Violation {
   const evidence =
-    surfacePath === undefined
+    surfaceFiles.length === 0
       ? `'${edge.specifier}' resolved to module '${targetModuleName}', which has no ${surface}`
       : `'${edge.specifier}' resolved to a file inside module '${targetModuleName}' other than its ${surface}`;
   const next =
-    surfacePath === undefined
+    surfaceFiles.length === 0
       ? `add a ${surface} to ${targetModuleName}/ naming what it exports`
       : `import from ${targetModuleName}/${surface} instead, or add the needed export there`;
 

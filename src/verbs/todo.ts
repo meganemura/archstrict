@@ -102,6 +102,9 @@ export function freezeOrPrune(
 export async function todo(projectRoot: string): Promise<TodoResult> {
   const configPath = join(projectRoot, "archstrict.config.ts");
   const config = await loadConfig(configPath);
+  // See check.ts's own comment: declaredModules is not wired into the live
+  // CLI path yet - deliberately deferred to the ticket that also migrates
+  // rules 3/4/5.
   const graph = buildModuleGraph({ projectRoot, modulesGlob: config.modules, surface: config.surface });
   const result = runRules(graph, config);
   return freezeOrPrune(projectRoot, graph, config, result.violations);

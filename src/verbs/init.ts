@@ -69,12 +69,30 @@ export type Config = {
   // check reports any existing entry in one of these modules' todo as a
   // violation in its own right.
   strict?: readonly ModuleName[];
+  // Declared modules (v1) - the source of truth going forward, replacing
+  // index.ts-presence discovery (measured wrong: a barrel index.ts is not
+  // evidence of an enforced boundary in real code). init writes one entry
+  // per directory it finds; modules/kinds above stay too, until every rule
+  // has migrated off them.
+  declaredModules?: readonly {
+    name: ModuleName;
+    glob: string;
+    surface: string;
+  }[];
   because: string;
 };
 `;
 }
 
-function configFileContents(modulesGlob: string, surface: string): string {
+function configFileContents(modulesGlob: string, surface: string, moduleNames: string[]): string {
+  const modulesRoot = modulesGlob.slice(0, -1); // "src/*" -> "src/"
+  const declaredModulesEntries = moduleNames
+    .map(
+      (name) =>
+        `    { name: ${JSON.stringify(name)}, glob: ${JSON.stringify(`${modulesRoot}${name}/**`)}, surface: ${JSON.stringify(surface)} },`,
+    )
+    .join("\n");
+
   return `import type { Config } from "./archstrict.generated.js";
 
 // Public surface convention: a module's ${surface} (named by \`surface\`
@@ -85,6 +103,9 @@ export default {
   modules: ${JSON.stringify(modulesGlob)},
   surface: ${JSON.stringify(surface)},
   kinds: { flat: ${JSON.stringify(modulesGlob)} },
+  declaredModules: [
+${declaredModulesEntries}
+  ],
   because: ${JSON.stringify(FLAT_BECAUSE)},
 } satisfies Config;
 `;
@@ -100,7 +121,7 @@ export function init(projectRoot: string, modulesGlob = "src/*", surface = DEFAU
   const configPath = join(projectRoot, "archstrict.config.ts");
   const configWritten = !existsSync(configPath);
   if (configWritten) {
-    writeFileSync(configPath, configFileContents(modulesGlob, surface));
+    writeFileSync(configPath, configFileContents(modulesGlob, surface, moduleNames));
   }
 
   return { configPath, generatedPath, configWritten, moduleNames };

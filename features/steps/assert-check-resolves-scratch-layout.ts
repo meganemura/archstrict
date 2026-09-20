@@ -10,6 +10,7 @@ export default defineStep({
     moduleDirs: z.array(z.string()),
     rootFileCount: z.number(),
     modulesWithoutIndexTs: z.number(),
+    expectedUnresolvedSpecifiers: z.number(),
     modules: z.number(),
     modulesWithoutSurface: z.number(),
     outsideFiles: z.number(),
@@ -21,6 +22,7 @@ export default defineStep({
     moduleDirs: [setupNukadokoScratch, "moduleDirs"],
     rootFileCount: [setupNukadokoScratch, "rootFileCount"],
     modulesWithoutIndexTs: [setupNukadokoScratch, "modulesWithoutIndexTs"],
+    expectedUnresolvedSpecifiers: [setupNukadokoScratch, "expectedUnresolvedSpecifiers"],
     modules: [runArchstrictCheck, "modules"],
     modulesWithoutSurface: [runArchstrictCheck, "modulesWithoutSurface"],
     outsideFiles: [runArchstrictCheck, "outsideFiles"],
@@ -40,8 +42,10 @@ export default defineStep({
     if (args.outsideFiles !== args.rootFileCount) {
       throw new Error(`expected ${args.rootFileCount} files outside the modules glob, check reported ${args.outsideFiles}`);
     }
-    if (args.unresolvedSpecifiers !== 0) {
-      throw new Error(`expected 0 unresolved specifiers, check reported ${args.unresolvedSpecifiers}`);
+    if (args.unresolvedSpecifiers !== args.expectedUnresolvedSpecifiers) {
+      throw new Error(
+        `expected ${args.expectedUnresolvedSpecifiers} unresolved specifiers (bare specifiers naming neither a node builtin nor an installed package), check reported ${args.unresolvedSpecifiers}`,
+      );
     }
     return {};
   },

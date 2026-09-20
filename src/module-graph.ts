@@ -23,6 +23,23 @@
 import ts from "typescript";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
+import { builtinModules } from "node:module";
+import { compileGlob, mostSpecificMatch } from "./classify.js";
+
+// A node builtin (`fs`, `node:fs`, ...) never has a real resolvedModule:
+// ts.resolveModuleName looks for an actual file, but @types/node's ambient
+// `declare module "node:fs"` is resolved by the checker's own ambient-module
+// lookup, a different mechanism entirely - resolveModuleName returns
+// undefined for a builtin even with `types: ["node"]` set (measured
+// directly, not assumed). Treating that as "unresolved" would flag nearly
+// every backend project's own node:fs/node:path imports as unanalyzable.
+// Detected once here, not resolved: a builtin is synthesized as its own
+// external edge instead.
+const BUILTIN_MODULE_NAMES = new Set(builtinModules);
+function builtinModuleName(specifier: string): string | undefined {
+  const bare = specifier.replace(/^node:/, "");
+  return BUILTIN_MODULE_NAMES.has(bare) ? bare : undefined;
+}
 
 export type Position = { line: number; column: number };
 
@@ -48,11 +65,26 @@ export type Module = {
   name: string;
   dir: string;
   files: string[];
-  // The module's public surface: the one file other modules may import
-  // from. The tool does not fix the file name itself — a project's own
-  // config names it (`surface`, default "index.ts"); this is that file's
-  // path if it exists in this module, undefined otherwise.
-  surfacePath: string | undefined;
+  // The module's public surface: the files other modules may import from.
+  // Under v0 discovery this is at most one file (the configured `surface`
+  // name, e.g. "index.ts", if present - an empty array otherwise). Under a
+  // declared module (v1), `surface` is itself a glob, so this can be more
+  // than one file (Prisma's package.json `exports` has subpaths) - sorted,
+  // for a deterministic message when a rule names "the" surface file.
+  surfaceFiles: string[];
+};
+
+// A module declared directly in config (v1), replacing v0's index.ts-
+// presence discovery - measured wrong (NestJS's and Drizzle's own barrel
+// index.ts files are not operated as enforced boundaries; real code in
+// both bypasses them routinely). `surface` is a glob resolved relative to
+// `glob`'s own literal base directory (moduleGlobBaseDir below), not the
+// project root - matching v0's own convention that `surface` names a file
+// relative to the module's own directory.
+export type DeclaredModule = {
+  name: string;
+  glob: string;
+  surface: string;
 };
 
 export type ModuleGraph = {
@@ -80,8 +112,12 @@ export type ModuleGraph = {
 
 export type BuildOptions = {
   projectRoot: string;
-  modulesGlob: string; // e.g. "src/*" — only single-level globs are supported in v0
-  surface?: string; // the public-surface file name, default "index.ts"
+  // v0 discovery path - e.g. "src/*" (only single-level globs). Ignored
+  // when `declaredModules` is given.
+  modulesGlob?: string;
+  surface?: string; // the public-surface file name, default "index.ts" - v0 discovery only
+  // v1 declaration path - takes priority over `modulesGlob` when present.
+  declaredModules?: readonly DeclaredModule[];
 };
 
 export const DEFAULT_SURFACE = "index.ts";
@@ -119,7 +155,7 @@ function discoverModules(projectRoot: string, glob: string, surface: string): Ma
       name,
       dir,
       files: [],
-      surfacePath: ts.sys.fileExists(surfacePath) ? surfacePath : undefined,
+      surfaceFiles: ts.sys.fileExists(surfacePath) ? [surfacePath] : [],
     });
   }
   return modules;
@@ -138,6 +174,82 @@ function moduleForFile(
   return first;
 }
 
+// The literal directory prefix a glob names before its first wildcard,
+// trailing slash stripped - "packages/x/**" -> "packages/x". `surface` is
+// resolved relative to this, the same way v0's `surface` is relative to a
+// discovered module's own directory.
+function moduleGlobBaseDir(glob: string): string {
+  const firstWildcard = glob.search(/\*/);
+  const prefix = firstWildcard === -1 ? glob : glob.slice(0, firstWildcard);
+  return prefix.replace(/\/+$/, "");
+}
+
+function toProjectRelativePosix(filePath: string, projectRoot: string): string {
+  return relative(projectRoot, filePath).split(sep).join("/");
+}
+
+// Recursively lists every .ts file under `projectRoot`, excluding
+// node_modules and dist - the candidate set declared-module membership and
+// surface matching both filter from. Declared modules can live anywhere
+// under the project, not one fixed single-level root the way v0's
+// discovery does, so there is no narrower directory to start from.
+function listAllSourceFiles(projectRoot: string): string[] {
+  return ts.sys
+    .readDirectory(projectRoot, [".ts"], ["**/node_modules/**", "**/dist/**"])
+    .filter((f) => !f.endsWith(".d.ts"));
+}
+
+function buildDeclaredModules(
+  projectRoot: string,
+  declaredModules: readonly DeclaredModule[],
+  allFiles: readonly string[],
+): Map<string, Module> {
+  const membership = declaredModules.map((dm) => ({ glob: dm.glob, value: dm.name }));
+  const modules = new Map<string, Module>(
+    declaredModules.map((dm) => [
+      dm.name,
+      { name: dm.name, dir: join(projectRoot, moduleGlobBaseDir(dm.glob)), files: [], surfaceFiles: [] },
+    ]),
+  );
+
+  const surfaceGlobs = new Map(
+    declaredModules.map((dm) => [
+      dm.name,
+      `${moduleGlobBaseDir(dm.glob)}/${dm.surface}`.replace(/\/{2,}/g, "/"),
+    ]),
+  );
+
+  for (const file of allFiles) {
+    const rel = toProjectRelativePosix(file, projectRoot);
+    const name = mostSpecificMatch(rel, membership, (a, b) => a === b);
+    if (name === undefined) continue;
+    // Only surfaceFiles is populated here - `files` (every file, not just
+    // the surface) is populated once, in buildModuleGraph's shared walk
+    // loop, the same way v0 discovery populates it - not duplicated here.
+    const surfaceGlob = surfaceGlobs.get(name)!;
+    if (compileGlob(surfaceGlob).test(rel)) {
+      modules.get(name)!.surfaceFiles.push(file);
+    }
+  }
+  for (const module of modules.values()) {
+    module.surfaceFiles.sort();
+  }
+  return modules;
+}
+
+function moduleForDeclaredFile(
+  filePath: string,
+  projectRoot: string,
+  declaredModules: readonly DeclaredModule[],
+): string | undefined {
+  const rel = toProjectRelativePosix(filePath, projectRoot);
+  return mostSpecificMatch(
+    rel,
+    declaredModules.map((dm) => ({ glob: dm.glob, value: dm.name })),
+    (a, b) => a === b,
+  );
+}
+
 function loadCompilerOptions(projectRoot: string): ts.CompilerOptions {
   const configPath = ts.findConfigFile(projectRoot, ts.sys.fileExists.bind(ts.sys));
   if (configPath === undefined) {
@@ -148,15 +260,31 @@ function loadCompilerOptions(projectRoot: string): ts.CompilerOptions {
 }
 
 export function buildModuleGraph(options: BuildOptions): ModuleGraph {
-  const { projectRoot, modulesGlob, surface = DEFAULT_SURFACE } = options;
-  const modules = discoverModules(projectRoot, modulesGlob, surface);
+  const { projectRoot, declaredModules, surface = DEFAULT_SURFACE } = options;
   const compilerOptions = loadCompilerOptions(projectRoot);
-  const { root } = parseModulesGlob(modulesGlob);
-  const rootDir = join(projectRoot, root);
 
-  const rootNames = ts.sys
-    .readDirectory(rootDir, [".ts"])
-    .filter((f) => !f.endsWith(".d.ts"));
+  let modules: Map<string, Module>;
+  let rootDir: string;
+  let rootNames: string[];
+  let resolveModuleForFile: (filePath: string) => string | undefined;
+
+  if (declaredModules !== undefined) {
+    rootDir = projectRoot;
+    rootNames = listAllSourceFiles(projectRoot);
+    modules = buildDeclaredModules(projectRoot, declaredModules, rootNames);
+    resolveModuleForFile = (filePath) => moduleForDeclaredFile(filePath, projectRoot, declaredModules);
+  } else {
+    const modulesGlob = options.modulesGlob;
+    if (modulesGlob === undefined) {
+      throw new Error("buildModuleGraph needs either modulesGlob or declaredModules");
+    }
+    modules = discoverModules(projectRoot, modulesGlob, surface);
+    const { root } = parseModulesGlob(modulesGlob);
+    rootDir = join(projectRoot, root);
+    rootNames = ts.sys.readDirectory(rootDir, [".ts"]).filter((f) => !f.endsWith(".d.ts"));
+    resolveModuleForFile = (filePath) => moduleForFile(filePath, projectRoot, modulesGlob);
+  }
+
   const program = ts.createProgram({ rootNames, options: compilerOptions });
   const host = ts.createCompilerHost(compilerOptions);
 
@@ -167,7 +295,7 @@ export function buildModuleGraph(options: BuildOptions): ModuleGraph {
 
   for (const sf of program.getSourceFiles()) {
     if (!rootNames.includes(sf.fileName)) continue; // lib.d.ts, node_modules, etc.
-    const fromModule = moduleForFile(sf.fileName, projectRoot, modulesGlob);
+    const fromModule = resolveModuleForFile(sf.fileName);
     if (fromModule === undefined) {
       outsideFiles.push(sf.fileName);
       continue;
@@ -207,33 +335,54 @@ export function buildModuleGraph(options: BuildOptions): ModuleGraph {
       }
 
       if (specifier !== undefined && ts.isStringLiteral(specifier)) {
-        // Resolved regardless of a leading "." - a bare specifier
-        // (`@internal/a`, `lodash`) is resolved the same way a relative one
-        // is; TS's own resolver already follows a workspace package's
-        // package.json `exports` under nodenext, so the only thing gating
-        // that path before was this project's own code, not TypeScript.
-        const resolved = ts.resolveModuleName(specifier.text, sf.fileName, compilerOptions, host);
-        const resolvedModule = resolved.resolvedModule;
-        if (resolvedModule === undefined) {
-          unresolvedSpecifierCount++;
-        } else {
-          const resolvedFile = resolvedModule.resolvedFileName;
-          const start = specifier.getStart(sf);
-          const { line, character } = sf.getLineAndCharacterOfPosition(start);
-          const toModule = moduleForFile(resolvedFile, projectRoot, modulesGlob);
-          const externalPackage = resolvedModule.isExternalLibraryImport
-            ? (resolvedModule.packageId?.name ?? specifier.text.replace(/^node:/, ""))
-            : undefined;
+        const start = specifier.getStart(sf);
+        const { line, character } = sf.getLineAndCharacterOfPosition(start);
+        const builtin = builtinModuleName(specifier.text);
+
+        if (builtin !== undefined) {
+          // No real resolvedFile exists for a builtin - the specifier
+          // itself (normalized to the bare, "node:"-stripped name) stands
+          // in for one, matching every other external edge's convention of
+          // a stable, human-readable identifier rather than a filesystem
+          // path that doesn't exist.
           edges.push({
             fromFile: sf.fileName,
             fromModule,
             fromPosition: { line: line + 1, column: character + 1 },
             specifier: specifier.text,
             isTypeOnly,
-            resolvedFile,
-            toModule,
-            externalPackage,
+            resolvedFile: `node:${builtin}`,
+            toModule: undefined,
+            externalPackage: builtin,
           });
+        } else {
+          // Resolved regardless of a leading "." - a bare specifier
+          // (`@internal/a`, `lodash`) is resolved the same way a relative
+          // one is; TS's own resolver already follows a workspace
+          // package's package.json `exports` under nodenext, so the only
+          // thing gating that path before was this project's own code,
+          // not TypeScript.
+          const resolved = ts.resolveModuleName(specifier.text, sf.fileName, compilerOptions, host);
+          const resolvedModule = resolved.resolvedModule;
+          if (resolvedModule === undefined) {
+            unresolvedSpecifierCount++;
+          } else {
+            const resolvedFile = resolvedModule.resolvedFileName;
+            const toModule = resolveModuleForFile(resolvedFile);
+            const externalPackage = resolvedModule.isExternalLibraryImport
+              ? (resolvedModule.packageId?.name ?? specifier.text.replace(/^node:/, ""))
+              : undefined;
+            edges.push({
+              fromFile: sf.fileName,
+              fromModule,
+              fromPosition: { line: line + 1, column: character + 1 },
+              specifier: specifier.text,
+              isTypeOnly,
+              resolvedFile,
+              toModule,
+              externalPackage,
+            });
+          }
         }
       }
 
