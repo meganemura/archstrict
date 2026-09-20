@@ -258,6 +258,40 @@ function surfaceGlobsAllowingDts(declaredModules: readonly DeclaredModule[]): st
     .filter((g) => g.endsWith(".d.ts"));
 }
 
+// A named import/export clause is type-only either as a whole
+// (`import type { X } from "..."`) or per specifier
+// (`import { type X } from "..."`, the modifier on one named binding
+// rather than the whole declaration) - TypeScript allows both forms, and
+// only the first was ever checked here (measured directly: a minimal
+// two-module fixture whose only edge is `import { type X } from "../b"`
+// reported `isTypeOnly: false`, producing a false-positive cycle with a
+// real value edge the other way). A default import binding
+// (`import Foo, { type X } from "..."`) can never be per-specifier
+// type-only itself, so its presence always makes the whole import a real
+// value reference regardless of any named specifier's own modifier; same
+// for a namespace import (`import * as X`), which has no per-specifier
+// form at all. So: type-only only when the whole declaration says so, OR
+// every named specifier does and neither a default nor a namespace
+// binding exists on the same declaration.
+function isEffectivelyTypeOnlyImport(importClause: ts.ImportClause | undefined): boolean {
+  if (importClause === undefined) return false; // a side-effect-only `import "./x"` is a real reference
+  if (importClause.isTypeOnly) return true;
+  if (importClause.name !== undefined) return false;
+  const bindings = importClause.namedBindings;
+  if (bindings === undefined || ts.isNamespaceImport(bindings)) return false;
+  return bindings.elements.length > 0 && bindings.elements.every((el) => el.isTypeOnly);
+}
+
+// The export-side twin of isEffectivelyTypeOnlyImport - `export { type X }
+// from "..."` has the identical per-specifier-vs-whole-declaration
+// distinction `export type { X } from "..."` already gets right.
+function isEffectivelyTypeOnlyExport(node: ts.ExportDeclaration): boolean {
+  if (node.isTypeOnly) return true;
+  const clause = node.exportClause;
+  if (clause === undefined || !ts.isNamedExports(clause)) return false;
+  return clause.elements.length > 0 && clause.elements.every((el) => el.isTypeOnly);
+}
+
 function listAllSourceFiles(
   projectRoot: string,
   excludeGlobs: readonly string[],
@@ -450,10 +484,10 @@ export function buildModuleGraph(options: BuildOptions): ModuleGraph {
 
       if (ts.isImportDeclaration(node)) {
         specifier = node.moduleSpecifier;
-        isTypeOnly = node.importClause?.isTypeOnly ?? false;
+        isTypeOnly = isEffectivelyTypeOnlyImport(node.importClause);
       } else if (ts.isExportDeclaration(node) && node.moduleSpecifier !== undefined) {
         specifier = node.moduleSpecifier;
-        isTypeOnly = node.isTypeOnly;
+        isTypeOnly = isEffectivelyTypeOnlyExport(node);
       } else if (
         ts.isCallExpression(node) &&
         node.expression.kind === ts.SyntaxKind.ImportKeyword &&
