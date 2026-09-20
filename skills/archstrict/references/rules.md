@@ -37,6 +37,11 @@ A configured rule that structurally cannot match anything: zero `declaredModules
 
 - because: "a rule that checks nothing must not look like a pass (ArchUnitTS's Empty Test Protection)"
 - `path`: the config file, not a module
+- `next` (one of four, depending on which case fired):
+  - zero `declaredModules` entries: `add at least one declaredModules entry in archstrict.config.ts`
+  - a `classify` glob matching no file: `remove this classify entry from archstrict.config.ts, or point its glob at real files`
+  - a `deprecated` entry whose actual edge count fell to 0: `remove the '<from> -> <to>' entry from deprecated in archstrict.config.ts`
+  - an `edges` rule (`allowDeny`/`order`/`point`) with `evaluated: 0`: `remove or correct this <kind> entry in archstrict.config.ts's edges - its own source/target never applies to any real edge this project has (a workspace-sibling import may resolve as an external package rather than a project tag; see rules.md)`
 
 ## 5. deprecated-edge-increased / deprecated-edge-decreased
 
