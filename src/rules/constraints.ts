@@ -61,11 +61,39 @@ type FromToPredicate = string | { tags: readonly string[]; exclude?: { tags: rea
 // edge reaches outside this project entirely (a real npm package, a
 // workspace dependency, a node builtin - module-graph.ts's own
 // `externalPackage`), or the classified tags of the real file otherwise.
+//
+// A package shipping no bundled type declarations of its own resolves
+// through its own `@types/<name>` shadow package instead - TypeScript's
+// own resolver, not this project's choice - so `externalPackage` carries
+// that shadow identity, not the bare specifier a rule author actually
+// wrote. Measured directly, against a real project: two ordinary
+// packages resolved to their own real name; two others (shipping no
+// bundled types) resolved to their own `@types/` identity instead, so a
+// deny/allow/point rule written against the bare name matched zero real
+// edges - silently, with `evaluated` still nonzero (the edge WAS judged,
+// just against the wrong identity), so rule 4's own empty-rule-set check
+// could never have caught it. Both identities are tagged so a rule
+// written against either one matches the same real edge.
 function tagsForTarget(edge: Edge, config: Config, rootDir: string): Set<string> {
   if (edge.externalPackage !== undefined) {
-    return new Set([`pkg:${edge.externalPackage}`]);
+    const tags = new Set([`pkg:${edge.externalPackage}`]);
+    const barePackage = bareNameFromTypesPackage(edge.externalPackage);
+    if (barePackage !== undefined) tags.add(`pkg:${barePackage}`);
+    return tags;
   }
   return classifyFile(toProjectRelativePosix(edge.resolvedFile, rootDir), config);
+}
+
+// DefinitelyTyped's own naming convention: an unscoped package "foo" ships
+// as "@types/foo"; a scoped package "@scope/foo" ships as
+// "@types/scope__foo" (a literal double underscore standing in for the
+// slash, since npm package names can't nest a real "/" under a scope
+// beyond the scope itself).
+function bareNameFromTypesPackage(packageName: string): string | undefined {
+  if (!packageName.startsWith("@types/")) return undefined;
+  const rest = packageName.slice("@types/".length);
+  const scopeSplit = rest.indexOf("__");
+  return scopeSplit === -1 ? rest : `@${rest.slice(0, scopeSplit)}/${rest.slice(scopeSplit + 2)}`;
 }
 
 // A glob can only match a real project-relative path - an external
