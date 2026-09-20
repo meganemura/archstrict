@@ -143,6 +143,13 @@ export function detectTypeLeaks(checker: ts.TypeChecker, entrySf: ts.SourceFile,
       return;
     }
 
+    // No early return here, unlike the union branch above: a union's own
+    // getPropertiesOfType is already the intersection of its members'
+    // properties, so walking it too would just re-walk what the member
+    // loop already covered. A type reference's own type arguments and its
+    // own properties are each real, independent parts of its shape - a
+    // user-defined generic like `Box<T> { value: T; other: Internal }`
+    // needs both walked, not just one.
     if (isTypeReference(type)) {
       for (const typeArg of checker.getTypeArguments(type)) {
         checkType(typeArg, exportedAs, via, position, seen);
@@ -232,13 +239,19 @@ export function detectTypeLeaks(checker: ts.TypeChecker, entrySf: ts.SourceFile,
 // exact same `ts.Type` OBJECT twice within one exported symbol's own walk,
 // but TS does not always hand back that same object for what is
 // conceptually the same type reached two structural ways - measured
-// directly on nukadoko's own `used?: UsedEntryWithResult[]`: the array's
-// own type argument and its index signature's value type resolve to two
-// distinct `ts.Type` instances for the identical declaration, so object
-// identity alone under-deduplicates. A content key (which export, which
-// via, which internal declaration) is what a reader actually means by
-// "the same finding" regardless of which internal TS object produced it,
-// and collapsing to that key also keeps a todo fingerprint
+// directly on nukadoko's own `used?: UsedEntryWithResult[]`: an optional
+// array property's own type argument and its index signature's value type
+// resolve to two distinct `ts.Type` instances for the identical
+// declaration, so object identity alone under-deduplicates. This same
+// under-deduplication already existed before this file ever called
+// `getTypeArguments` at all - the version of `checkType` before this
+// change had no `seen` check whatsoever, so two different structural
+// paths to the same declaration (measured: two union members, each
+// independently reaching the same inherited property) each pushed their
+// own leak. A content key (which export, which via, which internal
+// declaration) is what a reader actually means by "the same finding"
+// regardless of which internal TS object or which structural path
+// produced it, and collapsing to that key also keeps a todo fingerprint
 // (rule+path+evidence) from ever getting two entries for what reads as
 // one violation. The key deliberately omits line/column: position is
 // always the exported symbol's own declaration site, identical for every
