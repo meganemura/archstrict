@@ -7,20 +7,28 @@
 # Shape:
 #
 #   pick ──> implement ──> review ─┬─ APPROVED ──> close ─┬─ ready ticket left ──> pick
-#     │          ↑                 └─ REJECTED ────┘       └─ none ──────────────> $end
-#     └─ nothing ready ──> $end
+#     │          ↑                 └─ REJECTED ────┘       └─ none ──────────────> assess
+#     └─ nothing ready ──> assess ─┬─ filed a new ticket ──> pick
+#                                  └─ nothing to file ─────> $end
 #
 # Adapted from headsign's own .headsign/beads.yaml (2026-09-15) and the same
 # shape in pull-request-pane, turnstile, and trackplan. The `assess` idea
 # (reassess and open new tickets when the queue runs dry) comes from
 # solarsql's workflow.yaml, whose own queue is a different, non-bd script.
+# Owner's instruction (2026-09-20): keep asking, every time the queue would
+# otherwise end, whether what has shipped is actually easy for an agent
+# starting from zero context to use correctly - and file that as new
+# tickets rather than letting the run simply stop. `assess` is that question,
+# asked again each time `pick` finds nothing left to do.
 #
 # Conventions under .headsign/tmp/ (cleared by `headsign start`):
-#   ticket     — the one ticket this lap claimed, written by `pick`.
-#   base       — the commit the lap started from, written by `pick`.
-#   verdict    — APPROVED / REJECTED for the current review round.
-#   pick-done  — pick's own declaration that it looked at the queue, so an
-#                empty queue ends the run cleanly instead of retrying forever.
+#   ticket      — the one ticket this lap claimed, written by `pick`.
+#   base        — the commit the lap started from, written by `pick`.
+#   verdict     — APPROVED / REJECTED for the current review round.
+#   pick-done   — pick's own declaration that it looked at the queue, so an
+#                 empty queue routes to `assess` cleanly instead of retrying.
+#   assess-done — assess's own declaration that it asked the question, so an
+#                 empty answer ends the run cleanly instead of retrying.
 #
 # Owner's instruction (2026-09-20): run laps back to back, without ending
 # the turn to check in, until `bd ready` is empty and $end is reached on its
@@ -73,7 +81,7 @@ phases:
     on_pass:
       - when: "test -s .headsign/tmp/ticket"
         to: implement
-      - to: "$end"
+      - to: assess
     max_attempts: 3
 
   # ── implement ────────────────────────────────────────────────────────────
@@ -155,6 +163,45 @@ phases:
           run: >-
             bd list --status in_progress --json
             | jq -e '[.[] | select(.issue_type != "epic")] | length == 0' >/dev/null
+    on_pass:
+      - when: >-
+          bd ready --json
+          | jq -e '[.[] | select(.issue_type != "epic")] | length > 0' >/dev/null
+        to: pick
+      - to: assess
+    max_attempts: 3
+
+  # ── assess ───────────────────────────────────────────────────────────────
+  assess:
+    description: >
+      The queue is empty. Before ending, ask the question the owner wants
+      asked every time this happens: is what has actually shipped so far
+      easy for a coding agent starting from zero context to pick up and use
+      correctly on the first try? Read README.md, AGENTS.md, and
+      skills/archstrict/ (SKILL.md plus every file under references/) as
+      that agent would - not skimmed, and cross-check specific factual
+      claims against the real source and real behavior they describe (a
+      claimed field, error message, or violation shape that doesn't match
+      what the code actually does or says). Then act on it as that same
+      agent would: run `archstrict init`, `check`, and `todo` in a fresh
+      scratch project, following only what the docs say to do, and notice
+      anywhere you had to guess, misread an unclear error, or hit a
+      violation whose `next` didn't actually say what to do. For each
+      concrete, real gap this turns up - a wrong claim, a missing doc, a
+      confusing error, a rough edge in the hook or CLI - file it as a new
+      `bd create` ticket under the `archstrict-t35` epic (or a fresh epic if
+      that one is fully closed), with a clear, testable acceptance
+      criterion, same as any other ticket this workflow already runs. Do
+      not invent a gap to keep the queue non-empty: a genuinely clean pass
+      is a real answer too, and gets recorded as a `bd comment` on the epic
+      explaining what was checked, not as a manufactured ticket. Either way,
+      touch `.headsign/tmp/assess-done`.
+    clear: [.headsign/tmp/assess-done]
+    ready: "test -f .headsign/tmp/assess-done"
+    gate:
+      checks:
+        - name: bd answers
+          run: "bd list --json | jq -e 'type == \"array\"' >/dev/null"
     on_pass:
       - when: >-
           bd ready --json
