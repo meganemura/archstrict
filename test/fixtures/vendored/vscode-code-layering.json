@@ -1,0 +1,8 @@
+{
+  "common": [],
+  "node": ["common"],
+  "browser": ["common"],
+  "electron-browser": ["common", "browser"],
+  "electron-utility": ["common", "node"],
+  "electron-main": ["common", "node", "electron-utility"]
+}
