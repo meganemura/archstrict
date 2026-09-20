@@ -172,12 +172,12 @@ export function assertDeprecatedModulesExist(graph: ModuleGraph, config: Config)
 // all. Measured directly, via a fresh agent authoring a real config from
 // scratch: this was the single silent failure among several very similar
 // ones (an `order` entry's own `sequence` written as a flat array instead
-// of `Record<string, string[]>`, an unsupported key like `edgeType` on an
-// `order` entry) - the other two happen to surface today (the first via
-// rule 4's own `evaluated: 0`, the second not at all), but none of them
-// should depend on a downstream rule noticing a side effect. A config
-// shape error is a config error, thrown up front, the same as an
-// unsupported `deprecated` entry already is above.
+// of `Record<string, string[]>`, a real, unsupported key mistyped onto a
+// rule entry) - the `sequence` case happens to surface today via rule 4's
+// own `evaluated: 0`, but neither it nor an unsupported key should depend
+// on a downstream rule noticing a side effect. A config shape error is a
+// config error, thrown up front, the same as an unsupported `deprecated`
+// entry already is above.
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }

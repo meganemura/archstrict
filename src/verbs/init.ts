@@ -128,6 +128,8 @@ export type Config = {
       within?: string;
       sequence: Record<string, readonly string[]>;
       direction: "downward-only";
+      edgeType?: "value" | "type" | "both";
+      importForm?: "static" | "dynamic" | "both";
       because: string;
     }[];
     point?: readonly {

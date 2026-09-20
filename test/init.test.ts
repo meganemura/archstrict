@@ -179,6 +179,8 @@ export default {
         within: "env",
         sequence: { app: ["shared", "app"] },
         direction: "downward-only",
+        edgeType: "value",
+        importForm: "static",
         because: "test",
       },
     ],
