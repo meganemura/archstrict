@@ -23,7 +23,7 @@ A known cycle can be exempted by naming any two of its modules in config's `igno
 
 ## 3. uncovered-module
 
-A real, in-scope file (not excluded, and inside `scope` if set) matches no `declaredModules` entry - the same fact `graph.outsideFiles` already tracks, reported here instead of silently skipped. Not freezable: the file belongs to no module, so there is no module directory to freeze it into - the only fix is a config change (declare a module for it, or exclude it).
+A real file (not excluded) matches no `declaredModules` entry - the same fact `graph.outsideFiles` already tracks, reported here instead of silently skipped. Not freezable: the file belongs to no module, so there is no module directory to freeze it into - the only fix is a config change (declare a module for it, or exclude it).
 
 - because: "a file matching no declared module is unchecked, not passing (deptrac's --fail-on-uncovered)"
 - `path`: the file itself
@@ -56,9 +56,9 @@ A module's surface file re-exports or otherwise exposes an internal declaration 
 
 Three shapes over `config.edges`, generalizing rules 1/2's fixed module vocabulary to tags (`classify`/`classifyByDirectoryName`). Each rule is evaluated independently, blind to every other rule's namespace: an edge violates if ANY ONE applicable rule says no. A rule scoped to a tag namespace says nothing about a target with no tag in that namespace at all (that's rule 3's territory, not this rule's concern) - an edge into an untagged file or an untagged external package simply never matches. `edgeType` (`"value"`/`"type"`/`"both"`, default `"both"`) and `importForm` (`"static"`/`"dynamic"`/`"both"`, default `"both"`) filter which edges a given `allowDeny`/`point` rule can match at all, checked before its own allow/deny or from/to logic runs.
 
-An edge reaching an external target (a real npm package, a node builtin, a workspace dependency outside `scope`) carries a synthesized `pkg:<name>` tag instead of the real file's classify tags - a `targetNamespace: "pkg"` rule constrains what a source may import from outside the project at all (VS Code's own per-layer external-package restrictions are the motivating case).
+An edge reaching an external target (a real npm package, a node builtin, a workspace dependency) carries a synthesized `pkg:<name>` tag instead of the real file's classify tags - a `targetNamespace: "pkg"` rule constrains what a source may import from outside the project at all (VS Code's own per-layer external-package restrictions are the motivating case).
 
-**`allowDeny`** (`rule: "tag-boundary"`): a `source` tag's allow-or-deny list over one `targetNamespace` at a time (dependency-cruiser's own `mayImportFrom`/`forbid` generators, unified into one shape). A target sharing the source's own tag value is unconstrained by that rule - "the same group as source" is never restricted. An `exceptions` list (`{ from, to, because }[]`, glob pairs on the real file paths) overrides the rule either way for a specific edge, same shape `point` uses below.
+**`allowDeny`** (`rule: "tag-boundary"`): a `source` tag's allow-or-deny list over one `targetNamespace` at a time (dependency-cruiser's own `mayImportFrom`/`forbid` generators, unified into one shape). A target sharing the source's own tag value is unconstrained by that rule - "the same group as source" is never restricted. An `exceptions` list (`{ from, to, because }[]`, glob pairs on the real file paths) overrides the rule either way for a specific edge - `allowDeny`'s own field only; `point` (below) has no `exceptions` of its own, since its `from`/`to` predicates are already as explicit as a rule gets.
 
 - because: whatever the `allowDeny` entry's own `because` gives (mandatory)
 - evidence: `'<specifier>' (from '<source tag>') reaches '<violating tag>'`
@@ -72,10 +72,11 @@ An edge reaching an external target (a real npm package, a node builtin, a works
 - next: `move this edge to depend only on '<namespace>' values at or before '<source layer>' in archstrict.config.ts's sequence, or restructure the code so it does`
 - `todoModule`: the edge's own source module
 
-**`point`** (`rule: "point-rule"`): an explicit forbidden `from -> to` edge, each side either a glob (matched against the real project-relative path; never matches an external target) or a tag predicate (`{ tags, exclude? }` - every listed tag must be present, and if `exclude` is given, none of its tags may all be present at once). The narrowest, most explicit of the three shapes - a specific pair a broader `allowDeny`/`order` rule doesn't already cover.
+**`point`** (`rule: "point-rule"`): an explicit forbidden `from -> to` edge, each side either a glob (matched against the real project-relative path; never matches an external target) or a tag predicate - `from` may be `{ tags, exclude? }` (every listed tag must be present, and if `exclude` is given, none of its tags may all be present at once), but `to` is `{ tags }` only, with no `exclude` of its own. The narrowest, most explicit of the three shapes - a specific pair a broader `allowDeny`/`order` rule doesn't already cover.
 
 - because: whatever the `point` entry's own `because` gives (mandatory)
 - evidence: `'<specifier>' matches a forbidden edge`
+- next: `remove this edge, or narrow the point rule in archstrict.config.ts if it's too broad`
 - `todoModule`: the edge's own source module
 
 ## must-be-empty

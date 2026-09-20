@@ -49,13 +49,15 @@ export type Config = {
   because: string;
 
   // --- v1 schema (the only schema now that modules/kinds/layers are gone;
-  // see the header comment above). Every field below is wired into a real
-  // rule.
+  // see the header comment above).
 
-  // Analysis boundary (was `modules`' role under v0's discovery model).
-  // Under v1, module boundaries come from `declaredModules` instead of
-  // being discovered under this glob - `scope` only bounds which files
-  // `classify` and the constraint engine ever look at.
+  // Intended as the analysis boundary (was `modules`' role under v0's
+  // discovery model): a glob bounding which files `classify` and the
+  // constraint engine ever look at, module boundaries coming from
+  // `declaredModules` instead of being discovered under it. Declared here,
+  // typechecked, and documented - but not yet read anywhere; no rule or
+  // verb narrows its own file scan by it. Wiring it is real, deferred work,
+  // not a design decision made and reversed.
   scope?: string;
   exclude?: readonly string[];
 
@@ -90,9 +92,11 @@ export type Config = {
   mustBeEmpty?: readonly { glob: string; because: string }[];
 
   // Constraint engine shape - checked by src/rules/constraints.ts, wired
-  // into runRules (rule 7: tag-boundary/tag-order/point-rule). One
-  // `exceptions` shape shared across `allowDeny` and `point`: a from/to
-  // glob or tag-predicate pair that overrides the enclosing rule either way.
+  // into runRules (rule 7: tag-boundary/tag-order/point-rule). `allowDeny`'s
+  // own `exceptions`: a from/to glob or tag-predicate pair that overrides
+  // that rule either way for one specific edge. `point` has no exceptions
+  // of its own - its from/to predicates are already as explicit as a rule
+  // gets.
   edges?: {
     allowDeny?: readonly {
       source: string;
