@@ -29,8 +29,13 @@ async function runCheck(args: string[]): Promise<number> {
   return result.violations.length > 0 ? 1 : 0;
 }
 
-async function runTodo(): Promise<number> {
+async function runTodo(args: string[]): Promise<number> {
+  const asJson = args.includes("--json");
   const result = await todo(process.cwd());
+  if (asJson) {
+    process.stdout.write(JSON.stringify(result, null, 2) + "\n");
+    return 0;
+  }
   if (result.firstRun) {
     process.stdout.write(`froze ${result.added} violation(s)\n`);
   } else {
@@ -49,7 +54,7 @@ async function main(argv: string[]): Promise<number> {
   try {
     if (verb === "init") return runInit();
     if (verb === "check") return await runCheck(rest);
-    if (verb === "todo") return await runTodo();
+    if (verb === "todo") return await runTodo(rest);
     process.stderr.write(`archstrict: '${verb}' is not implemented yet\n`);
     return 1;
   } catch (error) {

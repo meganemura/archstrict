@@ -174,4 +174,49 @@ describe("cli", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  test("todo --json prints a structured TodoResult, on the first run and on a later prune-only run", () => {
+    const root = mkdtempSync(join(tmpdir(), "archstrict-cli-todo-json-"));
+    try {
+      mkdirSync(join(root, "src", "app"), { recursive: true });
+      mkdirSync(join(root, "src", "shared"), { recursive: true });
+      writeFileSync(join(root, "src", "shared", "module.ts"), "export const shared = 1;\n");
+      writeFileSync(
+        join(root, "src", "app", "module.ts"),
+        "import { shared } from \"../shared/module.ts\";\nexport const x = shared;\n",
+      );
+      execFileSync("node", [CLI_PATH, "init"], { cwd: root });
+
+      const first = JSON.parse(execFileSync("node", [CLI_PATH, "todo", "--json"], { cwd: root, encoding: "utf8" }));
+      expect(first).toEqual({ firstRun: true, added: 1, pruned: 0 });
+
+      const second = JSON.parse(execFileSync("node", [CLI_PATH, "todo", "--json"], { cwd: root, encoding: "utf8" }));
+      expect(second).toEqual({ firstRun: false, added: 0, pruned: 0 });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("todo --json on a broken config prints a structured error object, not the text next: line", () => {
+    const root = mkdtempSync(join(tmpdir(), "archstrict-cli-todo-json-error-"));
+    try {
+      writeFileSync(join(root, "archstrict.config.ts"), "export default { modules: 'src/*' };\n");
+
+      let out = "";
+      let exitCode = 0;
+      try {
+        out = execFileSync("node", [CLI_PATH, "todo", "--json"], { cwd: root, encoding: "utf8" });
+      } catch (e) {
+        const err = e as { status: number; stdout: string };
+        exitCode = err.status;
+        out = err.stdout;
+      }
+
+      expect(exitCode).toBe(1);
+      const json = JSON.parse(out);
+      expect(json.error).toContain("missing required field");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
