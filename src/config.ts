@@ -85,7 +85,13 @@ export type Config = {
     // one real, differently-shaped public entry point at once (a
     // package.json `exports` map naming several real paths, not just its
     // default `main`); surfaceFiles is the union of every glob's matches.
-    surface: string | readonly string[];
+    // Optional: when absent, a real package.json's own exports map (if
+    // one sits at this module's own root) is derived back to source at
+    // graph-build time instead of being hand-transcribed - falling back
+    // to the project's own top-level `surface` default when there's no
+    // exports map, or even one entry in it can't be confidently resolved
+    // to a real, existing source file.
+    surface?: string | readonly string[];
     // Rule 1's own "friend" exception (ArchUnit's term): `file` (relative
     // to this module, may itself be a glob) is public to exactly the
     // importers `from` (a project-relative glob) matches, private to

@@ -21,7 +21,7 @@
 // the latter as a syntax error, so in practice this count is driven by the
 // former.
 import ts from "typescript";
-import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { builtinModules } from "node:module";
 import { compileGlob, mostSpecificMatch } from "./classify.js";
@@ -117,7 +117,12 @@ export type DeclaredModule = {
   // A single glob, or several - a real package can publish more than one
   // real, differently-shaped public entry point at once (a package.json
   // `exports` map naming several real paths, not just its default `main`).
-  surface: string | readonly string[];
+  // Optional: when absent, a real package.json's own exports map (if one
+  // sits at this module's own root) is derived back to source at graph-
+  // build time instead of being hand-transcribed - falling back to the
+  // project's own global default when there's no exports map, or even
+  // one entry in it can't be confidently resolved to a real source file.
+  surface?: string | readonly string[];
   friends?: readonly { file: string; from: string; because: string }[];
 };
 
@@ -275,16 +280,135 @@ function isWorkspaceSiblingResolution(resolvedFile: string, rootDir: string): bo
 // otherwise - a `.d.ts` a declaredModules entry's own `surface` glob
 // explicitly names is the one, narrow exception: an explicit config
 // choice, not a blanket re-inclusion of every declaration file.
-// `dm.surface` relative to its own module's base directory (moduleGlobBaseDir
-// of `dm.glob`), one project-relative glob per surface entry - a single
-// string normalizes to one entry, an array to one per element.
-function surfaceGlobsFor(dm: DeclaredModule): string[] {
-  const entries = Array.isArray(dm.surface) ? dm.surface : [dm.surface as string];
+// `dm`'s own effective surface (hand-set, derived from a real package.json
+// exports map, or the project's own global default - effectiveSurface's
+// own precedence) relative to its module's own base directory
+// (moduleGlobBaseDir of `dm.glob`), one project-relative glob per surface
+// entry - a single string normalizes to one entry, an array to one per
+// element.
+function surfaceGlobsFor(dm: DeclaredModule, projectRoot: string, globalDefaultSurface: string): string[] {
+  const moduleDir = join(projectRoot, moduleGlobBaseDir(dm.glob));
+  const surface = effectiveSurface(dm, moduleDir, globalDefaultSurface);
+  const entries = Array.isArray(surface) ? surface : [surface as string];
   return entries.map((s) => `${moduleGlobBaseDir(dm.glob)}/${s}`.replace(/\/{2,}/g, "/"));
 }
 
-function surfaceGlobsAllowingDts(declaredModules: readonly DeclaredModule[]): string[] {
-  return declaredModules.flatMap((dm) => surfaceGlobsFor(dm)).filter((g) => g.endsWith(".d.ts"));
+function surfaceGlobsAllowingDts(
+  declaredModules: readonly DeclaredModule[],
+  projectRoot: string,
+  globalDefaultSurface: string,
+): string[] {
+  return declaredModules
+    .flatMap((dm) => surfaceGlobsFor(dm, projectRoot, globalDefaultSurface))
+    .filter((g) => g.endsWith(".d.ts"));
+}
+
+// A build-output path's own extension, swapped for the real source
+// extension every one of these ships from - never guessed beyond this
+// fixed, small set (a project using some other build layout entirely
+// simply isn't derivable, and falls back to the tool's own default
+// instead of a wrong guess).
+const BUILT_TO_SOURCE_EXTENSION: readonly [string, string][] = [
+  [".d.mts", ".ts"],
+  [".d.cts", ".ts"],
+  [".d.ts", ".ts"],
+  [".mjs", ".ts"],
+  [".cjs", ".ts"],
+  [".mts", ".ts"],
+  [".cts", ".ts"],
+  [".js", ".ts"],
+];
+
+// One export subpath's own value (a bare string, or a conditions object)
+// resolved to the one real, existing source file it names - or undefined
+// when nothing in it can be confidently resolved. A source-pointing
+// condition (a project-specific key ending in "-source", the real
+// convention this was measured against) is preferred when present, since
+// it already names the real source path directly, with no built-output
+// heuristic needed at all. Otherwise, tries "types"/"import"/"require"/
+// "default" in that order, applying the fixed built-to-source extension
+// swap and a single "dist/" prefix strip, then confirms the guess is a
+// real file - a project whose own build output lives somewhere other
+// than a literal "dist/" directory, or under some other convention
+// entirely, is simply not derivable this way, not guessed wrong.
+function resolveExportsEntry(value: unknown, moduleDir: string): string | undefined {
+  const candidates: string[] = [];
+  if (typeof value === "string") {
+    candidates.push(value);
+  } else if (typeof value === "object" && value !== null) {
+    const conditions = value as Record<string, unknown>;
+    const sourceKey = Object.keys(conditions).find((k) => k.endsWith("-source"));
+    for (const key of [sourceKey, "types", "import", "require", "default"]) {
+      if (key === undefined) continue;
+      const v = conditions[key];
+      if (typeof v === "string") candidates.push(v);
+    }
+  }
+
+  for (const raw of candidates) {
+    const stripped = raw.replace(/^\.\//, "");
+    const asSource = stripped.endsWith(".ts") || stripped.endsWith(".tsx") ? stripped : undefined;
+    const guesses =
+      asSource !== undefined
+        ? [asSource]
+        : BUILT_TO_SOURCE_EXTENSION.filter(([ext]) => stripped.endsWith(ext)).map(([ext, replacement]) =>
+            stripped.replace(/^dist\//, "").slice(0, -ext.length) + replacement,
+          );
+    for (const guess of guesses) {
+      if (existsSync(join(moduleDir, guess))) return guess;
+    }
+  }
+  return undefined;
+}
+
+// Every real, sanctioned entry point a package.json's own `exports` map
+// names, resolved back to its own real source file - or undefined when
+// the map is absent, empty of real subpaths, or even one entry can't be
+// confidently resolved (whole-module fallback to the tool's own default,
+// never a partial or guessed-wrong surface array).
+function deriveSurfaceFromExports(moduleDir: string): string[] | undefined {
+  const pkgPath = join(moduleDir, "package.json");
+  if (!existsSync(pkgPath)) return undefined;
+  let pkg: unknown;
+  try {
+    pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
+  } catch {
+    return undefined;
+  }
+  if (typeof pkg !== "object" || pkg === null) return undefined;
+  const exportsField: unknown = (pkg as Record<string, unknown>).exports;
+  if (exportsField === undefined) return undefined;
+
+  // A single string, or a bare conditions object (keys like "types"/
+  // "import" that don't start with "."), names only the package's own
+  // default "." entry - not a subpath map at all.
+  const isSubpathMap =
+    typeof exportsField === "object" &&
+    exportsField !== null &&
+    Object.keys(exportsField).every((k) => k.startsWith("."));
+  const subpaths: Record<string, unknown> = isSubpathMap
+    ? (exportsField as Record<string, unknown>)
+    : { ".": exportsField };
+
+  const resolved: string[] = [];
+  for (const [key, value] of Object.entries(subpaths)) {
+    if (key === "./package.json") continue; // a real file, but never TypeScript source
+    if (value === null) continue; // explicitly blocked by the package's own author - not a leak candidate
+    const source = resolveExportsEntry(value, moduleDir);
+    if (source === undefined) return undefined; // one unresolvable entry fails the whole derivation
+    if (!resolved.includes(source)) resolved.push(source);
+  }
+  return resolved.length > 0 ? resolved : undefined;
+}
+
+// A declared module's own effective surface: its own hand-set surface if
+// present (wins unconditionally), else a real package.json's own exports
+// map derived back to source (every real, sanctioned entry point at
+// once), else the project's own global default - never a mix of derived
+// and hand-set for the same module.
+function effectiveSurface(dm: DeclaredModule, moduleDir: string, globalDefaultSurface: string): string | readonly string[] {
+  if (dm.surface !== undefined) return dm.surface;
+  return deriveSurfaceFromExports(moduleDir) ?? globalDefaultSurface;
 }
 
 // A named import/export clause is type-only either as a whole
@@ -325,9 +449,12 @@ function listAllSourceFiles(
   projectRoot: string,
   excludeGlobs: readonly string[],
   declaredModules: readonly DeclaredModule[] = [],
+  globalDefaultSurface: string = DEFAULT_SURFACE,
 ): string[] {
   const compiledExcludes = excludeGlobs.map((g) => compileGlob(g));
-  const compiledDtsSurfaces = surfaceGlobsAllowingDts(declaredModules).map((g) => compileGlob(g));
+  const compiledDtsSurfaces = surfaceGlobsAllowingDts(declaredModules, projectRoot, globalDefaultSurface).map((g) =>
+    compileGlob(g),
+  );
   return ts.sys
     .readDirectory(projectRoot, [".ts"], ["**/node_modules/**", "**/dist/**"])
     .filter((f) => {
@@ -345,6 +472,7 @@ function buildDeclaredModules(
   projectRoot: string,
   declaredModules: readonly DeclaredModule[],
   allFiles: readonly string[],
+  globalDefaultSurface: string = DEFAULT_SURFACE,
 ): Map<string, Module> {
   const membership = declaredModules.map((dm) => ({ glob: dm.glob, value: dm.name }));
   const modules = new Map<string, Module>(
@@ -355,7 +483,7 @@ function buildDeclaredModules(
         dir: join(projectRoot, moduleGlobBaseDir(dm.glob)),
         files: [],
         surfaceFiles: [],
-        surfaceName: dm.surface,
+        surfaceName: effectiveSurface(dm, join(projectRoot, moduleGlobBaseDir(dm.glob)), globalDefaultSurface),
         friends: (dm.friends ?? []).map((f) => ({
           fileGlob: `${moduleGlobBaseDir(dm.glob)}/${f.file}`.replace(/\/{2,}/g, "/"),
           from: f.from,
@@ -366,7 +494,7 @@ function buildDeclaredModules(
   );
 
   const surfaceGlobs = new Map(
-    declaredModules.map((dm) => [dm.name, surfaceGlobsFor(dm).map((g) => compileGlob(g))]),
+    declaredModules.map((dm) => [dm.name, surfaceGlobsFor(dm, projectRoot, globalDefaultSurface).map((g) => compileGlob(g))]),
   );
 
   for (const file of allFiles) {
@@ -485,8 +613,8 @@ export function buildModuleGraph(options: BuildOptions): ModuleGraph {
 
   if (declaredModules !== undefined) {
     rootDir = projectRoot;
-    rootNames = listAllSourceFiles(projectRoot, exclude, declaredModules);
-    modules = buildDeclaredModules(projectRoot, declaredModules, rootNames);
+    rootNames = listAllSourceFiles(projectRoot, exclude, declaredModules, surface);
+    modules = buildDeclaredModules(projectRoot, declaredModules, rootNames, surface);
     resolveModuleForFile = (filePath) => moduleForDeclaredFile(filePath, projectRoot, declaredModules);
   } else {
     const modulesGlob = options.modulesGlob;

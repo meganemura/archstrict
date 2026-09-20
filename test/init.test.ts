@@ -267,6 +267,44 @@ export default {
     });
   });
 
+  test("a declaredModules entry that omits its own surface still typechecks against the generated Config", () => {
+    withTempProject(["app"], (root) => {
+      init(root);
+      writeFileSync(
+        join(root, "archstrict.config.ts"),
+        `import type { Config } from "./archstrict.generated.js";
+export default {
+  declaredModules: [{ name: "app", glob: "src/app/**" }],
+  because: "test",
+} satisfies Config;
+`,
+      );
+      writeFileSync(
+        join(root, "tsconfig.json"),
+        JSON.stringify(
+          {
+            compilerOptions: {
+              target: "esnext",
+              module: "nodenext",
+              moduleResolution: "nodenext",
+              strict: true,
+              skipLibCheck: true,
+              noEmit: true,
+            },
+            include: ["archstrict.config.ts", "archstrict.generated.ts"],
+          },
+          null,
+          2,
+        ),
+      );
+
+      const tscPath = new URL("../node_modules/typescript/bin/tsc", import.meta.url).pathname;
+      expect(() =>
+        execFileSync("node", [tscPath, "--noEmit", "-p", root], { cwd: root, stdio: "pipe" }),
+      ).not.toThrow();
+    });
+  });
+
   test("init on a project with no src/ at all fails loudly, naming what's missing", () => {
     const root = mkdtempSync(join(tmpdir(), "archstrict-init-"));
     try {

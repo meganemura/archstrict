@@ -102,8 +102,11 @@ export type Config = {
     name: ModuleName;
     glob: string;
     // A single glob, or several - a real package can publish more than
-    // one real, differently-shaped public entry point at once.
-    surface: string | readonly string[];
+    // one real, differently-shaped public entry point at once. Optional:
+    // when absent, a real package.json's own exports map at this
+    // module's own root is derived back to source instead, falling back
+    // to this project's own top-level surface default otherwise.
+    surface?: string | readonly string[];
     // Rule 1's own "friend" exception: \`file\` (relative to this module,
     // may itself be a glob) is public to exactly the importers \`from\`
     // (a project-relative glob) matches, private to everyone else -
