@@ -12,6 +12,8 @@ dist/
 # renamed - only the fixture's own subtree is un-ignored.
 !test/fixtures/package-resolution/node_modules/
 !test/fixtures/package-resolution/node_modules/**
+!test/fixtures/types-shadow-package/node_modules/
+!test/fixtures/types-shadow-package/node_modules/**
 
 # Hegel failure database
 .hegel/
