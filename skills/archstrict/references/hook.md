@@ -12,7 +12,7 @@ Every one of these is silent by design, not a failure:
 
 ## Why it might report "check did not run"
 
-When `archstrict check --json` reports `{ "error": "..." }` instead of a real result, or exits with no output at all - `check` exiting 1 with violations present is expected, normal output, read as data, not this case. A config error (`archstrict.config.ts` missing a required field, a `deprecated` entry naming a module that doesn't exist, the modules glob's root directory not existing yet during `init`, `check <file>` naming a file that doesn't exist) reports this way; the message names which one. Run `archstrict init` first if the modules root doesn't exist yet.
+When `archstrict check --json` reports `{ "error": "..." }` instead of a real result, or exits with no output at all - `check` exiting 1 with violations present is expected, normal output, read as data, not this case. A config error (`archstrict.config.ts` missing a required field, a `deprecated` entry naming a module that doesn't exist, the modules glob's root directory not existing yet during `init`, `check <file>` naming a file that doesn't exist) reports this way; the message names which one. If the message is `init` itself complaining the modules glob's root doesn't exist, `init` cannot fix that on its own: create that directory first (with at least one real `.ts` file in it), or re-run `init` with a `modulesGlob` argument naming a directory that already exists.
 
 ## Path resolution
 
