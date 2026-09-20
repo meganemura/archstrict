@@ -53,8 +53,10 @@ export type ModuleName = ${union};
 export type Config = {
   modules: string;
   // The public-surface file name every module is checked against, e.g.
-  // "index.ts". Not fixed by the tool - a project names its own.
-  surface: string;
+  // "index.ts". Not fixed by the tool - a project names its own. Optional:
+  // a hand-edited config that omits it gets the same "index.ts" default
+  // init itself always writes explicitly.
+  surface?: string;
   kinds: Record<string, string>;
   layers?: readonly string[];
   deprecated?: readonly {
