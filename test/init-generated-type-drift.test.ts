@@ -1,6 +1,6 @@
-// archstrict-tb0.2 fixed three fields (scope/classifyByDirectoryName/edges)
-// that had already drifted out of init.ts's own hand-written copy of
-// Config - the type a real `archstrict init` actually ships in
+// An earlier fix patched three fields (scope/classifyByDirectoryName/
+// edges) that had already drifted out of init.ts's own hand-written copy
+// of Config - the type a real `archstrict init` actually ships in
 // archstrict.generated.ts, kept in sync by hand since a runtime
 // derivation from src/config.ts isn't possible (types are erased at
 // runtime, and the published package ships dist/ only). That fix patched
