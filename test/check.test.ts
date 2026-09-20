@@ -141,7 +141,7 @@ describe("check", () => {
     });
   });
 
-  test("a project with no violations ends its text output with next: archstrict check", async () => {
+  test("a project with no violations prints no next: line at all - nothing to re-run, unlike every other next:", async () => {
     await withTempProject(async (root) => {
       mkdirSync(join(root, "src", "app"), { recursive: true });
       writeFileSync(join(root, "src", "app", "module.ts"), "export const app = 1;\n");
@@ -149,7 +149,9 @@ describe("check", () => {
 
       const result = await check(root);
       expect(result.violations).toHaveLength(0);
-      expect(formatText(result).trim().split("\n").at(-1)).toBe("next: archstrict check");
+      const text = formatText(result);
+      expect(text).not.toContain("next:");
+      expect(text.trim().split("\n").at(-1)).toBe("todo: 0");
     });
   });
 

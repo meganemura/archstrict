@@ -347,6 +347,13 @@ export function formatText(result: CheckResult): string {
   lines.push(`unsupported syntax: ${result.unsupportedSyntax}`);
   lines.push(`type leaks: ${result.typeLeaks}`);
   lines.push(`todo: ${result.todo}`);
-  lines.push(`next: ${result.violations.length > 0 ? "archstrict todo" : "archstrict check"}`);
+  // A next: line only when there is a concrete next action - a clean
+  // check has none, and telling the reader to re-run the command that
+  // just produced this clean result is circular, unlike every other
+  // next: this tool ever prints (each names the one thing to actually
+  // do about a real finding).
+  if (result.violations.length > 0) {
+    lines.push(`next: archstrict todo`);
+  }
   return lines.join("\n") + "\n";
 }
