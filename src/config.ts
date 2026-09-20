@@ -63,6 +63,72 @@ export type Config = {
   // old or new.
   strict?: readonly string[];
   because: string;
+
+  // --- v1 schema (additive; wired into rules by later tickets, not this
+  // one). `modules`/`kinds`/`layers` above stay authoritative for every v0
+  // rule until each has migrated - removing them here would break every
+  // rule and verb that reads them in the same commit that adds this shape,
+  // which the implement-phase gate (typecheck + test, every ticket) does
+  // not allow. Their removal is itself a later ticket's job, once nothing
+  // reads them anymore.
+
+  // Analysis boundary (was `modules`' role under v0's discovery model).
+  // Under v1, module boundaries come from `declaredModules` instead of
+  // being discovered under this glob - `scope` only bounds which files
+  // `classify` and the constraint engine ever look at.
+  scope?: string;
+  exclude?: readonly string[];
+
+  // glob -> tags, most-specific-glob-wins (src/classify.ts). A file can
+  // also gain tags from `classifyByDirectoryName` - the two mechanisms are
+  // independent and their results union.
+  classify?: readonly { glob: string; tags: readonly string[] }[];
+
+  // Ambient tagging by directory-name segment (VS Code's code-layering.ts
+  // convention): the nearest segment matching one of `names`, walking from
+  // the file outward, becomes `${tagNamespace}:${name}`.
+  classifyByDirectoryName?: {
+    tagNamespace: string;
+    names: readonly string[];
+  };
+
+  // Declared modules replace v0's index.ts-presence discovery (measured
+  // wrong: a barrel index.ts is not evidence of an enforced boundary in
+  // NestJS or Drizzle). `surface` may itself be a glob - a module's public
+  // surface can be more than one file.
+  declaredModules?: readonly {
+    name: string;
+    glob: string;
+    surface: string;
+  }[];
+
+  // Constraint engine shape (typed here, implemented in a later ticket).
+  // One `exceptions` shape shared across `allowDeny` and `point`: a from/to
+  // glob or tag-predicate pair that overrides the enclosing rule either way.
+  edges?: {
+    allowDeny?: readonly {
+      source: string;
+      targetNamespace: string;
+      allow?: readonly string[];
+      deny?: readonly string[];
+      exceptions?: readonly { from: string; to: string; because: string }[];
+      because: string;
+    }[];
+    order?: readonly {
+      tagNamespace: string;
+      within?: string;
+      sequence: Record<string, readonly string[]>;
+      direction: "downward-only";
+      because: string;
+    }[];
+    point?: readonly {
+      from: string | { tags: readonly string[]; exclude?: { tags: readonly string[] } };
+      to: string | { tags: readonly string[] };
+      edgeType?: "value" | "type" | "both";
+      importForm?: "static" | "dynamic" | "both";
+      because: string;
+    }[];
+  };
 };
 
 // Whether `pattern` (a value of config.kinds) names `moduleName`. Shared by
