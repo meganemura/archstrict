@@ -1,4 +1,7 @@
 import { describe, expect, test } from "vitest";
+import * as hegel from "@hegeldev/hegel";
+import * as gen from "@hegeldev/hegel/generators";
+import { assertEdgesShapeValid } from "../src/config.js";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,6 +16,34 @@ function withTempProject(fn: (root: string) => void | Promise<void>): Promise<vo
 }
 
 describe("loadConfig", () => {
+  test.each([{}, { deny: [] }])("rejects an allowDeny entry without a restriction: %j", async (restriction) => {
+    await withTempProject(async (root) => {
+      const configPath = join(root, "archstrict.config.ts");
+      writeFileSync(configPath, `export default ${JSON.stringify({
+        declaredModules: [],
+        because: "test",
+        edges: { allowDeny: [{ source: "kind:app", targetNamespace: "layer", because: "test", ...restriction }] },
+      })};`);
+      await expect(loadConfig(configPath)).rejects.toThrow(
+        "config.edges.allowDeny entry with source 'kind:app' and targetNamespace 'layer' must specify allow or a non-empty deny list",
+      );
+    });
+  });
+
+  test("accepts non-empty allow and deny lists for arbitrary tag values", () => {
+    hegel.test((tc) => {
+      const values = tc.draw(gen.arrays(gen.text(), { minSize: 1 }));
+      for (const restriction of [{ allow: values }, { deny: values }, { allow: [], deny: [] }]) {
+        expect(() => assertEdgesShapeValid({
+          configPath: "<test>",
+          declaredModules: [],
+          because: "test",
+          edges: { allowDeny: [{ source: "kind:app", targetNamespace: "layer", because: "test", ...restriction }] },
+        })).not.toThrow();
+      }
+    });
+  });
+
   test("loads a real config written by init and adds configPath", async () => {
     await withTempProject(async (root) => {
       mkdirSync(join(root, "src", "app"), { recursive: true });

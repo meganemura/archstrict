@@ -251,7 +251,17 @@ export function assertEdgesShapeValid(config: Config): void {
   }
   assertKnownKeys(edges, ["allowDeny", "order", "point"], "config.edges");
 
-  assertEntries(edges.allowDeny, ALLOW_DENY_KEYS, "allowDeny");
+  for (const entry of assertEntries(edges.allowDeny, ALLOW_DENY_KEYS, "allowDeny")) {
+    // These shapes cannot reject any edge, even when coverage is nonzero.
+    if (
+      entry.allow === undefined &&
+      (entry.deny === undefined || (Array.isArray(entry.deny) && entry.deny.length === 0))
+    ) {
+      throw new Error(
+        `config.edges.allowDeny entry with source '${entry.source}' and targetNamespace '${entry.targetNamespace}' must specify allow or a non-empty deny list`,
+      );
+    }
+  }
   assertEntries(edges.point, POINT_KEYS, "point");
   for (const entry of assertEntries(edges.order, ORDER_KEYS, "order")) {
     const sequence: unknown = entry.sequence;

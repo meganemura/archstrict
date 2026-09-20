@@ -41,6 +41,16 @@ A `classify` glob matching zero real files, or zero `declaredModules` entries at
 
 ## `edges`'s own shape
 
+Each `allowDeny` entry must specify `allow` or `deny`.
+When `allow` is absent, `deny` must contain at least one value.
+Config loading rejects entries that omit both lists or specify only `deny: []`, before any rule runs.
+The error identifies the entry by its `source` and `targetNamespace`.
+An empty `allow: []` remains valid: it rejects every target value in the selected namespace.
+When both lists are present, `allow` retains precedence.
+
+This shape check cannot detect an `allow` list that covers every target tag value present in the project.
+That case depends on project data; static validation cannot distinguish an intended restriction from a list that happens to cover all current values.
+
 `edges` is one object with up to three named lists, not a single array of rule entries - easy to misread from a prose description of each rule shape alone:
 
 ```ts
