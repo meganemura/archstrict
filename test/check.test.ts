@@ -72,6 +72,78 @@ describe("loadConfig", () => {
       expect(second.strict).toEqual(["app"]);
     });
   });
+
+  test("edges written as an array (not the real {allowDeny?, order?, point?} object) throws, instead of silently configuring nothing", async () => {
+    await withTempProject(async (root) => {
+      mkdirSync(join(root, "src", "app"), { recursive: true });
+      writeFileSync(join(root, "src", "app", "module.ts"), "export const app = 1;\n");
+      init(root);
+
+      const configPath = join(root, "archstrict.config.ts");
+      writeFileSync(
+        configPath,
+        `import type { Config } from "./archstrict.generated.js";\n` +
+          `export default { declaredModules: [{ name: "app", glob: "src/app/**", surface: "index.ts" }], edges: [{ rule: "order" }], because: "test" } satisfies Config;\n`,
+      );
+      await expect(loadConfig(configPath)).rejects.toThrow(/config\.edges must be an object.*not an array/);
+    });
+  });
+
+  test("an order entry's sequence written as an array (not Record<string, string[]>) throws", async () => {
+    await withTempProject(async (root) => {
+      mkdirSync(join(root, "src", "app"), { recursive: true });
+      writeFileSync(join(root, "src", "app", "module.ts"), "export const app = 1;\n");
+      init(root);
+
+      const configPath = join(root, "archstrict.config.ts");
+      writeFileSync(
+        configPath,
+        `import type { Config } from "./archstrict.generated.js";\n` +
+          `export default { declaredModules: [{ name: "app", glob: "src/app/**", surface: "index.ts" }], ` +
+          `edges: { order: [{ tagNamespace: "layer", sequence: ["a", "b"], direction: "downward-only", because: "test" }] }, because: "test" } satisfies Config;\n`,
+      );
+      await expect(loadConfig(configPath)).rejects.toThrow(/sequence must be an object.*not an array/);
+    });
+  });
+
+  test("an unknown field on an edges entry (e.g. edgeType on an order rule, which order doesn't support) throws", async () => {
+    await withTempProject(async (root) => {
+      mkdirSync(join(root, "src", "app"), { recursive: true });
+      writeFileSync(join(root, "src", "app", "module.ts"), "export const app = 1;\n");
+      init(root);
+
+      const configPath = join(root, "archstrict.config.ts");
+      writeFileSync(
+        configPath,
+        `import type { Config } from "./archstrict.generated.js";\n` +
+          `export default { declaredModules: [{ name: "app", glob: "src/app/**", surface: "index.ts" }], ` +
+          `edges: { order: [{ tagNamespace: "layer", sequence: { "": ["a", "b"] }, direction: "downward-only", edgeType: "value", because: "test" }] }, because: "test" } satisfies Config;\n`,
+      );
+      await expect(loadConfig(configPath)).rejects.toThrow(/unknown field 'edgeType'/);
+    });
+  });
+
+  test("a correctly-shaped edges config still loads and checks exactly as before", async () => {
+    await withTempProject(async (root) => {
+      mkdirSync(join(root, "src", "app"), { recursive: true });
+      writeFileSync(join(root, "src", "app", "module.ts"), "export const app = 1;\n");
+      init(root);
+
+      const configPath = join(root, "archstrict.config.ts");
+      writeFileSync(
+        configPath,
+        `import type { Config } from "./archstrict.generated.js";\n` +
+          `export default { declaredModules: [{ name: "app", glob: "src/app/**", surface: "index.ts" }], ` +
+          `classify: [{ glob: "src/app/**", tags: ["kind:app"] }], ` +
+          `edges: { allowDeny: [{ source: "kind:app", targetNamespace: "kind", allow: [], because: "test" }], ` +
+          `order: [{ tagNamespace: "kind", sequence: { "": ["app"] }, direction: "downward-only", because: "test" }] }, ` +
+          `because: "test" } satisfies Config;\n`,
+      );
+      const config = await loadConfig(configPath);
+      expect(config.edges?.allowDeny).toHaveLength(1);
+      expect(config.edges?.order).toHaveLength(1);
+    });
+  });
 });
 
 describe("check", () => {

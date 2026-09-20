@@ -151,3 +151,85 @@ export function assertDeprecatedModulesExist(graph: ModuleGraph, config: Config)
     }
   }
 }
+
+// loadConfig reads a real config file with ts.transpileModule (strips
+// types, never fully type-checks - see loadConfig's own comment for why),
+// so a malformed `edges` value is otherwise invisible to both the type
+// system and every rule: writing `edges` as an array instead of the real
+// `{ allowDeny?, order?, point? }` object produces zero rules, zero
+// violations, and - critically - no empty-rule-set violation either
+// (rule 4 has nothing to see, since no rule was ever parsed into
+// existence), indistinguishable from a config that never used `edges` at
+// all. Measured directly, via a fresh agent authoring a real config from
+// scratch: this was the single silent failure among several very similar
+// ones (an `order` entry's own `sequence` written as a flat array instead
+// of `Record<string, string[]>`, an unsupported key like `edgeType` on an
+// `order` entry) - the other two happen to surface today (the first via
+// rule 4's own `evaluated: 0`, the second not at all), but none of them
+// should depend on a downstream rule noticing a side effect. A config
+// shape error is a config error, thrown up front, the same as an
+// unsupported `deprecated` entry already is above.
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function describeShape(value: unknown): string {
+  return Array.isArray(value) ? "an array" : typeof value;
+}
+
+function assertKnownKeys(value: Record<string, unknown>, known: readonly string[], context: string): void {
+  for (const key of Object.keys(value)) {
+    if (!known.includes(key)) {
+      throw new Error(`${context} has an unknown field '${key}' - supported fields are ${known.join(", ")}`);
+    }
+  }
+}
+
+function assertEntries(value: unknown, keys: readonly string[], context: string): readonly Record<string, unknown>[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) {
+    throw new Error(`config.edges.${context} must be an array of entries, not ${describeShape(value)}`);
+  }
+  return value.map((entry, i) => {
+    if (!isPlainObject(entry)) {
+      throw new Error(`config.edges.${context}[${i}] must be an object, not ${describeShape(entry)}`);
+    }
+    assertKnownKeys(entry, keys, `config.edges.${context}[${i}]`);
+    return entry;
+  });
+}
+
+const ALLOW_DENY_KEYS = [
+  "source",
+  "targetNamespace",
+  "allow",
+  "deny",
+  "exceptions",
+  "edgeType",
+  "importForm",
+  "because",
+];
+const ORDER_KEYS = ["tagNamespace", "within", "sequence", "direction", "because"];
+const POINT_KEYS = ["from", "to", "edgeType", "importForm", "because"];
+
+export function assertEdgesShapeValid(config: Config): void {
+  const edges: unknown = config.edges;
+  if (edges === undefined) return;
+  if (!isPlainObject(edges)) {
+    throw new Error(
+      `config.edges must be an object with allowDeny/order/point fields (e.g. { allowDeny: [...] }), not ${describeShape(edges)}`,
+    );
+  }
+  assertKnownKeys(edges, ["allowDeny", "order", "point"], "config.edges");
+
+  assertEntries(edges.allowDeny, ALLOW_DENY_KEYS, "allowDeny");
+  assertEntries(edges.point, POINT_KEYS, "point");
+  for (const entry of assertEntries(edges.order, ORDER_KEYS, "order")) {
+    const sequence: unknown = entry.sequence;
+    if (sequence !== undefined && !isPlainObject(sequence)) {
+      throw new Error(
+        `an edges.order entry's sequence must be an object keyed by the 'within' scope (e.g. { "": ["a", "b"] }), not ${describeShape(sequence)}`,
+      );
+    }
+  }
+}

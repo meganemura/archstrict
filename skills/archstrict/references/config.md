@@ -34,7 +34,37 @@ Fields:
 - **`mustBeEmpty`** (optional) - `{ glob, because }[]`. A directory a project decided must hold no code at all (archspec's own "empty component" idea). A violation is any file matching the glob - zero matches is a clean pass, not silence. The glob is project-root-relative. See [rules.md](rules.md#must-be-empty).
 - **`because`** (required) - the config's own reason for its shape as a whole (the preset choice, the module boundaries). Same reasoning as `deprecated`'s own `because`: a decision with no stated reason is one nobody later can judge.
 
-A `classify` glob matching zero real files, or zero `declaredModules` entries at all, is a reported violation (rule 4, `empty-rule-set`), not a thrown error - `check` still runs and reports everything else it can. A `deprecated` entry naming a module that doesn't exist is a thrown config error, validated up front before any rule runs. An `order` rule's `sequence` missing a layer value classify actually assigns within a scope it does cover is also a thrown config error, but checked lazily instead - only once `checkOrder` walks an edge that actually carries the missing value, not before any rule runs.
+A `classify` glob matching zero real files, or zero `declaredModules` entries at all, is a reported violation (rule 4, `empty-rule-set`), not a thrown error - `check` still runs and reports everything else it can. A `deprecated` entry naming a module that doesn't exist is a thrown config error, validated up front before any rule runs. An `order` rule's `sequence` missing a layer value classify actually assigns within a scope it does cover is also a thrown config error, but checked lazily instead - only once `checkOrder` walks an edge that actually carries the missing value, not before any rule runs. `edges` itself not being a plain object with only `allowDeny`/`order`/`point` keys, an `order` entry's own `sequence` not being a plain object, or an unknown field on any `allowDeny`/`order`/`point` entry, are each thrown config errors too, validated up front the same way - a project's own `archstrict.config.ts` may only ever import types from `archstrict.generated.ts` (`import type`, never `import`), so nothing else validates this shape for you, not even `tsc`, unless a project separately runs it over the config file itself.
+
+## `edges`'s own shape
+
+`edges` is one object with up to three named lists, not a single array of rule entries - easy to misread from a prose description of each rule shape alone:
+
+```ts
+edges: {
+  allowDeny: [
+    { source: "domain:sql", targetNamespace: "domain", allow: ["framework"], because: "..." },
+  ],
+  order: [
+    {
+      tagNamespace: "layer",
+      within: "domain", // omit `within` entirely for an unscoped rule
+      sequence: {
+        // one key per REAL `within` value classify assigns - "" is the
+        // literal key for a rule with no `within` at all, not a placeholder
+        sql: ["core", "runtime", "adapters"],
+      },
+      direction: "downward-only",
+      because: "...",
+    },
+  ],
+  point: [
+    { from: "packages/**", to: "test/**", because: "..." },
+  ],
+},
+```
+
+`sequence` is `Record<string, string[]>`, never a flat `string[]` - see [rules.md](rules.md#7-tag-boundary--tag-order--point-rule-the-constraint-engine) for what each key means. `edgeType`/`importForm` exist on `allowDeny` and `point` only - `order` currently has no such filter at all (a real, tracked design gap, not a documented limitation to work around).
 
 ## tsconfig.json resolution
 

@@ -8,7 +8,7 @@ import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import ts from "typescript";
 import { buildModuleGraph, toProjectRelativePosix, type ModuleGraph } from "../module-graph.js";
-import type { Config } from "../config.js";
+import { assertEdgesShapeValid, type Config } from "../config.js";
 import { checkPublicSurfaceBypass, type Violation as PublicSurfaceViolation } from "../rules/public-surface.js";
 import {
   checkCycles,
@@ -156,7 +156,9 @@ export async function loadConfig(configPath: string): Promise<Config> {
       throw new Error(`${configPath} is missing required field '${field}'`);
     }
   }
-  return { ...(raw as object), configPath } as Config;
+  const config = { ...(raw as object), configPath } as Config;
+  assertEdgesShapeValid(config);
+  return config;
 }
 
 function allProjectRelativeFiles(graph: ModuleGraph): string[] {
