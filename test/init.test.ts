@@ -21,7 +21,7 @@ function withTempProject(modules: string[], fn: (root: string) => void): void {
 }
 
 describe("init", () => {
-  test("writes archstrict.generated.ts and archstrict.config.ts", () => {
+  test("writes archstrict.types.ts and archstrict.config.ts", () => {
     withTempProject(["app", "shared"], (root) => {
       const result = init(root);
       expect(result.configWritten).toBe(true);
@@ -49,7 +49,7 @@ describe("init", () => {
     });
   });
 
-  test("regenerates archstrict.generated.ts on every run, since init owns that file", () => {
+  test("regenerates archstrict.types.ts on every run, since init owns that file", () => {
     withTempProject(["app"], (root) => {
       init(root);
       // Add a module after the first init, then run again.
@@ -77,7 +77,7 @@ describe("init", () => {
               skipLibCheck: true,
               noEmit: true,
             },
-            include: ["archstrict.config.ts", "archstrict.generated.ts"],
+            include: ["archstrict.config.ts", "archstrict.types.ts"],
           },
           null,
           2,
@@ -96,7 +96,7 @@ describe("init", () => {
       init(root);
       writeFileSync(
         join(root, "archstrict.config.ts"),
-        `import type { Config } from "./archstrict.generated.js";
+        `import type { Config } from "./archstrict.types.js";
 export default {
   surface: "index.ts",
   exclude: ["*.ts"],
@@ -125,7 +125,7 @@ export default {
               skipLibCheck: true,
               noEmit: true,
             },
-            include: ["archstrict.config.ts", "archstrict.generated.ts"],
+            include: ["archstrict.config.ts", "archstrict.types.ts"],
           },
           null,
           2,
@@ -154,7 +154,7 @@ export default {
       init(root);
       writeFileSync(
         join(root, "archstrict.config.ts"),
-        `import type { Config } from "./archstrict.generated.js";
+        `import type { Config } from "./archstrict.types.js";
 export default {
   scope: "src/**",
   classify: [{ glob: "src/app/**", tags: ["kind:app"] }, { glob: "src/shared/**", tags: ["kind:shared"] }],
@@ -215,7 +215,7 @@ export default {
               skipLibCheck: true,
               noEmit: true,
             },
-            include: ["archstrict.config.ts", "archstrict.generated.ts"],
+            include: ["archstrict.config.ts", "archstrict.types.ts"],
           },
           null,
           2,
@@ -234,7 +234,7 @@ export default {
       init(root);
       writeFileSync(
         join(root, "archstrict.config.ts"),
-        `import type { Config } from "./archstrict.generated.js";
+        `import type { Config } from "./archstrict.types.js";
 export default {
   declaredModules: [{ name: "app", glob: "src/app/**", surface: "index.ts" }],
   because: "test",
@@ -253,7 +253,7 @@ export default {
               skipLibCheck: true,
               noEmit: true,
             },
-            include: ["archstrict.config.ts", "archstrict.generated.ts"],
+            include: ["archstrict.config.ts", "archstrict.types.ts"],
           },
           null,
           2,
@@ -272,7 +272,7 @@ export default {
       init(root);
       writeFileSync(
         join(root, "archstrict.config.ts"),
-        `import type { Config } from "./archstrict.generated.js";
+        `import type { Config } from "./archstrict.types.js";
 export default {
   declaredModules: [{ name: "app", glob: "src/app/**" }],
   because: "test",
@@ -291,7 +291,7 @@ export default {
               skipLibCheck: true,
               noEmit: true,
             },
-            include: ["archstrict.config.ts", "archstrict.generated.ts"],
+            include: ["archstrict.config.ts", "archstrict.types.ts"],
           },
           null,
           2,

@@ -1,7 +1,7 @@
 // Responsibility: the `init` verb. Writes only the root
 // archstrict.config.ts and the generated module-name union type; it does
 // not create any per-module public-surface files. Idempotent: a second run
-// regenerates archstrict.generated.ts (init's own file) but leaves an
+// regenerates archstrict.types.ts (init's own file) but leaves an
 // existing archstrict.config.ts untouched, so a hand-edited config is
 // never overwritten.
 // Boundary: file I/O and text generation only. Discovering modules is
@@ -81,7 +81,7 @@ export type Config = {
   // Glob patterns kept out of analysis entirely - not a member of any
   // module, not a source of edges, not a target either. init writes one
   // default: this project's own root-level files (archstrict.config.ts,
-  // archstrict.generated.ts) are never module content.
+  // archstrict.types.ts) are never module content.
   exclude?: readonly string[];
   // glob -> tags, most-specific-glob-wins. Independent of declaredModules
   // below - tags classify any file; declaredModules says which files form
@@ -164,7 +164,7 @@ function configFileContents(modulesGlob: string, surface: string, moduleNames: s
     )
     .join("\n");
 
-  return `import type { Config } from "./archstrict.generated.js";
+  return `import type { Config } from "./archstrict.types.js";
 
 // Public surface convention: a module's ${surface} (named by \`surface\`
 // below) is the only file other modules may import from it. An import
@@ -188,7 +188,7 @@ export function init(projectRoot: string, modulesGlob = "src/*", surface = DEFAU
   const graph = buildModuleGraph({ projectRoot, modulesGlob, surface });
   const moduleNames = [...graph.modules.keys()].sort();
 
-  const generatedPath = join(projectRoot, "archstrict.generated.ts");
+  const generatedPath = join(projectRoot, "archstrict.types.ts");
   writeFileSync(generatedPath, generatedFileContents(moduleNames));
 
   const configPath = join(projectRoot, "archstrict.config.ts");

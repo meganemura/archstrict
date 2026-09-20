@@ -33,7 +33,7 @@ describe("cli", () => {
 
       const out = execFileSync("node", [CLI_PATH, "init"], { cwd: root, encoding: "utf8" });
       expect(out).toContain("next: archstrict check");
-      expect(readFileSync(join(root, "archstrict.generated.ts"), "utf8")).toContain('"app"');
+      expect(readFileSync(join(root, "archstrict.types.ts"), "utf8")).toContain('"app"');
       expect(readFileSync(join(root, "archstrict.config.ts"), "utf8")).toContain("satisfies Config");
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -52,7 +52,7 @@ describe("cli", () => {
       // "init on a project with no src/" test already covers.
       const out = execFileSync("node", [CLI_PATH, "init", "packages/*"], { cwd: root, encoding: "utf8" });
       expect(out).toContain("next: archstrict check");
-      expect(readFileSync(join(root, "archstrict.generated.ts"), "utf8")).toContain('"core"');
+      expect(readFileSync(join(root, "archstrict.types.ts"), "utf8")).toContain('"core"');
       expect(readFileSync(join(root, "archstrict.config.ts"), "utf8")).toContain("packages/core/**");
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -228,7 +228,7 @@ describe("cli", () => {
       );
       writeFileSync(
         join(root, "archstrict.config.ts"),
-        `import type { Config } from "./archstrict.generated.js";\n` +
+        `import type { Config } from "./archstrict.types.js";\n` +
           `export default {\n` +
           `  declaredModules: [\n` +
           `    { name: "core", glob: "src/core/**", surface: "index.ts" },\n` +

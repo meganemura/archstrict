@@ -76,7 +76,7 @@ function writeConfig(scratch, classify, edges, extraPoint) {
   const edgesWithControl = extraPoint === undefined ? edges : { ...edges, point: [...(edges.point ?? []), extraPoint] };
   writeFileSync(
     join(scratch, "archstrict.config.ts"),
-    `import type { Config } from "./archstrict.generated.js";\n\n` +
+    `import type { Config } from "./archstrict.types.js";\n\n` +
       `export default {\n` +
       `  configPath: "<oracle>",\n` +
       `  because: "reproduces the Prisma oracle comparison through the real CLI, not a direct function call",\n` +

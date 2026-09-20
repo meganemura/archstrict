@@ -36,7 +36,7 @@ async function main() {
   const { readFileSync, writeFileSync } = await import("node:fs");
   const table = JSON.parse(readFileSync(inputPath, "utf8"));
   const { classifyByDirectoryName, edges } = convertVSCodeLayeringConfig(table);
-  const contents = `import type { Config } from "./archstrict.generated.js";
+  const contents = `import type { Config } from "./archstrict.types.js";
 
 export default {
   configPath: "<generated>",

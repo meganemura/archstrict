@@ -76,7 +76,7 @@ async function main() {
   const { readFileSync, writeFileSync } = await import("node:fs");
   const archConfig = JSON.parse(readFileSync(inputPath, "utf8"));
   const { classify, edges } = convertPrismaArchitectureConfig(archConfig);
-  const contents = `import type { Config } from "./archstrict.generated.js";
+  const contents = `import type { Config } from "./archstrict.types.js";
 
 export default {
   configPath: "<generated>",

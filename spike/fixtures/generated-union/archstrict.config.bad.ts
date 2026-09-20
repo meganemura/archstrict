@@ -1,5 +1,5 @@
 import type { Config } from "./config-type.js";
-import type { ModuleName } from "./archstrict.generated.js";
+import type { ModuleName } from "./archstrict.types.js";
 
 export default {
   modules: "src/*",

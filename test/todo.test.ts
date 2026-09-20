@@ -129,7 +129,7 @@ describe("todo", () => {
       // init never rewrites an existing archstrict.config.ts (a hand-edited
       // config must never be clobbered - the same guarantee "is idempotent"
       // in init.test.ts already covers). It only regenerates
-      // archstrict.generated.ts's own module-name union, which does pick up
+      // archstrict.types.ts's own module-name union, which does pick up
       // "shared" - a real signal a project owner would see (a stale name
       // appearing in ModuleName that declaredModules doesn't cover yet),
       // just not one that changes what check itself analyzes. Declaring a
@@ -154,10 +154,10 @@ describe("todo", () => {
       writeBypassProject(root);
       writeFileSync(
         join(root, "archstrict.config.ts"),
-        `import type { Config } from "./archstrict.generated.js";\n` +
+        `import type { Config } from "./archstrict.types.js";\n` +
           `export default { declaredModules: [{ name: "app", glob: "src/app/**", surface: "index.ts" }, { name: "shared", glob: "src/shared/**", surface: "index.ts" }], strict: ["shared"], exclude: ["*.ts"], because: "test" } satisfies Config;\n`,
       );
-      init(root); // writes archstrict.generated.ts; leaves the hand-written config alone
+      init(root); // writes archstrict.types.ts; leaves the hand-written config alone
 
       const result = await todo(root);
       expect(result.added).toBe(0);
@@ -177,7 +177,7 @@ describe("todo", () => {
       // Mark shared strict after the fact - it already has a frozen entry.
       writeFileSync(
         join(root, "archstrict.config.ts"),
-        `import type { Config } from "./archstrict.generated.js";\n` +
+        `import type { Config } from "./archstrict.types.js";\n` +
           `export default { declaredModules: [{ name: "app", glob: "src/app/**", surface: "index.ts" }, { name: "shared", glob: "src/shared/**", surface: "index.ts" }], strict: ["shared"], exclude: ["*.ts"], because: "test" } satisfies Config;\n`,
       );
 

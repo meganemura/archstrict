@@ -79,7 +79,7 @@ function writeConfig(scratch, classifyByDirectoryName, edges, controlAllowDeny) 
   const allowDeny = controlAllowDeny === undefined ? edges.allowDeny : [...edges.allowDeny, controlAllowDeny];
   writeFileSync(
     join(scratch, "archstrict.config.ts"),
-    `import type { Config } from "./archstrict.generated.js";\n\n` +
+    `import type { Config } from "./archstrict.types.js";\n\n` +
       `export default {\n` +
       `  configPath: "<oracle>",\n` +
       `  because: "reproduces the VS Code oracle comparison through the real CLI, not a direct function call",\n` +

@@ -84,7 +84,7 @@ describe("convert-prisma-architecture-config.mjs", () => {
       // The committed fixture's import path differs on purpose (this
       // project's own src/config.js, not a real project's generated
       // file) - normalize both sides before comparing everything else.
-      .replace('import type { Config } from "../../../src/config.js";', 'import type { Config } from "./archstrict.generated.js";');
+      .replace('import type { Config } from "../../../src/config.js";', 'import type { Config } from "./archstrict.types.js";');
     expect(fresh).toBe(committed);
   });
 });
@@ -115,7 +115,7 @@ describe("convert-vscode-layering-config.mjs", () => {
     const fresh = regenerate("convert-vscode-layering-config.mjs", "vscode-code-layering.json");
     const committed = readFileSync(join(VENDORED, "vscode-generated.config.ts"), "utf8").replace(
       'import type { Config } from "../../../src/config.js";',
-      'import type { Config } from "./archstrict.generated.js";',
+      'import type { Config } from "./archstrict.types.js";',
     );
     expect(fresh).toBe(committed);
   });

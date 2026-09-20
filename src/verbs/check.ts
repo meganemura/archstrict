@@ -130,7 +130,7 @@ const REQUIRED_FIELDS = ["declaredModules", "because"] as const;
 // fresh module; identical content correctly reuses the cache.
 //
 // Constraint this puts on a config file: its only import must be a
-// type-only one (`import type { Config } from "./archstrict.generated.js"`,
+// type-only one (`import type { Config } from "./archstrict.types.js"`,
 // exactly what init writes). `verbatimModuleSyntax` erases a type-only
 // import completely, leaving no import statement in the transpiled output
 // for the data: URL to resolve. A plain `import { Config } from "..."` (no
@@ -150,7 +150,7 @@ export async function loadConfig(configPath: string): Promise<Config> {
   });
   if (/^\s*import\b/m.test(outputText)) {
     throw new Error(
-      `${configPath} may only import types from "./archstrict.generated.js" - use \`import type\`, not \`import\``,
+      `${configPath} may only import types from "./archstrict.types.js" - use \`import type\`, not \`import\``,
     );
   }
   const dataUrl = `data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`;

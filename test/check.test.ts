@@ -42,7 +42,7 @@ describe("loadConfig", () => {
       const configPath = join(root, "archstrict.config.ts");
       writeFileSync(
         configPath,
-        `import { Config } from "./archstrict.generated.js";\n` +
+        `import { Config } from "./archstrict.types.js";\n` +
           `export default { modules: "src/*", kinds: { flat: "src/*" }, because: "test" } satisfies Config;\n`,
       );
       await expect(loadConfig(configPath)).rejects.toThrow(/may only import types/);
@@ -65,7 +65,7 @@ describe("loadConfig", () => {
 
       writeFileSync(
         configPath,
-        `import type { Config } from "./archstrict.generated.js";\n` +
+        `import type { Config } from "./archstrict.types.js";\n` +
           `export default { declaredModules: [{ name: "app", glob: "src/app/**", surface: "index.ts" }], strict: ["app"], because: "test" } satisfies Config;\n`,
       );
       const second = await loadConfig(configPath);
@@ -82,7 +82,7 @@ describe("loadConfig", () => {
       const configPath = join(root, "archstrict.config.ts");
       writeFileSync(
         configPath,
-        `import type { Config } from "./archstrict.generated.js";\n` +
+        `import type { Config } from "./archstrict.types.js";\n` +
           `export default { declaredModules: [{ name: "app", glob: "src/app/**", surface: "index.ts" }], edges: [{ rule: "order" }], because: "test" } satisfies Config;\n`,
       );
       await expect(loadConfig(configPath)).rejects.toThrow(/config\.edges must be an object.*not an array/);
@@ -98,7 +98,7 @@ describe("loadConfig", () => {
       const configPath = join(root, "archstrict.config.ts");
       writeFileSync(
         configPath,
-        `import type { Config } from "./archstrict.generated.js";\n` +
+        `import type { Config } from "./archstrict.types.js";\n` +
           `export default { declaredModules: [{ name: "app", glob: "src/app/**", surface: "index.ts" }], ` +
           `edges: { order: [{ tagNamespace: "layer", sequence: ["a", "b"], direction: "downward-only", because: "test" }] }, because: "test" } satisfies Config;\n`,
       );
@@ -115,7 +115,7 @@ describe("loadConfig", () => {
       const configPath = join(root, "archstrict.config.ts");
       writeFileSync(
         configPath,
-        `import type { Config } from "./archstrict.generated.js";\n` +
+        `import type { Config } from "./archstrict.types.js";\n` +
           `export default { declaredModules: [{ name: "app", glob: "src/app/**", surface: "index.ts" }], ` +
           `edges: { order: [{ tagNamespace: "layer", sequence: { "": ["a", "b"] }, direction: "downward-only", bogusField: true, because: "test" }] }, because: "test" } satisfies Config;\n`,
       );
@@ -132,7 +132,7 @@ describe("loadConfig", () => {
       const configPath = join(root, "archstrict.config.ts");
       writeFileSync(
         configPath,
-        `import type { Config } from "./archstrict.generated.js";\n` +
+        `import type { Config } from "./archstrict.types.js";\n` +
           `export default { declaredModules: [{ name: "app", glob: "src/app/**", surface: "index.ts" }], ` +
           `classify: [{ glob: "src/app/**", tags: ["kind:app"] }], ` +
           `edges: { allowDeny: [{ source: "kind:app", targetNamespace: "kind", allow: [], because: "test" }], ` +
@@ -341,7 +341,7 @@ describe("check", () => {
       );
       writeFileSync(
         join(root, "archstrict.config.ts"),
-        `import type { Config } from "./archstrict.generated.js";\n` +
+        `import type { Config } from "./archstrict.types.js";\n` +
           `export default {\n` +
           `  declaredModules: [{ name: "app", glob: "src/app/**", surface: "index.ts" }, { name: "shared", glob: "src/shared/**", surface: "index.ts" }],\n` +
           `  exclude: ["*.ts"],\n` +

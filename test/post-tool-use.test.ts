@@ -61,12 +61,12 @@ describe("post-tool-use hook", () => {
       const importer = join(root, "src", "app", "importer.ts");
       writeFileSync(importer, "import { shared } from \"../shared/module.ts\";\nexport const x = shared;\n");
       writeFileSync(
-        join(root, "archstrict.generated.ts"),
+        join(root, "archstrict.types.ts"),
         "export type ModuleName = \"app\" | \"shared\";\nexport type Config = { surface?: string; declaredModules: readonly { name: string; glob: string; surface: string }[]; because: string };\n",
       );
       writeFileSync(
         join(root, "archstrict.config.ts"),
-        "import type { Config } from \"./archstrict.generated.js\";\nexport default { declaredModules: [{ name: \"app\", glob: \"src/app/**\", surface: \"index.ts\" }, { name: \"shared\", glob: \"src/shared/**\", surface: \"index.ts\" }], because: \"test\" } satisfies Config;\n",
+        "import type { Config } from \"./archstrict.types.js\";\nexport default { declaredModules: [{ name: \"app\", glob: \"src/app/**\", surface: \"index.ts\" }, { name: \"shared\", glob: \"src/shared/**\", surface: \"index.ts\" }], because: \"test\" } satisfies Config;\n",
       );
       installArchstrictBin(root);
 
@@ -90,12 +90,12 @@ describe("post-tool-use hook", () => {
       const clean = join(root, "src", "app", "module.ts");
       writeFileSync(clean, "export const app = 1;\n");
       writeFileSync(
-        join(root, "archstrict.generated.ts"),
+        join(root, "archstrict.types.ts"),
         "export type ModuleName = \"app\";\nexport type Config = { surface?: string; declaredModules: readonly { name: string; glob: string; surface: string }[]; because: string };\n",
       );
       writeFileSync(
         join(root, "archstrict.config.ts"),
-        "import type { Config } from \"./archstrict.generated.js\";\nexport default { declaredModules: [{ name: \"app\", glob: \"src/app/**\", surface: \"index.ts\" }], because: \"test\" } satisfies Config;\n",
+        "import type { Config } from \"./archstrict.types.js\";\nexport default { declaredModules: [{ name: \"app\", glob: \"src/app/**\", surface: \"index.ts\" }], because: \"test\" } satisfies Config;\n",
       );
       installArchstrictBin(root);
 
