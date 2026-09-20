@@ -4,10 +4,10 @@
 // an anonymous type literal — checked against which properties were drawn
 // to reference an internal-only type, not just a leak count. Covers the
 // definition's own three walk targets (a direct property, a union member,
-// an index signature's value type) plus one level of nesting, not just a
-// bare property — the fixture-based example test already covers those
-// same three walk targets once each; this draws a random mix of all of
-// them together.
+// an index signature's value type) plus one level of nesting and a generic
+// type reference's own type argument (Promise<T>), not just a bare
+// property — the fixture-based example test already covers each shape
+// once; this draws a random mix of all of them together.
 import { describe, test } from "vitest";
 import assert from "node:assert/strict";
 import * as hegel from "@hegeldev/hegel";
@@ -32,6 +32,7 @@ const PROPERTY_KINDS = [
   "internal-in-union",
   "internal-in-index",
   "internal-nested",
+  "internal-in-type-argument",
   "re-exported",
   "anonymous",
 ] as const;
@@ -58,6 +59,7 @@ function writeProject(root: string, kinds: readonly PropertyKind[]): void {
     if (kind === "internal-in-union") return `  prop${i}: Internal${i} | string;`;
     if (kind === "internal-in-index") return `  prop${i}: { [k: string]: Internal${i} };`;
     if (kind === "internal-nested") return `  prop${i}: { inner: Internal${i} };`;
+    if (kind === "internal-in-type-argument") return `  prop${i}: Promise<Internal${i}>;`;
     return `  prop${i}: Internal${i};`;
   });
 
@@ -111,6 +113,7 @@ describe("checkTypeLeaks (property)", () => {
             "internal-in-union",
             "internal-in-index",
             "internal-nested",
+            "internal-in-type-argument",
           ]);
           const expectedLeakedTypes = kinds
             .map((kind, i) => (leaksThroughThisKind.has(kind) ? `Internal${i}` : undefined))

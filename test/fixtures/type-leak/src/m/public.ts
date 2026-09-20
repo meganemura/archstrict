@@ -33,3 +33,16 @@ export function returnsPlain(): { count: number } {
 export interface Holder<T extends SecretInternal> {
   value: T;
 }
+
+// Structural leak reached through a type argument, not a property: the
+// wrapper type (Wrapper<T>) has no property whose own type IS
+// SecretInternal - the argument only shows up if a type reference's own
+// type arguments are walked, not just its properties.
+export type WrapsViaTypeArgument = { later: Promise<SecretInternal> };
+
+// One real violation, not two: an optional array property's own type is a
+// union (SecretInternal[] | undefined), and the array's own type argument
+// and its index signature's value type name the identical declaration -
+// exactly nukadoko's own `used?: UsedEntryWithResult[]` shape, which
+// produced a duplicate finding before dedupe() was added.
+export type WrapsViaOptionalArray = { entries?: SecretInternal[] };

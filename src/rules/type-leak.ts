@@ -27,6 +27,13 @@ function declaredIn(symbol: ts.Symbol): string | undefined {
   return symbol.getDeclarations()?.[0]?.getSourceFile().fileName;
 }
 
+// A generic type reference (Promise<Internal>, Map<K, Internal>,
+// Array<Internal>) is an Object type carrying the Reference object flag -
+// a plain object literal type carries Object but not Reference.
+function isTypeReference(type: ts.Type): type is ts.TypeReference {
+  return (type.flags & ts.TypeFlags.Object) !== 0 && ((type as ts.ObjectType).objectFlags & ts.ObjectFlags.Reference) !== 0;
+}
+
 // Detects every structural type leak reachable from `entrySf`'s own
 // exports - the core algorithm, independent of archstrict's module
 // concept, so it can run both per-module (checkTypeLeaks below) and
@@ -87,7 +94,18 @@ export function detectTypeLeaks(checker: ts.TypeChecker, entrySf: ts.SourceFile,
   // shape, not the alias a consumer actually sees on hover - checking
   // `aliasSymbol` first matches what a consumer's own experience of the
   // type is.
-  function checkType(type: ts.Type, exportedAs: string, via: Via, position: { line: number; column: number }): void {
+  //
+  // `seen` (shared with the walkStructural call that follows each
+  // checkType call, at every call site) is an optimization only, skipping
+  // a type object already flagged or already walked within this exported
+  // symbol's own recursion - it does not by itself guarantee no duplicate
+  // leak in the output, since TS does not always hand back the identical
+  // `ts.Type` object for what is conceptually the same declaration reached
+  // two structural ways (measured directly: an array's own type argument
+  // and its index signature's value type). `dedupe()` below, over the
+  // fully collected `leaks`, is what actually guarantees that.
+  function checkType(type: ts.Type, exportedAs: string, via: Via, position: { line: number; column: number }, seen: Set<ts.Type>): void {
+    if (seen.has(type)) return;
     const sym = type.aliasSymbol ?? type.getSymbol();
     if (sym === undefined) return;
     const internal = isInternal(sym);
@@ -97,11 +115,15 @@ export function detectTypeLeaks(checker: ts.TypeChecker, entrySf: ts.SourceFile,
   }
 
   // Walks every type reachable from `type`'s own shape: its properties,
-  // its index signatures' value types, and (for a union) every
-  // constituent - "any property, anywhere in an exported type's shape"
-  // requires all three, not just direct properties one level down.
-  // `seen` guards against a type that references itself, directly or
-  // through a cycle of aliases.
+  // its index signatures' value types, its own type arguments if it's a
+  // generic type reference (Promise<Internal>, Map<K, Internal>,
+  // Array<Internal> - the wrapper's own properties don't structurally
+  // contain the argument type the way a plain property does, so this is
+  // its own walk target, not covered by the properties loop below), and
+  // (for a union) every constituent - "any property, anywhere in an
+  // exported type's shape" requires all of these, not just direct
+  // properties one level down. `seen` guards against a type that
+  // references itself, directly or through a cycle of aliases.
   function walkStructural(
     type: ts.Type,
     exportedAs: string,
@@ -115,22 +137,29 @@ export function detectTypeLeaks(checker: ts.TypeChecker, entrySf: ts.SourceFile,
 
     if (type.isUnion()) {
       for (const member of type.types) {
-        checkType(member, exportedAs, via, position);
+        checkType(member, exportedAs, via, position, seen);
         walkStructural(member, exportedAs, via, position, depth - 1, seen);
       }
       return;
+    }
+
+    if (isTypeReference(type)) {
+      for (const typeArg of checker.getTypeArguments(type)) {
+        checkType(typeArg, exportedAs, via, position, seen);
+        walkStructural(typeArg, exportedAs, via, position, depth - 1, seen);
+      }
     }
 
     for (const prop of checker.getPropertiesOfType(type)) {
       const decl = prop.valueDeclaration ?? prop.getDeclarations()?.[0];
       if (decl === undefined) continue;
       const propType = checker.getTypeOfSymbolAtLocation(prop, decl);
-      checkType(propType, exportedAs, via, position);
+      checkType(propType, exportedAs, via, position, seen);
       walkStructural(propType, exportedAs, via, position, depth - 1, seen);
     }
 
     for (const indexInfo of checker.getIndexInfosOfType(type)) {
-      checkType(indexInfo.type, exportedAs, via, position);
+      checkType(indexInfo.type, exportedAs, via, position, seen);
       walkStructural(indexInfo.type, exportedAs, via, position, depth - 1, seen);
     }
   }
@@ -171,8 +200,9 @@ export function detectTypeLeaks(checker: ts.TypeChecker, entrySf: ts.SourceFile,
           const constraintNode = tp.constraint ?? tp.default;
           if (constraintNode === undefined) continue;
           const constraintType = checker.getTypeAtLocation(constraintNode);
-          checkType(constraintType, symbol.name, "generic-parameter", position);
-          walkStructural(constraintType, symbol.name, "generic-parameter", position, 2, new Set());
+          const constraintSeen = new Set<ts.Type>();
+          checkType(constraintType, symbol.name, "generic-parameter", position, constraintSeen);
+          walkStructural(constraintType, symbol.name, "generic-parameter", position, 2, constraintSeen);
         }
       }
       continue;
@@ -189,12 +219,44 @@ export function detectTypeLeaks(checker: ts.TypeChecker, entrySf: ts.SourceFile,
       // The return type itself may BE an internal declaration, not
       // merely contain one nested in a property - walkStructural only
       // inspects a type's own properties, never the type itself.
-      checkType(returnType, symbol.name, via, position);
-      walkStructural(returnType, symbol.name, via, position, 2, new Set());
+      const returnSeen = new Set<ts.Type>();
+      checkType(returnType, symbol.name, via, position, returnSeen);
+      walkStructural(returnType, symbol.name, via, position, 2, returnSeen);
     }
   }
 
-  return leaks;
+  return dedupe(leaks);
+}
+
+// The `seen` guard inside walkStructural/checkType avoids re-flagging the
+// exact same `ts.Type` OBJECT twice within one exported symbol's own walk,
+// but TS does not always hand back that same object for what is
+// conceptually the same type reached two structural ways - measured
+// directly on nukadoko's own `used?: UsedEntryWithResult[]`: the array's
+// own type argument and its index signature's value type resolve to two
+// distinct `ts.Type` instances for the identical declaration, so object
+// identity alone under-deduplicates. A content key (which export, which
+// via, which internal declaration) is what a reader actually means by
+// "the same finding" regardless of which internal TS object produced it,
+// and collapsing to that key also keeps a todo fingerprint
+// (rule+path+evidence) from ever getting two entries for what reads as
+// one violation. The key deliberately omits line/column: position is
+// always the exported symbol's own declaration site, identical for every
+// leak naming that `exportedAs`, so it adds nothing to distinguish by
+// today - but if `evidence` ever grows a property-path breadcrumb (rule
+// 6's own known gap: two distinct properties leaking the same internal
+// type today read identically), this key would need one too, or it would
+// start collapsing genuinely different findings instead of duplicates.
+function dedupe(leaks: readonly LeakFinding[]): LeakFinding[] {
+  const seen = new Set<string>();
+  const result: LeakFinding[] = [];
+  for (const leak of leaks) {
+    const key = `${leak.exportedAs}\n${leak.via}\n${leak.internalType}\n${leak.internalFile}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(leak);
+  }
+  return result;
 }
 
 export type Violation = {

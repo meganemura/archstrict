@@ -7,12 +7,12 @@ import { checkTypeLeaks } from "../src/rules/type-leak.js";
 const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), "fixtures/type-leak");
 
 describe("checkTypeLeaks", () => {
-  test("flags a structural leak, a structural leak reached through a re-export, an inferred-return leak, and a generic-parameter leak; not a re-exported type, an annotated plain return, or an anonymous literal", () => {
+  test("flags a structural leak, a structural leak reached through a re-export, a structural leak reached through a type argument, an inferred-return leak, and a generic-parameter leak; not a re-exported type, an annotated plain return, or an anonymous literal", () => {
     const graph = buildModuleGraph({ projectRoot: FIXTURE, modulesGlob: "src/*", surface: "public.ts" });
     expect(graph.unresolvedSpecifierCount).toBe(0);
 
     const violations = checkTypeLeaks(graph);
-    expect(violations).toHaveLength(4);
+    expect(violations).toHaveLength(6);
 
     const byExported = new Map(violations.map((v) => [v.evidence, v]));
     const structural = [...byExported.values()].find((v) => v.evidence.startsWith("'WrapsInternal'"));
@@ -37,6 +37,21 @@ describe("checkTypeLeaks", () => {
     const genericParameter = [...byExported.values()].find((v) => v.evidence.startsWith("'Holder'"));
     expect(genericParameter).toBeDefined();
     expect(genericParameter?.evidence).toContain("generic-parameter");
+
+    // WrapsViaTypeArgument has no property whose own type IS
+    // SecretInternal - it only shows up in Promise<SecretInternal>'s own
+    // type argument, not in any property's direct type.
+    const throughTypeArgument = [...byExported.values()].find((v) => v.evidence.startsWith("'WrapsViaTypeArgument'"));
+    expect(throughTypeArgument).toBeDefined();
+    expect(throughTypeArgument?.evidence).toContain("'SecretInternal'");
+
+    // An optional array property's own type argument and its index
+    // signature's value type both name SecretInternal - exactly one
+    // violation, not two, even though the walk reaches the declaration
+    // two structural ways.
+    const throughOptionalArray = violations.filter((v) => v.evidence.startsWith("'WrapsViaOptionalArray'"));
+    expect(throughOptionalArray).toHaveLength(1);
+    expect(throughOptionalArray[0]?.evidence).toContain("'SecretInternal'");
 
     // AlsoFine re-exports InternalRecord by name right in public.ts, so a
     // consumer has a name for it, and returnsPlain's annotated return type
