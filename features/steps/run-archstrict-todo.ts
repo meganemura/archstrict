@@ -16,13 +16,9 @@ export default defineStep({
   }),
   from: { root: [setupNukadokoScratch, "root"] },
   rationale:
-    "todo has no --json flag (only check does), so its plain-text output is parsed here rather than adding a flag this ticket doesn't ask for; the two possible lines (froze N / pruned N) are mutually exclusive per run, matching todo()'s own firstRun branch.",
+    "archstrict todo --json prints TodoResult's own shape directly, so firstRun/added/pruned are read as real data here, not inferred from which of two possible text lines matched.",
   run({}, { root }) {
-    const stdout = execFileSync(process.execPath, [CLI_PATH, "todo"], { cwd: root, encoding: "utf8" });
-    const froze = /^froze (\d+) violation/m.exec(stdout);
-    const pruned = /^pruned (\d+) stale/m.exec(stdout);
-    if (froze !== null) return { firstRun: true, added: Number(froze[1]), pruned: 0 };
-    if (pruned !== null) return { firstRun: false, added: 0, pruned: Number(pruned[1]) };
-    throw new Error(`archstrict todo's output matched neither expected line: ${stdout}`);
+    const stdout = execFileSync(process.execPath, [CLI_PATH, "todo", "--json"], { cwd: root, encoding: "utf8" });
+    return JSON.parse(stdout);
   },
 });
