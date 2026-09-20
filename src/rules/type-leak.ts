@@ -31,8 +31,8 @@ function declaredIn(symbol: ts.Symbol): string | undefined {
 // exports - the core algorithm, independent of archstrict's module
 // concept, so it can run both per-module (checkTypeLeaks below) and
 // directly against an arbitrary entry file (nukadoko's own src/index.ts,
-// in test/type-leak.test.ts, matching this rule's own promoted-from-spike
-// history).
+// in test/type-leak.nukadoko.test.ts, matching this rule's own
+// promoted-from-spike history).
 export function detectTypeLeaks(checker: ts.TypeChecker, entrySf: ts.SourceFile, boundaryRoot: string): LeakFinding[] {
   const moduleSymbol = checker.getSymbolAtLocation(entrySf);
   if (moduleSymbol === undefined) return [];
