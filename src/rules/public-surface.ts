@@ -10,7 +10,8 @@
 // Boundary: pure predicate over a ModuleGraph's cross-module edges. No I/O,
 // no output formatting (that is the `check` verb's job), no todo handling
 // (that is `todo`'s job).
-import type { Edge, ModuleGraph } from "../module-graph.ts";
+import { compileGlob } from "../classify.js";
+import { toProjectRelativePosix, type Edge, type Module, type ModuleGraph } from "../module-graph.js";
 
 export type Violation = {
   rule: "public-surface-bypass";
@@ -37,12 +38,26 @@ export type Violation = {
 
 const BECAUSE = "a module's public surface is its only public surface; everything else is private";
 
+// A friend exception (ArchUnit's term): the target file is public to
+// exactly the importers `from` matches, private to everyone else - unlike
+// `surface`, which is public to every importer equally. Checked only once
+// a bypass candidate is already known (surface itself didn't match), the
+// same order rule 1's own violation-vs-suppression logic already follows.
+function isExemptedByFriend(edge: Edge, targetModule: Module, rootDir: string): boolean {
+  const targetRel = toProjectRelativePosix(edge.resolvedFile, rootDir);
+  const fromRel = toProjectRelativePosix(edge.fromFile, rootDir);
+  return targetModule.friends.some(
+    (friend) => compileGlob(friend.fileGlob).test(targetRel) && compileGlob(friend.from).test(fromRel),
+  );
+}
+
 export function checkPublicSurfaceBypass(graph: ModuleGraph): Violation[] {
   const violations: Violation[] = [];
   for (const edge of graph.crossModuleEdges) {
     const targetModule = graph.modules.get(edge.toModule!);
     if (targetModule === undefined) continue; // resolved outside any module; not this rule's concern
     if (targetModule.surfaceFiles.includes(edge.resolvedFile)) continue; // reached the public surface itself
+    if (isExemptedByFriend(edge, targetModule, graph.rootDir)) continue;
 
     violations.push(violationFor(edge, targetModule.name, targetModule.surfaceFiles, targetModule.surfaceName));
   }

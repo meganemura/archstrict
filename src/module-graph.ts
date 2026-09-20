@@ -91,6 +91,15 @@ export type Module = {
   // a specific module overrides it (a real, measured case: a package
   // whose own surface is "types.d.ts", not the project's own default).
   surfaceName: string;
+  // Rule 1's own "friend" exception - `fileGlob` is a project-relative
+  // glob (resolved from the config's own module-relative `file`, the same
+  // way `surfaceFiles` resolves `surface`), public to exactly the
+  // importers `from` matches. Unlike `surfaceFiles`, this is never
+  // resolved to a concrete file list here: rule 1 compiles both globs
+  // itself, against the one specific edge it's judging, since a friend
+  // exception's `from` side needs the same per-edge glob test `surface`
+  // never does.
+  friends: { fileGlob: string; from: string; because: string }[];
 };
 
 // A module declared directly in config (v1), replacing v0's index.ts-
@@ -104,6 +113,7 @@ export type DeclaredModule = {
   name: string;
   glob: string;
   surface: string;
+  friends?: readonly { file: string; from: string; because: string }[];
 };
 
 export type ModuleGraph = {
@@ -189,6 +199,7 @@ function discoverModules(projectRoot: string, glob: string, surface: string): Ma
       files: [],
       surfaceFiles: ts.sys.fileExists(surfacePath) ? [surfacePath] : [],
       surfaceName: surface,
+      friends: [], // v0 discovery has no declaredModules entry to carry a friends list
     });
   }
   return modules;
@@ -328,7 +339,18 @@ function buildDeclaredModules(
   const modules = new Map<string, Module>(
     declaredModules.map((dm) => [
       dm.name,
-      { name: dm.name, dir: join(projectRoot, moduleGlobBaseDir(dm.glob)), files: [], surfaceFiles: [], surfaceName: dm.surface },
+      {
+        name: dm.name,
+        dir: join(projectRoot, moduleGlobBaseDir(dm.glob)),
+        files: [],
+        surfaceFiles: [],
+        surfaceName: dm.surface,
+        friends: (dm.friends ?? []).map((f) => ({
+          fileGlob: `${moduleGlobBaseDir(dm.glob)}/${f.file}`.replace(/\/{2,}/g, "/"),
+          from: f.from,
+          because: f.because,
+        })),
+      },
     ]),
   );
 

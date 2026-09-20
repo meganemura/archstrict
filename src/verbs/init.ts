@@ -102,6 +102,11 @@ export type Config = {
     name: ModuleName;
     glob: string;
     surface: string;
+    // Rule 1's own "friend" exception: \`file\` (relative to this module,
+    // may itself be a glob) is public to exactly the importers \`from\`
+    // (a project-relative glob) matches, private to everyone else -
+    // unlike \`surface\`, which is public to every importer equally.
+    friends?: readonly { file: string; from: string; because: string }[];
   }[];
   // A directory that must hold no code at all (archspec's own
   // "empty component" idea) - a violation is any file matching the glob.

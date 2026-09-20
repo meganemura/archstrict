@@ -19,9 +19,16 @@
 // appears, at Config's own top-level indent, in what `archstrict init`
 // really writes to disk - `tsc` alone can't make sure a maintainer who
 // updated the list above also updated generatedFileContents's own
-// template string, so this is what forces that second step. Neither
-// layer reaches a field nested inside `edges`'s own allowDeny/order/point
-// shapes - that stays a maintainer's own responsibility, same as before.
+// template string, so this is what forces that second step.
+//
+// A third drift hit a narrower target: a field added to ONE
+// declaredModules entry's own shape (a `friends` field, not a new
+// top-level Config field) - the two layers above don't reach it, since
+// both only check Config's own top-level keys. The same two-layer
+// pattern, scoped to DeclaredModuleEntry instead of Config, closes that
+// instance below. `edges`'s own nested allowDeny/order/point shapes
+// remain the one class neither this file nor the two above reach - that
+// stays a maintainer's own responsibility.
 import { describe, expect, test } from "vitest";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -72,6 +79,21 @@ const _checkFieldsMatch: AssertKeysMatch<
   Exclude<keyof Config, "configPath">
 > = true;
 
+// A second, narrower instance of the same class of drift: a field added to
+// ONE declaredModules entry's own shape (not a new top-level Config field)
+// can drift the same way - this is exactly the case a `friends` field on
+// declaredModules[] hit, and neither layer above reaches it (both only
+// check Config's own top-level keys). Mirrors the two layers above, scoped
+// to DeclaredModuleEntry instead of Config.
+type DeclaredModuleEntry = NonNullable<Config["declaredModules"]>[number];
+
+const EXPECTED_DECLARED_MODULE_FIELDS = ["name", "glob", "surface", "friends"] as const;
+
+const _checkDeclaredModuleFieldsMatch: AssertKeysMatch<
+  (typeof EXPECTED_DECLARED_MODULE_FIELDS)[number],
+  keyof DeclaredModuleEntry
+> = true;
+
 describe("init's generated Config type stays in sync with the real Config", () => {
   test("every real Config field (other than configPath) actually appears in what a fresh archstrict init writes to disk", () => {
     const root = mkdtempSync(join(tmpdir(), "archstrict-generated-type-drift-"));
@@ -91,6 +113,15 @@ describe("init's generated Config type stays in sync with the real Config", () =
           new RegExp(`^  ${field}\\??:`, "m"),
         );
       }
+
+      for (const field of EXPECTED_DECLARED_MODULE_FIELDS) {
+        // Anchored to exactly four spaces - a declaredModules entry's own
+        // indent one level inside Config's own two-space indent.
+        expect(
+          generated,
+          `expected '${field}' to appear as a field on a declaredModules entry in the generated Config type`,
+        ).toMatch(new RegExp(`^ {4}${field}\\??:`, "m"));
+      }
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -102,3 +133,4 @@ describe("init's generated Config type stays in sync with the real Config", () =
 // read" without disabling the check itself.
 void _checkOmission;
 void _checkFieldsMatch;
+void _checkDeclaredModuleFieldsMatch;

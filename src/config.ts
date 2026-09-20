@@ -82,6 +82,16 @@ export type Config = {
     name: string;
     glob: string;
     surface: string;
+    // Rule 1's own "friend" exception (ArchUnit's term): `file` (relative
+    // to this module, may itself be a glob) is public to exactly the
+    // importers `from` (a project-relative glob) matches, private to
+    // everyone else - unlike `surface`, which is public to every importer
+    // equally. A real, motivating case: a package's own semi-private
+    // internal-utilities file meant for one specific group of consumers,
+    // not the general public and not fully private either. `because` is
+    // mandatory, the same convention every other exception field here
+    // already follows.
+    friends?: readonly { file: string; from: string; because: string }[];
   }[];
 
   // archspec's own "empty component" concept: a directory that must stay
