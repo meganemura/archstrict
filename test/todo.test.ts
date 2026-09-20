@@ -189,6 +189,59 @@ describe("todo", () => {
     });
   });
 
+  test("a frozen type-leak entry survives a new exported symbol referencing the same already-known internal type", async () => {
+    await withTempProject(async (root) => {
+      mkdirSync(join(root, "src", "m"), { recursive: true });
+      writeFileSync(join(root, "src", "m", "internal.ts"), "export interface Hidden { x: number; }\n");
+      writeFileSync(
+        join(root, "src", "m", "index.ts"),
+        'import type { Hidden } from "./internal.js";\nexport type A = { h: Hidden };\n',
+      );
+      init(root);
+      await todo(root); // freezes the one leak (Hidden, referenced by A)
+
+      const beforeTodoFile = JSON.parse(
+        readFileSync(join(root, "src", "m", "archstrict.todo.json"), "utf8"),
+      ) as { entries: { fingerprint: string; rule: string }[] };
+      expect(beforeTodoFile.entries).toHaveLength(1);
+      expect(beforeTodoFile.entries[0]!.rule).toBe("type-leak");
+
+      // A second real export starts referencing the SAME internal type -
+      // a real code change, not a fix and not a new leak (Hidden still
+      // has no public name), just one more caller of the known one.
+      writeFileSync(
+        join(root, "src", "m", "index.ts"),
+        'import type { Hidden } from "./internal.js";\nexport type A = { h: Hidden };\nexport type B = { h: Hidden };\n',
+      );
+
+      const after = await check(root);
+      expect(after.violations.some((v) => v.rule === "stale-todo")).toBe(false);
+      expect(after.violations.some((v) => v.rule === "type-leak")).toBe(false);
+      expect(after.todo).toBe(1); // still suppressed - same fingerprint as before
+
+      // Pruning still works normally for a GENUINELY different leak: add a
+      // second, distinct internal type nothing exports by name, and
+      // confirm todo can freeze that one as its own, separate entry.
+      writeFileSync(
+        join(root, "src", "m", "internal.ts"),
+        "export interface Hidden { x: number; }\nexport interface OtherHidden { y: number; }\n",
+      );
+      writeFileSync(
+        join(root, "src", "m", "index.ts"),
+        'import type { Hidden, OtherHidden } from "./internal.js";\n' +
+          "export type A = { h: Hidden };\nexport type B = { h: Hidden };\nexport type C = { o: OtherHidden };\n",
+      );
+      const secondTodoResult = await todo(root);
+      expect(secondTodoResult.firstRun).toBe(false);
+      expect(secondTodoResult.added).toBe(0); // todo never adds after the first run, even for a real new leak
+
+      const afterNewLeak = await check(root);
+      expect(afterNewLeak.violations.filter((v) => v.rule === "type-leak")).toHaveLength(1);
+      expect(afterNewLeak.violations[0]!.evidence).toContain("OtherHidden");
+      expect(afterNewLeak.todo).toBe(1); // the original Hidden leak, still suppressed
+    });
+  });
+
   test("a stale todo entry (hand-edited to no longer match) is its own violation", async () => {
     await withTempProject(async (root) => {
       writeBypassProject(root);

@@ -17,4 +17,32 @@ describe("fingerprintOf", () => {
     const b = fingerprintOf({ rule: "public-surface-bypass", path: "/src/app/b.ts", evidence: "x" });
     expect(a).not.toBe(b);
   });
+
+  test("a type-leak violation's fingerprint excludes the mutable 'referenced by' suffix, so one more caller of an already-known leak doesn't reopen it", () => {
+    const before = fingerprintOf({
+      rule: "type-leak",
+      path: "/src/m/index.ts",
+      evidence: "'Internal', declared in 'src/m/hidden.ts', is never exported by name from module 'm' - referenced by 'A'",
+    });
+    const after = fingerprintOf({
+      rule: "type-leak",
+      path: "/src/m/index.ts",
+      evidence: "'Internal', declared in 'src/m/hidden.ts', is never exported by name from module 'm' - referenced by 'A', 'B'",
+    });
+    expect(after).toBe(before);
+  });
+
+  test("a type-leak violation's fingerprint still distinguishes a genuinely different internal type", () => {
+    const a = fingerprintOf({
+      rule: "type-leak",
+      path: "/src/m/index.ts",
+      evidence: "'Internal', declared in 'src/m/hidden.ts', is never exported by name from module 'm' - referenced by 'A'",
+    });
+    const b = fingerprintOf({
+      rule: "type-leak",
+      path: "/src/m/index.ts",
+      evidence: "'OtherInternal', declared in 'src/m/hidden.ts', is never exported by name from module 'm' - referenced by 'A'",
+    });
+    expect(a).not.toBe(b);
+  });
 });

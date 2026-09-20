@@ -9,6 +9,7 @@
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
+import { REFERENCED_BY_MARKER } from "./rules/type-leak.js";
 
 export type TodoEntry = {
   fingerprint: string;
@@ -32,8 +33,28 @@ export type TodoEntry = {
 // (the importing file, or the config file), so only "cycle" is excluded.
 // Hashed so the todo file's own key is short and stable regardless of how
 // long the evidence text is.
+//
+// A second exception, the same reasoning applied to a different rule:
+// type-leak's own evidence embeds a mutable, informational list of every
+// exported symbol CURRENTLY referencing a leaked internal type, after
+// REFERENCED_BY_MARKER - not part of the leak's own identity (module,
+// internal type, and its declaring file already fully identify it, and
+// all three appear in evidence's own stable prefix, before the marker).
+// Without stripping it, one more real caller of an already-frozen leak
+// appearing would change the fingerprint and reopen a frozen entry for a
+// leak that hasn't newly appeared - measured directly: freezing a leak
+// referenced by one export, then adding a second real export referencing
+// the same internal type, produced both a stale-todo violation for the
+// old entry and a fresh, unfrozen one for what is still the same leak.
+function stableEvidence(rule: string, evidence: string): string {
+  if (rule !== "type-leak") return evidence;
+  const i = evidence.indexOf(REFERENCED_BY_MARKER);
+  return i === -1 ? evidence : evidence.slice(0, i);
+}
+
 export function fingerprintOf(v: { rule: string; path: string; evidence: string }): string {
-  const key = v.rule === "cycle" ? `${v.rule}\n${v.evidence}` : `${v.rule}\n${v.path}\n${v.evidence}`;
+  const evidence = stableEvidence(v.rule, v.evidence);
+  const key = v.rule === "cycle" ? `${v.rule}\n${evidence}` : `${v.rule}\n${v.path}\n${evidence}`;
   return createHash("sha256").update(key).digest("hex").slice(0, 12);
 }
 

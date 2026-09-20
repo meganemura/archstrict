@@ -312,6 +312,16 @@ const BECAUSE = "a consumer needs a name for every type it receives from a publi
 // evidence line stops being readable long before that.
 const MAX_NAMED_EXPORTS = 10;
 
+// The marker splitting evidence's own stable identity (which internal
+// type, declared where, leaked from which module) from its mutable,
+// informational suffix (which exports currently reach it - can grow or
+// shrink as the source changes without the leak itself being new or
+// gone). todo-store.ts's own fingerprintOf reads this to keep a frozen
+// entry from reopening every time one more caller of an already-known
+// leak appears - exported so the split lives in one place, not
+// duplicated as a second copy of this exact string.
+export const REFERENCED_BY_MARKER = " - referenced by ";
+
 // One group per (internal type, internal file) - many exported symbols in
 // the same module independently referencing the identical, never-locally-
 // exported declaration is one real leak, not one per referencing export.
@@ -402,7 +412,7 @@ export function checkTypeLeaks(graph: {
         path: group.path,
         line: group.line,
         column: group.column,
-        evidence: `'${group.type}', declared in '${relativeInternalFile}', is never exported by name from module '${name}' - referenced by ${shown}${more}`,
+        evidence: `'${group.type}', declared in '${relativeInternalFile}', is never exported by name from module '${name}'${REFERENCED_BY_MARKER}${shown}${more}`,
         because: BECAUSE,
         next: `export '${group.type}' by name from ${group.path} (it's declared in ${relativeInternalFile}), or change the referencing exports to not expose it`,
         todoModule: name,
