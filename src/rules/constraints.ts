@@ -36,6 +36,22 @@ export type ConstraintViolation = {
   todoModule: string;
 };
 
+// One entry per configured allowDeny/order/point rule, regardless of
+// whether it ever violates - `evaluated` is how many real edges reached
+// the point where this specific rule could have found a violation (passed
+// its own edge filters, its source/from side, and - for allowDeny/order -
+// genuinely had a tag in the rule's own target namespace to judge). A
+// rule whose own source/target combination never applies to any real
+// edge is not "clean" - checkEmptyRuleSet (rule 4) reports it as its own
+// finding rather than a silent 0. `identifier` is a human-readable name
+// for that violation's evidence text, not a stored config field (none of
+// the three rule shapes has its own name).
+export type EdgeRuleCoverage = {
+  kind: "allowDeny" | "order" | "point";
+  identifier: string;
+  evaluated: number;
+};
+
 type AllowDenyRule = NonNullable<Config["edges"]>["allowDeny"] extends readonly (infer R)[] | undefined ? R : never;
 type OrderRule = NonNullable<Config["edges"]>["order"] extends readonly (infer R)[] | undefined ? R : never;
 type PointRule = NonNullable<Config["edges"]>["point"] extends readonly (infer R)[] | undefined ? R : never;
@@ -95,11 +111,15 @@ function isExemptedByGlobPair(
   );
 }
 
-export function checkAllowDeny(graph: ModuleGraph, config: Config): ConstraintViolation[] {
+function computeAllowDeny(
+  graph: ModuleGraph,
+  config: Config,
+): { violations: ConstraintViolation[]; coverage: EdgeRuleCoverage[] } {
   const rules: readonly AllowDenyRule[] = config.edges?.allowDeny ?? [];
-  if (rules.length === 0) return [];
   const rootDir = graph.rootDir;
   const violations: ConstraintViolation[] = [];
+  const evaluatedCounts = rules.map(() => 0);
+  if (rules.length === 0) return { violations, coverage: [] };
 
   for (const edge of graph.edges) {
     const sourceTags = classifyFile(toProjectRelativePosix(edge.fromFile, rootDir), config);
@@ -107,15 +127,17 @@ export function checkAllowDeny(graph: ModuleGraph, config: Config): ConstraintVi
     const targetTags = tagsForTarget(edge, config, rootDir);
     if (targetTags.size === 0) continue;
 
-    for (const rule of rules) {
-      if (!matchesEdgeFilters(edge, rule.edgeType, rule.importForm)) continue;
-      if (!sourceTags.has(rule.source)) continue;
-      if (targetTags.has(rule.source)) continue; // same group as source: unconstrained by this rule
-      if (isExemptedByGlobPair(edge, rule.exceptions, rootDir)) continue;
+    rules.forEach((rule, i) => {
+      if (!matchesEdgeFilters(edge, rule.edgeType, rule.importForm)) return;
+      if (!sourceTags.has(rule.source)) return;
+      if (targetTags.has(rule.source)) return; // same group as source: unconstrained by this rule
+      if (isExemptedByGlobPair(edge, rule.exceptions, rootDir)) return;
 
       const namespacePrefix = `${rule.targetNamespace}:`;
       const targetValues = [...targetTags].filter((t) => t.startsWith(namespacePrefix));
-      if (targetValues.length === 0) continue; // no tag in this namespace: not this rule's concern
+      if (targetValues.length === 0) return; // no tag in this namespace: not this rule's concern
+
+      evaluatedCounts[i]!++; // this rule genuinely had a real edge to judge, whatever the verdict below
 
       let violatingTag: string | undefined;
       if (rule.allow !== undefined) {
@@ -125,7 +147,7 @@ export function checkAllowDeny(graph: ModuleGraph, config: Config): ConstraintVi
         const denied = new Set(rule.deny.map((v) => `${namespacePrefix}${v}`));
         violatingTag = targetValues.find((v) => denied.has(v));
       }
-      if (violatingTag === undefined) continue;
+      if (violatingTag === undefined) return;
 
       violations.push({
         rule: "tag-boundary",
@@ -137,9 +159,19 @@ export function checkAllowDeny(graph: ModuleGraph, config: Config): ConstraintVi
         next: `remove this edge, or add '${violatingTag.slice(namespacePrefix.length)}' to '${rule.source}'s allow list in archstrict.config.ts and record why`,
         todoModule: edge.fromModule,
       });
-    }
+    });
   }
-  return violations;
+
+  const coverage = rules.map((rule, i) => ({
+    kind: "allowDeny" as const,
+    identifier: `${rule.source} -> ${rule.targetNamespace}`,
+    evaluated: evaluatedCounts[i]!,
+  }));
+  return { violations, coverage };
+}
+
+export function checkAllowDeny(graph: ModuleGraph, config: Config): ConstraintViolation[] {
+  return computeAllowDeny(graph, config).violations;
 }
 
 // Two different things, confirmed distinct by running against Prisma's own
@@ -168,37 +200,43 @@ function assertSequenceListsValue(
   }
 }
 
-export function checkOrder(graph: ModuleGraph, config: Config): ConstraintViolation[] {
+function computeOrder(
+  graph: ModuleGraph,
+  config: Config,
+): { violations: ConstraintViolation[]; coverage: EdgeRuleCoverage[] } {
   const rules: readonly OrderRule[] = config.edges?.order ?? [];
-  if (rules.length === 0) return [];
   const rootDir = graph.rootDir;
   const violations: ConstraintViolation[] = [];
+  const evaluatedCounts = rules.map(() => 0);
+  if (rules.length === 0) return { violations, coverage: [] };
 
   for (const edge of graph.edges) {
     const sourceTags = classifyFile(toProjectRelativePosix(edge.fromFile, rootDir), config);
     const targetTags = tagsForTarget(edge, config, rootDir);
 
-    for (const rule of rules) {
+    rules.forEach((rule, i) => {
       const namespacePrefix = `${rule.tagNamespace}:`;
       const sourceLayer = [...sourceTags].find((t) => t.startsWith(namespacePrefix));
       const targetLayer = [...targetTags].find((t) => t.startsWith(namespacePrefix));
-      if (sourceLayer === undefined || targetLayer === undefined) continue;
+      if (sourceLayer === undefined || targetLayer === undefined) return;
 
       let withinValue: string | undefined;
       if (rule.within !== undefined) {
         const withinPrefix = `${rule.within}:`;
         const sourceWithin = [...sourceTags].find((t) => t.startsWith(withinPrefix));
         const targetWithin = [...targetTags].find((t) => t.startsWith(withinPrefix));
-        if (sourceWithin === undefined || targetWithin === undefined) continue;
-        if (sourceWithin !== targetWithin) continue; // different scope entirely: this order rule doesn't cross it
+        if (sourceWithin === undefined || targetWithin === undefined) return;
+        if (sourceWithin !== targetWithin) return; // different scope entirely: this order rule doesn't cross it
         withinValue = sourceWithin.slice(withinPrefix.length);
       }
 
       const sequence = sequenceFor(rule, withinValue);
-      if (sequence === undefined) continue; // this within-value has no declared sequence at all: out of scope, not an error
+      if (sequence === undefined) return; // this within-value has no declared sequence at all: out of scope, not an error
 
       assertSequenceListsValue(rule, withinValue, sequence, sourceLayer);
       assertSequenceListsValue(rule, withinValue, sequence, targetLayer);
+
+      evaluatedCounts[i]!++; // this rule genuinely had a real edge, within a real declared sequence, to judge
 
       const sourceIndex = sequence.indexOf(sourceLayer.slice(namespacePrefix.length));
       const targetIndex = sequence.indexOf(targetLayer.slice(namespacePrefix.length));
@@ -208,7 +246,7 @@ export function checkOrder(graph: ModuleGraph, config: Config): ConstraintViolat
       // a later index moves away from core, which is forbidden. Matches
       // dependency-cruiser's own generator: forbidden iff targetIndex >
       // sourceIndex.
-      if (targetIndex <= sourceIndex) continue;
+      if (targetIndex <= sourceIndex) return;
 
       violations.push({
         rule: "tag-order",
@@ -220,16 +258,39 @@ export function checkOrder(graph: ModuleGraph, config: Config): ConstraintViolat
         next: `move this edge to depend only on '${rule.tagNamespace}' values at or before '${sourceLayer.slice(namespacePrefix.length)}' in archstrict.config.ts's sequence, or restructure the code so it does`,
         todoModule: edge.fromModule,
       });
-    }
+    });
   }
-  return violations;
+
+  const coverage = rules.map((rule, i) => ({
+    kind: "order" as const,
+    identifier: `${rule.tagNamespace}${rule.within !== undefined ? ` within ${rule.within}` : ""}`,
+    evaluated: evaluatedCounts[i]!,
+  }));
+  return { violations, coverage };
 }
 
-export function checkPoint(graph: ModuleGraph, config: Config): ConstraintViolation[] {
+export function checkOrder(graph: ModuleGraph, config: Config): ConstraintViolation[] {
+  return computeOrder(graph, config).violations;
+}
+
+// Unlike allowDeny/order (which have an "applicable but allowed" middle
+// state), a point rule's from/to predicates ARE the whole rule - any edge
+// whose from side matches is a real opportunity for this rule to fire,
+// whether or not the to side happens to match as well. So "evaluated"
+// here means "the from predicate matched a real edge", the strongest
+// vacuousness signal point can offer: a from glob/tags that never matches
+// anything real is a rule that can never fire, and a to side that never
+// matches doesn't make the rule vacuous on its own (it may be correctly
+// finding zero forbidden edges among real, matched-from-side candidates).
+function computePoint(
+  graph: ModuleGraph,
+  config: Config,
+): { violations: ConstraintViolation[]; coverage: EdgeRuleCoverage[] } {
   const rules: readonly PointRule[] = config.edges?.point ?? [];
-  if (rules.length === 0) return [];
   const rootDir = graph.rootDir;
   const violations: ConstraintViolation[] = [];
+  const evaluatedCounts = rules.map(() => 0);
+  if (rules.length === 0) return { violations, coverage: [] };
 
   for (const edge of graph.edges) {
     const sourceRel = toProjectRelativePosix(edge.fromFile, rootDir);
@@ -237,10 +298,11 @@ export function checkPoint(graph: ModuleGraph, config: Config): ConstraintViolat
     const targetTags = tagsForTarget(edge, config, rootDir);
     const targetRel = targetRelPathForGlob(edge, rootDir);
 
-    for (const rule of rules) {
-      if (!matchesEdgeFilters(edge, rule.edgeType, rule.importForm)) continue;
-      if (!matchesPredicate(rule.from, sourceRel, sourceTags)) continue;
-      if (!matchesPredicate(rule.to, targetRel, targetTags)) continue;
+    rules.forEach((rule, i) => {
+      if (!matchesEdgeFilters(edge, rule.edgeType, rule.importForm)) return;
+      if (!matchesPredicate(rule.from, sourceRel, sourceTags)) return;
+      evaluatedCounts[i]!++;
+      if (!matchesPredicate(rule.to, targetRel, targetTags)) return;
 
       violations.push({
         rule: "point-rule",
@@ -252,11 +314,35 @@ export function checkPoint(graph: ModuleGraph, config: Config): ConstraintViolat
         next: `remove this edge, or narrow the point rule in archstrict.config.ts if it's too broad`,
         todoModule: edge.fromModule,
       });
-    }
+    });
   }
-  return violations;
+
+  const coverage = rules.map((rule, i) => ({
+    kind: "point" as const,
+    identifier: `${typeof rule.from === "string" ? rule.from : JSON.stringify(rule.from)} -> ${typeof rule.to === "string" ? rule.to : JSON.stringify(rule.to)}`,
+    evaluated: evaluatedCounts[i]!,
+  }));
+  return { violations, coverage };
+}
+
+export function checkPoint(graph: ModuleGraph, config: Config): ConstraintViolation[] {
+  return computePoint(graph, config).violations;
 }
 
 export function checkConstraints(graph: ModuleGraph, config: Config): ConstraintViolation[] {
   return [...checkAllowDeny(graph, config), ...checkOrder(graph, config), ...checkPoint(graph, config)];
+}
+
+// All configured allowDeny/order/point rules, each with how many real
+// edges reached the point where it could have judged one - not just
+// whether it violated. checkEmptyRuleSet (rule 4) uses this to flag a
+// rule that structurally never applies to anything, the same "a rule
+// that checks nothing must not look like a pass" idea rule 4 already
+// applies to classify/declaredModules.
+export function checkEdgesCoverage(graph: ModuleGraph, config: Config): EdgeRuleCoverage[] {
+  return [
+    ...computeAllowDeny(graph, config).coverage,
+    ...computeOrder(graph, config).coverage,
+    ...computePoint(graph, config).coverage,
+  ];
 }

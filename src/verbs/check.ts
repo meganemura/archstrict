@@ -27,9 +27,11 @@ import { checkTypeLeaks, type Violation as TypeLeakViolation } from "../rules/ty
 import { checkMustBeEmpty, type Violation as MustBeEmptyViolation } from "../rules/must-be-empty.js";
 import {
   checkAllowDeny,
+  checkEdgesCoverage,
   checkOrder,
   checkPoint,
   type ConstraintViolation,
+  type EdgeRuleCoverage,
 } from "../rules/constraints.js";
 import { fingerprintOf, readTodo } from "../todo-store.js";
 
@@ -85,6 +87,14 @@ export type CheckResult = {
   todo: number; // how many violations were suppressed by a frozen todo entry
   violations: AnyViolation[];
   suggestions: DeprecatedSuggestion[];
+  // How many real edges each configured allowDeny/order/point rule
+  // actually evaluated - not just whether it violated. A rule with
+  // evaluated: 0 is also reported as an empty-rule-set violation (rule 4);
+  // this field exists so an agent authoring a NEW edges rule can see the
+  // real number directly instead of writing a throwaway script against
+  // the graph, the same gap that made a genuinely vacuous rule look
+  // identical to a clean pass in real use.
+  edgeRuleCoverage: EdgeRuleCoverage[];
 };
 
 // declaredModules replaces modules/kinds as the required field, the same
@@ -188,6 +198,7 @@ export function runRules(graph: ModuleGraph, config: Config): CheckResult {
     todo: 0,
     violations,
     suggestions: deprecated.suggestions,
+    edgeRuleCoverage: checkEdgesCoverage(graph, config),
   };
 }
 

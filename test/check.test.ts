@@ -125,6 +125,7 @@ describe("check", () => {
         typeLeaks: 0,
         todo: 0,
         suggestions: [],
+        edgeRuleCoverage: [],
         violations: [
           {
             rule: "public-surface-bypass",
@@ -248,6 +249,41 @@ describe("check", () => {
       init(root);
 
       await expect(check(root, join(root, "src", "app", "missing.ts"))).rejects.toThrow(/no such file/);
+    });
+  });
+
+  test("edgeRuleCoverage reports how many real edges an allowDeny rule actually evaluated", async () => {
+    await withTempProject(async (root) => {
+      mkdirSync(join(root, "src", "app"), { recursive: true });
+      mkdirSync(join(root, "src", "shared"), { recursive: true });
+      writeFileSync(join(root, "src", "shared", "index.ts"), "export const shared = 1;\n");
+      writeFileSync(
+        join(root, "src", "app", "module.ts"),
+        "import { shared } from \"../shared/index.ts\";\nexport const x = shared;\n",
+      );
+      writeFileSync(
+        join(root, "archstrict.config.ts"),
+        `import type { Config } from "./archstrict.generated.js";\n` +
+          `export default {\n` +
+          `  declaredModules: [{ name: "app", glob: "src/app/**", surface: "index.ts" }, { name: "shared", glob: "src/shared/**", surface: "index.ts" }],\n` +
+          `  exclude: ["*.ts"],\n` +
+          `  classify: [{ glob: "src/app/**", tags: ["kind:app"] }, { glob: "src/shared/**", tags: ["kind:shared"] }],\n` +
+          `  edges: { allowDeny: [\n` +
+          `    { source: "kind:app", targetNamespace: "kind", allow: ["shared"], because: "test" },\n` +
+          `    { source: "kind:app", targetNamespace: "pkg", allow: [], because: "never applies - no external imports here" },\n` +
+          `  ] },\n` +
+          `  because: "test",\n` +
+          `} satisfies Config;\n`,
+      );
+
+      const result = await check(root);
+      expect(result.edgeRuleCoverage).toEqual([
+        { kind: "allowDeny", identifier: "kind:app -> kind", evaluated: 1 },
+        { kind: "allowDeny", identifier: "kind:app -> pkg", evaluated: 0 },
+      ]);
+      // The vacuous second rule surfaces as its own violation too - the
+      // coverage field and rule 4 agree about the same real fact.
+      expect(result.violations.some((v) => v.rule === "empty-rule-set")).toBe(true);
     });
   });
 });

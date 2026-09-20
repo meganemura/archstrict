@@ -10,6 +10,7 @@
 import { assertDeprecatedModulesExist, type Config } from "../config.js";
 import { compileGlob } from "../classify.js";
 import { toProjectRelativePosix, type ModuleGraph } from "../module-graph.js";
+import { checkEdgesCoverage } from "./constraints.js";
 
 export type Violation = {
   rule: "empty-rule-set";
@@ -96,6 +97,27 @@ export function checkEmptyRuleSet(graph: ModuleGraph, config: Config): Violation
           config,
           `deprecated edge '${entry.from} -> ${entry.to}' (declared count ${entry.count}) no longer exists`,
           `remove the '${entry.from} -> ${entry.to}' entry from deprecated in archstrict.config.ts`,
+        ),
+      );
+    }
+  }
+
+  // An allowDeny/order/point rule whose own source/target combination
+  // never applies to any real edge in the graph is the constraint
+  // engine's own version of the same idea: a rule that structurally
+  // cannot fire must not look like a clean pass. This only catches the
+  // zero case - a rule that evaluates real edges and genuinely finds
+  // nothing forbidden reads as a real, meaningful pass, not a violation
+  // (and rules.md documents why a nonzero "clean" result still deserves a
+  // positive-control check before it's trusted, which this rule cannot
+  // substitute for).
+  for (const c of checkEdgesCoverage(graph, config)) {
+    if (c.evaluated === 0) {
+      violations.push(
+        violation(
+          config,
+          `${c.kind} rule '${c.identifier}' matches no real edge in scope`,
+          `remove or correct this ${c.kind} entry in archstrict.config.ts's edges - its own source/target never applies to any real edge this project has (a workspace-sibling import may resolve as an external package rather than a project tag; see rules.md)`,
         ),
       );
     }
