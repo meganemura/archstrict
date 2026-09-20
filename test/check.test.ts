@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { init } from "../src/verbs/init.js";
@@ -186,6 +186,50 @@ describe("check", () => {
       const focused = await check(root, join(root, "src", "app", "a.ts"));
       expect(focused.violations).toHaveLength(1);
       expect(focused.violations[0]!.path).toBe(join(root, "src", "app", "a.ts"));
+    });
+  });
+
+  // A real bug, found while building the PostToolUse hook (which spawns
+  // the built CLI as a child process): chdir'ing a process into a
+  // directory reached through a symlink makes the OS's own process.cwd()
+  // return the resolved, symlink-free path from then on - so a real CLI
+  // invocation's own `projectRoot` (process.cwd()) can differ, textually,
+  // from `focusFile` (an already-absolute path handed in as plain data,
+  // e.g. by Claude Code's own tool_input.file_path) even when both name
+  // the exact same file. filterToFile used to compare the two strings
+  // as given; this reproduces that mismatch directly with a symlink this
+  // test controls, rather than relying on a spawned process or a
+  // platform's own tmp-directory quirk (macOS's /tmp -> /private/tmp is
+  // one, and is what surfaced this in the first place).
+  test("check <file> matches even when the file's path reaches the project through a symlink", async () => {
+    await withTempProject(async (root) => {
+      mkdirSync(join(root, "src", "app"), { recursive: true });
+      mkdirSync(join(root, "src", "shared"), { recursive: true });
+      writeFileSync(join(root, "src", "shared", "module.ts"), "export const shared = 1;\n");
+      writeFileSync(
+        join(root, "src", "app", "a.ts"),
+        "import { shared } from \"../shared/module.ts\";\nexport const x = shared;\n",
+      );
+      init(root);
+
+      const linkedRoot = join(root, "..", `${root.split("/").at(-1)}-symlink`);
+      symlinkSync(root, linkedRoot);
+      try {
+        const result = await check(root, join(linkedRoot, "src", "app", "a.ts"));
+        expect(result.violations).toHaveLength(1);
+      } finally {
+        rmSync(linkedRoot, { force: true });
+      }
+    });
+  });
+
+  test("check <nonexistent-file> throws a clear error, not a raw ENOENT", async () => {
+    await withTempProject(async (root) => {
+      mkdirSync(join(root, "src", "app"), { recursive: true });
+      writeFileSync(join(root, "src", "app", "module.ts"), "export const app = 1;\n");
+      init(root);
+
+      await expect(check(root, join(root, "src", "app", "missing.ts"))).rejects.toThrow(/no such file/);
     });
   });
 });

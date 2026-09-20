@@ -4,7 +4,7 @@
 // Boundary: this is where the six rules' differing return shapes get
 // normalized to one — `deprecated`'s two arrays (violations/suggestions)
 // flatten in here, not in each rule.
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import ts from "typescript";
 import { buildModuleGraph, type ModuleGraph } from "../module-graph.js";
@@ -171,9 +171,22 @@ export function runRules(graph: ModuleGraph, config: Config): CheckResult {
 // by design: a per-file hook cares about the edited file's own edges (rule
 // 1, and rule 6), not a module- or config-level finding that no single
 // file edit could have caused.
+//
+// `file` and a violation's own `path` can each name the same real file in
+// a different textual form - one reached through a symlink, the other
+// not (measured directly: a process chdir'd into a symlinked directory
+// has its own process.cwd() come back already resolved, with no way to
+// see the symlinked form again; a caller-supplied `file` carries whatever
+// form it arrived in, independently). Comparing the two strings as given
+// then silently matches nothing. `realpathSync` on both sides compares
+// what they actually name, not how each one happened to spell it.
 export function filterToFile(result: CheckResult, file: string): CheckResult {
-  const target = resolve(file);
-  return { ...result, violations: result.violations.filter((v) => v.path === target) };
+  const resolved = resolve(file);
+  if (!existsSync(resolved)) {
+    throw new Error(`check ${file}: no such file`);
+  }
+  const target = realpathSync(resolved);
+  return { ...result, violations: result.violations.filter((v) => realpathSync(v.path) === target) };
 }
 
 function isFreezable(v: AnyViolation): v is AnyViolation & { todoModule: string } {
