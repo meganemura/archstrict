@@ -20,6 +20,9 @@ A violation report always carries a rule id, `path:line:col`, the evidence, the 
 ## Layout
 
 - `src/` is the library and CLI.
+- `test/` is the Vitest suite; `features/` is the nukadoko (Gherkin) dogfood scenario.
+- `.claude-plugin/` and `hooks/` are this repository's own Claude Code plugin (the PostToolUse hook).
+- `skills/archstrict/` is the agent-facing skill (`SKILL.md` plus `references/`).
 - `.claude-team/` holds the task spec, the report, and their working artifacts. It is gitignored; do not reference it from committed content.
 
 ## Visibility
