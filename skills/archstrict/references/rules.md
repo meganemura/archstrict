@@ -46,7 +46,7 @@ A `deprecated` entry in the config names an edge between two modules and a `coun
 A module's surface file re-exports or otherwise exposes an internal declaration - one that lives outside the surface file, inside the project's own checked modules root, and was never itself exported by name from that surface - without the consumer ever having a name for it. A structural leak: recurses through an exported symbol's properties, index signatures, union members, a generic type reference's own type arguments (`Promise<Internal>`, `Map<K, Internal>`, `Array<Internal>`), and a function's return type directly. A generic type parameter (a substitutable variable, not a declaration) and an anonymous type literal are excluded - neither has a name a consumer could fail to import.
 
 - because: "a consumer needs a name for every type it receives from a public surface, not just the type doing the exposing"
-- next: `export '<InternalType>' by name from <surface absolute path> (it's declared in <relative path>), or change '<Exported>' to not expose it` - `<surface absolute path>` is the surface file's full absolute path (e.g. `/project/src/m/index.ts`), not the bare file name rule 1's own `<surface>` placeholder means
+- next: `export '<InternalType>' by name from <surface absolute path> (it's declared in <relative path>), or change '<Exported>' to not expose it` - `<surface absolute path>` is the surface file's full absolute path (e.g. `/project/src/m/index.ts`), unlike rule 1's own `<surface>` placeholder above, which is the bare file name
 - `todoModule`: the module owning the leaking surface (a leak is a self-violation, not a cross-module edge)
 
 ## Not one of the six: stale-todo and clean-module-has-todo
