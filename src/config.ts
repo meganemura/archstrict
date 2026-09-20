@@ -108,6 +108,13 @@ export type Config = {
     surface: string;
   }[];
 
+  // archspec's own "empty component" concept: a directory that must stay
+  // empty - an anti-pattern guard (e.g. vanilla_rails's app/services must
+  // hold nothing), distinct from rule 4's "a rule that matches no module."
+  // A violation is any file matching the glob at all; 0 is a clean pass,
+  // not silence, the same convention every other rule here follows.
+  mustBeEmpty?: readonly { glob: string; because: string }[];
+
   // Constraint engine shape (typed here, implemented in a later ticket).
   // One `exceptions` shape shared across `allowDeny` and `point`: a from/to
   // glob or tag-predicate pair that overrides the enclosing rule either way.

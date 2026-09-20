@@ -7,7 +7,7 @@
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import ts from "typescript";
-import { buildModuleGraph, type ModuleGraph } from "../module-graph.js";
+import { buildModuleGraph, toProjectRelativePosix, type ModuleGraph } from "../module-graph.js";
 import type { Config } from "../config.js";
 import { checkPublicSurfaceBypass, type Violation as PublicSurfaceViolation } from "../rules/public-surface.js";
 import {
@@ -24,6 +24,7 @@ import {
   type Violation as DeprecatedViolation,
 } from "../rules/deprecated.js";
 import { checkTypeLeaks, type Violation as TypeLeakViolation } from "../rules/type-leak.js";
+import { checkMustBeEmpty, type Violation as MustBeEmptyViolation } from "../rules/must-be-empty.js";
 import { fingerprintOf, readTodo } from "../todo-store.js";
 
 // Not one of the six rules: reported when a todo entry matches no current
@@ -63,7 +64,8 @@ export type AnyViolation =
   | TypeLeakViolation
   | StaleTodoViolation
   | CleanModuleHasTodoViolation
-  | StaleCycleExceptionViolation;
+  | StaleCycleExceptionViolation
+  | MustBeEmptyViolation;
 
 export type CheckResult = {
   modules: number;
@@ -135,6 +137,11 @@ export async function loadConfig(configPath: string): Promise<Config> {
   return { ...(raw as object), configPath } as Config;
 }
 
+function allProjectRelativeFiles(graph: ModuleGraph): string[] {
+  const files = [...graph.modules.values()].flatMap((m) => m.files).concat(graph.outsideFiles);
+  return files.map((f) => toProjectRelativePosix(f, graph.rootDir));
+}
+
 export function runRules(graph: ModuleGraph, config: Config): CheckResult {
   const violations: AnyViolation[] = [
     ...checkPublicSurfaceBypass(graph),
@@ -142,6 +149,7 @@ export function runRules(graph: ModuleGraph, config: Config): CheckResult {
     ...checkStaleCycleExceptions(graph, config),
     ...checkUncoveredModules(graph, config),
     ...checkEmptyRuleSet(graph, config),
+    ...checkMustBeEmpty(allProjectRelativeFiles(graph), config),
   ];
   const deprecated = checkDeprecatedEdges(graph, config);
   violations.push(...deprecated.violations);
