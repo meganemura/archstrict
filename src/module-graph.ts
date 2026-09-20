@@ -329,13 +329,64 @@ function moduleForDeclaredFile(
   );
 }
 
-function loadCompilerOptions(projectRoot: string): ts.CompilerOptions {
-  const configPath = ts.findConfigFile(projectRoot, ts.sys.fileExists.bind(ts.sys));
-  if (configPath === undefined) {
-    return { target: ts.ScriptTarget.ESNext, module: ts.ModuleKind.NodeNext };
-  }
+function readCompilerOptions(configPath: string): ts.CompilerOptions {
   const { config } = ts.readConfigFile(configPath, (p) => readFileSync(p, "utf8"));
+  // basePath = the config's own directory - a leaf tsconfig's own `paths`
+  // (a per-package alias, e.g. "@/*": ["./src/*"]) resolves relative to
+  // THIS, not the project root; parseJsonConfigFileContent computes
+  // `pathsBasePath` from it. Hand-merging option objects instead of
+  // reusing this real TypeScript call would resolve `paths` against the
+  // wrong root and produce a different wrong answer, not a correct one.
   return ts.parseJsonConfigFileContent(config, ts.sys, dirname(configPath)).options;
+}
+
+function loadCompilerOptions(startDir: string): { configPath: string | undefined; options: ts.CompilerOptions } {
+  const configPath = ts.findConfigFile(startDir, ts.sys.fileExists.bind(ts.sys));
+  if (configPath === undefined) {
+    return { configPath: undefined, options: { target: ts.ScriptTarget.ESNext, module: ts.ModuleKind.NodeNext } };
+  }
+  return { configPath, options: readCompilerOptions(configPath) };
+}
+
+// Module resolution needs each file's OWN nearest tsconfig.json, not just
+// the one at the project root - a real TypeScript monorepo convention
+// (findConfigFile walking up from the importing file's own directory),
+// and the one this project's own resolver measurably missed: a leaf
+// package's own `paths` alias (or a jsx/moduleResolution override) was
+// invisible when every file resolved under the same, single root config,
+// inflating unresolvedSpecifierCount for every aliased import in that
+// package. Cached by the config file's own path (a monorepo has one
+// config per package, not one per file) - a directory with no nearer
+// config than the project root's own reuses the already-parsed root
+// options rather than re-parsing the same file per directory.
+//
+// Scope of this fix, stated plainly: this only changes what
+// `ts.resolveModuleName` is called with for edge resolution - it does
+// NOT change the shared `ts.Program`/`TypeChecker` every module in the
+// graph is checked against (rule 6, `graph.checker`, still uses the
+// project-root's own compiler options for the whole program, the same as
+// before). `ts.createProgram` itself also resolves each root file's own
+// imports internally, under the root options, to decide what enters the
+// program at all - a leaf package's own aliased import can still fail
+// there even once this makes its own edge resolve correctly for
+// unresolvedSpecifierCount's sake. Mixing genuinely incompatible
+// per-file options (target, jsx) into one shared program is a real,
+// separate architectural question this fix does not attempt.
+function makeCompilerOptionsForFile(
+  rootOptions: ts.CompilerOptions,
+  rootConfigPath: string | undefined,
+): (filePath: string) => ts.CompilerOptions {
+  const cache = new Map<string, ts.CompilerOptions>();
+  if (rootConfigPath !== undefined) cache.set(rootConfigPath, rootOptions);
+  return (filePath: string): ts.CompilerOptions => {
+    const configPath = ts.findConfigFile(dirname(filePath), ts.sys.fileExists.bind(ts.sys));
+    if (configPath === undefined) return rootOptions;
+    const cached = cache.get(configPath);
+    if (cached !== undefined) return cached;
+    const options = readCompilerOptions(configPath);
+    cache.set(configPath, options);
+    return options;
+  };
 }
 
 export function buildModuleGraph(options: BuildOptions): ModuleGraph {
@@ -350,7 +401,8 @@ export function buildModuleGraph(options: BuildOptions): ModuleGraph {
   // disagree with the paths TypeScript itself already resolved to.
   const { declaredModules, surface = DEFAULT_SURFACE, exclude = [] } = options;
   const projectRoot = realpathSync(options.projectRoot);
-  const compilerOptions = loadCompilerOptions(projectRoot);
+  const { configPath: rootConfigPath, options: compilerOptions } = loadCompilerOptions(projectRoot);
+  const compilerOptionsForFile = makeCompilerOptionsForFile(compilerOptions, rootConfigPath);
 
   let modules: Map<string, Module>;
   let rootDir: string;
@@ -454,7 +506,7 @@ export function buildModuleGraph(options: BuildOptions): ModuleGraph {
           // package's package.json `exports` under nodenext, so the only
           // thing gating that path before was this project's own code,
           // not TypeScript.
-          const resolved = ts.resolveModuleName(specifier.text, sf.fileName, compilerOptions, host);
+          const resolved = ts.resolveModuleName(specifier.text, sf.fileName, compilerOptionsForFile(sf.fileName), host);
           const resolvedModule = resolved.resolvedModule;
           if (resolvedModule === undefined) {
             unresolvedSpecifierCount++;
