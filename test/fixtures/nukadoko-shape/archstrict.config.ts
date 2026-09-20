@@ -1,6 +1,6 @@
-// Floor fixture (ticket archstrict-4bn.1): what `init` would emit for a
-// flat src/* project (nukadoko-shaped, ~20 module dirs) under the same tag
-// schema as the two oracle fixtures above. One classify catch-all plus one
+// Floor fixture: what `init` would emit for a flat src/* project
+// (nukadoko-shaped, ~20 module dirs) under the same tag schema as the two
+// oracle fixtures above. One classify catch-all plus one
 // declaredModules entry per discovered dir - the shape "discovery becomes
 // an init-time suggestion" produces concretely. If this needed more than a
 // screen, the schema would be wrong for small projects.

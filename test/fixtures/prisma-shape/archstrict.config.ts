@@ -1,9 +1,9 @@
-// Design fixture (ticket archstrict-4bn.1): proves v1's tag schema
-// expresses Prisma 8's real architecture.config.json + the six
-// dependency-cruiser.config.mjs generator functions it derives. Abbreviated
-// to ten classify entries; every constraint shape appears at least once, in
-// the syntax an agent would type. Not wired to any rule yet - `edges` is
-// typed but unimplemented until archstrict-4bn.4.
+// Design fixture: proves the tag schema expresses Prisma 8's real
+// architecture.config.json + the six dependency-cruiser.config.mjs
+// generator functions it derives. Abbreviated to ten classify entries;
+// every constraint shape appears at least once, in the syntax an agent
+// would type. Not wired to any rule yet - `edges` is typed but
+// unimplemented until the constraint engine lands.
 import type { Config } from "../../../src/config.js";
 
 export default {
