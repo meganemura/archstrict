@@ -123,6 +123,7 @@ describe("check", () => {
         outsideFiles: 0,
         unresolvedSpecifiers: 0,
         unsupportedSyntax: 0,
+        typeLeaks: 0,
         todo: 0,
         suggestions: [],
         violations: [

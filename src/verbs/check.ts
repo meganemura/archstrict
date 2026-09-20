@@ -1,10 +1,9 @@
 // Responsibility: the `check` verb. Loads a real archstrict.config.ts,
 // builds the module graph, runs every available rule, and aggregates the
 // results into one shape for JSON and text output.
-// Boundary: this is where the five rules' differing return shapes get
+// Boundary: this is where the six rules' differing return shapes get
 // normalized to one — `deprecated`'s two arrays (violations/suggestions)
-// flatten in here, not in each rule. Rule 6 (type leak) is not built yet;
-// its slot is left open rather than guessed at.
+// flatten in here, not in each rule.
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import ts from "typescript";
@@ -19,6 +18,7 @@ import {
   type Suggestion as DeprecatedSuggestion,
   type Violation as DeprecatedViolation,
 } from "../rules/deprecated.js";
+import { checkTypeLeaks, type Violation as TypeLeakViolation } from "../rules/type-leak.js";
 import { fingerprintOf, readTodo } from "../todo-store.js";
 
 // Not one of the six rules: reported when a todo entry matches no current
@@ -55,6 +55,7 @@ export type AnyViolation =
   | UncoveredViolation
   | EmptyRuleViolation
   | DeprecatedViolation
+  | TypeLeakViolation
   | StaleTodoViolation
   | CleanModuleHasTodoViolation;
 
@@ -65,6 +66,7 @@ export type CheckResult = {
   outsideFiles: number;
   unresolvedSpecifiers: number;
   unsupportedSyntax: number;
+  typeLeaks: number; // how many type-leak violations rule 6 found — 0 is a result, not silence
   todo: number; // how many violations were suppressed by a frozen todo entry
   violations: AnyViolation[];
   suggestions: DeprecatedSuggestion[];
@@ -137,6 +139,9 @@ export function runRules(graph: ModuleGraph, config: Config): CheckResult {
   const deprecated = checkDeprecatedEdges(graph, config);
   violations.push(...deprecated.violations);
 
+  const typeLeaks = checkTypeLeaks(graph);
+  violations.push(...typeLeaks);
+
   let modulesWithoutSurface = 0;
   for (const m of graph.modules.values()) {
     if (m.surfacePath === undefined) modulesWithoutSurface++;
@@ -149,6 +154,7 @@ export function runRules(graph: ModuleGraph, config: Config): CheckResult {
     outsideFiles: graph.outsideFiles.length,
     unresolvedSpecifiers: graph.unresolvedSpecifierCount,
     unsupportedSyntax: graph.unsupportedSyntaxCount,
+    typeLeaks: typeLeaks.length,
     todo: 0,
     violations,
     suggestions: deprecated.suggestions,
@@ -158,11 +164,13 @@ export function runRules(graph: ModuleGraph, config: Config): CheckResult {
 // check <file>: analyze the whole project (module resolution needs every
 // file to know what an edge crosses into), but report only the named
 // path's own violations — analysis is whole-project, but the report is
-// scoped to the one path asked about. Rules 2-5 use a module directory or
-// the config file as their own `path`, never a single source file, so
-// they never match this filter by design: a per-file hook cares about the
-// edited file's own edges (rule 1, and rule 6 once built), not a module-
-// or config-level finding that no single file edit could have caused.
+// scoped to the one path asked about. Rule 6 uses a module's surface file
+// as its own `path`, so it CAN match this filter (editing a surface file
+// directly). Rules 2-5 use a module directory or the config file as their
+// own `path`, never a single source file, so they never match this filter
+// by design: a per-file hook cares about the edited file's own edges (rule
+// 1, and rule 6), not a module- or config-level finding that no single
+// file edit could have caused.
 export function filterToFile(result: CheckResult, file: string): CheckResult {
   const target = resolve(file);
   return { ...result, violations: result.violations.filter((v) => v.path === target) };
@@ -289,6 +297,7 @@ export function formatText(result: CheckResult): string {
   lines.push(`outside the modules glob: ${result.outsideFiles}`);
   lines.push(`unresolved specifiers: ${result.unresolvedSpecifiers}`);
   lines.push(`unsupported syntax: ${result.unsupportedSyntax}`);
+  lines.push(`type leaks: ${result.typeLeaks}`);
   lines.push(`todo: ${result.todo}`);
   lines.push(`next: ${result.violations.length > 0 ? "archstrict todo" : "archstrict check"}`);
   return lines.join("\n") + "\n";
