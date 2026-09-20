@@ -44,7 +44,7 @@ export function checkPublicSurfaceBypass(graph: ModuleGraph): Violation[] {
     if (targetModule === undefined) continue; // resolved outside any module; not this rule's concern
     if (targetModule.surfaceFiles.includes(edge.resolvedFile)) continue; // reached the public surface itself
 
-    violations.push(violationFor(edge, targetModule.name, targetModule.surfaceFiles, graph.surface));
+    violations.push(violationFor(edge, targetModule.name, targetModule.surfaceFiles, targetModule.surfaceName));
   }
   return violations;
 }

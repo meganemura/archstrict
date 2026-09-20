@@ -86,6 +86,11 @@ export type Module = {
   // than one file (Prisma's package.json `exports` has subpaths) - sorted,
   // for a deterministic message when a rule names "the" surface file.
   surfaceFiles: string[];
+  // This module's own configured surface name/glob - rule 1's own message
+  // used to name the graph's global default here instead, wrong whenever
+  // a specific module overrides it (a real, measured case: a package
+  // whose own surface is "types.d.ts", not the project's own default).
+  surfaceName: string;
 };
 
 // A module declared directly in config (v1), replacing v0's index.ts-
@@ -176,6 +181,7 @@ function discoverModules(projectRoot: string, glob: string, surface: string): Ma
       dir,
       files: [],
       surfaceFiles: ts.sys.fileExists(surfacePath) ? [surfacePath] : [],
+      surfaceName: surface,
     });
   }
   return modules;
@@ -236,11 +242,36 @@ function isWorkspaceSiblingResolution(resolvedFile: string, rootDir: string): bo
   return !(rel.startsWith("..") || rel === resolvedFile);
 }
 
-function listAllSourceFiles(projectRoot: string, excludeGlobs: readonly string[]): string[] {
+// A hand-authored `.d.ts` is excluded from analysis by default - most are
+// either a third-party ambient declaration with no real source in this
+// project, or a generated twin of a real `.ts` file, neither one "module
+// content" this tool should walk as its own file. But a project whose
+// real, intentional public-surface convention IS a hand-authored `.d.ts`
+// (a webpack-built package publishing `"types": "./types.d.ts"` with no
+// `index.ts` at all, a real, measured case) can never be modeled at all
+// otherwise - a `.d.ts` a declaredModules entry's own `surface` glob
+// explicitly names is the one, narrow exception: an explicit config
+// choice, not a blanket re-inclusion of every declaration file.
+function surfaceGlobsAllowingDts(declaredModules: readonly DeclaredModule[]): string[] {
+  return declaredModules
+    .map((dm) => `${moduleGlobBaseDir(dm.glob)}/${dm.surface}`.replace(/\/{2,}/g, "/"))
+    .filter((g) => g.endsWith(".d.ts"));
+}
+
+function listAllSourceFiles(
+  projectRoot: string,
+  excludeGlobs: readonly string[],
+  declaredModules: readonly DeclaredModule[] = [],
+): string[] {
   const compiledExcludes = excludeGlobs.map((g) => compileGlob(g));
+  const compiledDtsSurfaces = surfaceGlobsAllowingDts(declaredModules).map((g) => compileGlob(g));
   return ts.sys
     .readDirectory(projectRoot, [".ts"], ["**/node_modules/**", "**/dist/**"])
-    .filter((f) => !f.endsWith(".d.ts"))
+    .filter((f) => {
+      if (!f.endsWith(".d.ts")) return true;
+      const rel = toProjectRelativePosix(f, projectRoot);
+      return compiledDtsSurfaces.some((glob) => glob.test(rel));
+    })
     .filter((f) => {
       const rel = toProjectRelativePosix(f, projectRoot);
       return !compiledExcludes.some((glob) => glob.test(rel));
@@ -256,7 +287,7 @@ function buildDeclaredModules(
   const modules = new Map<string, Module>(
     declaredModules.map((dm) => [
       dm.name,
-      { name: dm.name, dir: join(projectRoot, moduleGlobBaseDir(dm.glob)), files: [], surfaceFiles: [] },
+      { name: dm.name, dir: join(projectRoot, moduleGlobBaseDir(dm.glob)), files: [], surfaceFiles: [], surfaceName: dm.surface },
     ]),
   );
 
@@ -328,7 +359,7 @@ export function buildModuleGraph(options: BuildOptions): ModuleGraph {
 
   if (declaredModules !== undefined) {
     rootDir = projectRoot;
-    rootNames = listAllSourceFiles(projectRoot, exclude);
+    rootNames = listAllSourceFiles(projectRoot, exclude, declaredModules);
     modules = buildDeclaredModules(projectRoot, declaredModules, rootNames);
     resolveModuleForFile = (filePath) => moduleForDeclaredFile(filePath, projectRoot, declaredModules);
   } else {
