@@ -23,6 +23,7 @@ A violation report always carries a rule id, `path:line:col`, the evidence, the 
 - `test/` is the Vitest suite; `features/` is the nukadoko (Gherkin) dogfood scenario.
 - `.claude-plugin/` and `hooks/` are this repository's own Claude Code plugin (the PostToolUse hook).
 - `skills/archstrict/` is the agent-facing skill (`SKILL.md` plus `references/`).
+- `scripts/` holds standalone scripts (not part of the shipped library) - currently just the typescript 7 probe. `.github/workflows/` is CI.
 - `.claude-team/` holds the task spec, the report, and their working artifacts. It is gitignored; do not reference it from committed content.
 
 ## Visibility
@@ -48,6 +49,7 @@ For working on archstrict itself:
 - `npm run typecheck` — `tsc --noEmit` over the whole project.
 - `npm test` — the Vitest suite.
 - `npm run dogfood:nukadoko` — a nukadoko (Gherkin) scenario that runs the built CLI's full init/check/todo/edit/check round trip against nukadoko's own published `src/` (a real, unrelated codebase with no public-surface convention), copied into a disposable scratch directory. Never modifies the real nukadoko package or a checkout of it.
+- `npm run ci:ts7-probe` — measures, against whatever typescript 7 happens to be installed, which of the operations rule 6 needs actually work on typescript 7's `./unstable/*` surface. Never fails: an unsupported operation is the measurement, not an error. archstrict itself always analyzes with its own pinned `typescript` dependency (6.0.3), independent of this. CI (`.github/workflows/ci.yml`) installs `typescript@7.0.2` (`--no-save`, never touching `package.json`) just for this job.
 
 The CLI itself:
 

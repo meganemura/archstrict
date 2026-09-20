@@ -17,7 +17,8 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.build.json",
-    "dogfood:nukadoko": "npm run build && nuka run features"
+    "dogfood:nukadoko": "npm run build && nuka run features",
+    "ci:ts7-probe": "node scripts/probe-typescript7.mjs"
   },
   "dependencies": {
     "typescript": "6.0.3"
