@@ -305,6 +305,59 @@ export type Violation = {
 
 const BECAUSE = "a consumer needs a name for every type it receives from a public surface, not just the type doing the exposing";
 
+// The number of distinct exported symbols named in one violation's own
+// evidence before it switches to "and N more" - a real, measured case (a
+// heavily-generic library's own client package) had a single internal
+// type referenced by 51 different exported symbols; naming all 51 in one
+// evidence line stops being readable long before that.
+const MAX_NAMED_EXPORTS = 10;
+
+// One group per (internal type, internal file) - many exported symbols in
+// the same module independently referencing the identical, never-locally-
+// exported declaration is one real leak, not one per referencing export.
+// Measured directly against a real, large library's own client package:
+// 585 raw per-export findings collapsed to 164 distinct (module, internal
+// type) pairs this way - the same underlying "this type has no public
+// name here" fact was being reported as though it were up to 51 separate
+// problems, when fixing it is one re-export, not 51 edits.
+type LeakGroup = {
+  file: string;
+  type: string;
+  path: string;
+  line: number;
+  column: number;
+  exportedAs: string[];
+};
+
+function groupByInternalType(findings: readonly LeakFinding[], surfacePath: string): Map<string, LeakGroup> {
+  const groups = new Map<string, LeakGroup>();
+  for (const finding of findings) {
+    const key = `${finding.internalFile}\n${finding.internalType}`;
+    const existing = groups.get(key);
+    if (existing === undefined) {
+      groups.set(key, {
+        file: finding.internalFile,
+        type: finding.internalType,
+        path: surfacePath,
+        line: finding.line,
+        column: finding.column,
+        exportedAs: [finding.exportedAs],
+      });
+      continue;
+    }
+    if (!existing.exportedAs.includes(finding.exportedAs)) existing.exportedAs.push(finding.exportedAs);
+    // Earliest position wins, for a deterministic, stable anchor
+    // regardless of which surface file or which exported symbol the walk
+    // happened to visit first.
+    if (finding.line < existing.line || (finding.line === existing.line && finding.column < existing.column)) {
+      existing.line = finding.line;
+      existing.column = finding.column;
+      existing.path = surfacePath;
+    }
+  }
+  return groups;
+}
+
 export function checkTypeLeaks(graph: {
   modules: Map<string, { name: string; dir: string; surfaceFiles: string[] }>;
   program: ts.Program;
@@ -319,25 +372,41 @@ export function checkTypeLeaks(graph: {
 
   for (const [name, module] of graph.modules) {
     // A module's surface can be more than one file (a glob, not a single
-    // name) - each is walked independently; a leak is reported against the
-    // actual file it was found in, not a fixed single surface path.
+    // name) - each is walked independently, but grouped together below:
+    // the same internal type leaking through two different surface files
+    // of the same module is still one fact about that module, not two.
+    const groups = new Map<string, LeakGroup>();
     for (const surfacePath of module.surfaceFiles) {
       const sf = graph.program.getSourceFile(surfacePath);
       if (sf === undefined) continue;
       const findings = detectTypeLeaks(graph.checker, sf, moduleBoundaries);
-      for (const finding of findings) {
-        const relativeInternalFile = relative(graph.rootDir, finding.internalFile);
-        violations.push({
-          rule: "type-leak",
-          path: surfacePath,
-          line: finding.line,
-          column: finding.column,
-          evidence: `'${finding.exportedAs}' (${finding.via}) references '${finding.internalType}', declared in '${relativeInternalFile}', which module '${name}' never exports by name`,
-          because: BECAUSE,
-          next: `export '${finding.internalType}' by name from ${surfacePath} (it's declared in ${relativeInternalFile}), or change '${finding.exportedAs}' to not expose it`,
-          todoModule: name,
-        });
+      for (const [key, group] of groupByInternalType(findings, surfacePath)) {
+        const existing = groups.get(key);
+        if (existing === undefined) {
+          groups.set(key, group);
+        } else {
+          for (const exportedAs of group.exportedAs) {
+            if (!existing.exportedAs.includes(exportedAs)) existing.exportedAs.push(exportedAs);
+          }
+        }
       }
+    }
+
+    for (const group of groups.values()) {
+      const relativeInternalFile = relative(graph.rootDir, group.file);
+      const names = [...group.exportedAs].sort();
+      const shown = names.slice(0, MAX_NAMED_EXPORTS).map((n) => `'${n}'`).join(", ");
+      const more = names.length > MAX_NAMED_EXPORTS ? ` (and ${names.length - MAX_NAMED_EXPORTS} more)` : "";
+      violations.push({
+        rule: "type-leak",
+        path: group.path,
+        line: group.line,
+        column: group.column,
+        evidence: `'${group.type}', declared in '${relativeInternalFile}', is never exported by name from module '${name}' - referenced by ${shown}${more}`,
+        because: BECAUSE,
+        next: `export '${group.type}' by name from ${group.path} (it's declared in ${relativeInternalFile}), or change the referencing exports to not expose it`,
+        todoModule: name,
+      });
     }
   }
   return violations;

@@ -120,7 +120,12 @@ describe("checkTypeLeaks (property)", () => {
             .filter((name): name is string => name !== undefined);
 
           const actualLeakedTypes = violations.map((v) => {
-            const match = /references '(\w+)'/.exec(v.evidence);
+            // Evidence now leads with the internal type's own name (one
+            // violation per (module, internal type), not per referencing
+            // export) - each of this fixture's Internal0/Internal1/...
+            // names is still distinct per property index, so no two
+            // properties here ever collapse into the same violation.
+            const match = /^'(\w+)'/.exec(v.evidence);
             if (match === null) throw new Error(`evidence has no internal type name: ${v.evidence}`);
             return match[1];
           });

@@ -7,60 +7,46 @@ import { checkTypeLeaks } from "../src/rules/type-leak.js";
 const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), "fixtures/type-leak");
 
 describe("checkTypeLeaks", () => {
-  test("flags a structural leak, a structural leak reached through a re-export, a structural leak reached through a type argument, an inferred-return leak, and a generic-parameter leak; not a re-exported type, an annotated plain return, or an anonymous literal", () => {
+  test("every detection path (structural, through a re-export, through a type argument, inferred-return, generic-parameter, through an optional array) finds the same never-exported internal type, and they collapse into one violation naming every referencing export - not a re-exported type, an annotated plain return, or an anonymous literal", () => {
     const graph = buildModuleGraph({ projectRoot: FIXTURE, modulesGlob: "src/*", surface: "public.ts" });
     expect(graph.unresolvedSpecifierCount).toBe(0);
 
     const violations = checkTypeLeaks(graph);
-    expect(violations).toHaveLength(6);
+    // Every one of the six detection paths in this fixture leaks the
+    // SAME internal type (SecretInternal) - the whole point of the
+    // (module, internal type) grouping is that this reads as one real
+    // fact about module 'm', not six.
+    expect(violations).toHaveLength(1);
 
-    const byExported = new Map(violations.map((v) => [v.evidence, v]));
-    const structural = [...byExported.values()].find((v) => v.evidence.startsWith("'WrapsInternal'"));
-    expect(structural).toBeDefined();
-    expect(structural?.evidence).toContain("'SecretInternal'");
-    expect(structural?.todoModule).toBe("m");
+    const leak = violations[0]!;
+    expect(leak.evidence.startsWith("'SecretInternal'")).toBe(true);
+    expect(leak.evidence).toContain("never exported by name from module 'm'");
+    expect(leak.todoModule).toBe("m");
+    expect(leak.rule).toBe("type-leak");
+    expect(leak.because.length).toBeGreaterThan(0);
 
-    // Leaky itself is re-exported by name (a consumer has a name for
-    // Leaky), but its own property still reaches SecretInternal, which
-    // nothing exports by name - Leaky's declaration is an ExportSpecifier
-    // in public.ts, not a local TypeAliasDeclaration, so this is the case
-    // that needs alias resolution to reach at all.
-    const throughReExport = [...byExported.values()].find((v) => v.evidence.startsWith("'Leaky'"));
-    expect(throughReExport).toBeDefined();
-    expect(throughReExport?.evidence).toContain("'SecretInternal'");
-
-    const inferredReturn = [...byExported.values()].find((v) => v.evidence.startsWith("'returnsInternalInferred'"));
-    expect(inferredReturn).toBeDefined();
-    expect(inferredReturn?.evidence).toContain("inferred-return");
-    expect(inferredReturn?.evidence).toContain("'SecretInternal'");
-
-    const genericParameter = [...byExported.values()].find((v) => v.evidence.startsWith("'Holder'"));
-    expect(genericParameter).toBeDefined();
-    expect(genericParameter?.evidence).toContain("generic-parameter");
-
-    // WrapsViaTypeArgument has no property whose own type IS
-    // SecretInternal - it only shows up in Promise<SecretInternal>'s own
-    // type argument, not in any property's direct type.
-    const throughTypeArgument = [...byExported.values()].find((v) => v.evidence.startsWith("'WrapsViaTypeArgument'"));
-    expect(throughTypeArgument).toBeDefined();
-    expect(throughTypeArgument?.evidence).toContain("'SecretInternal'");
-
-    // An optional array property's own type argument and its index
-    // signature's value type both name SecretInternal - exactly one
-    // violation, not two, even though the walk reaches the declaration
-    // two structural ways.
-    const throughOptionalArray = violations.filter((v) => v.evidence.startsWith("'WrapsViaOptionalArray'"));
-    expect(throughOptionalArray).toHaveLength(1);
-    expect(throughOptionalArray[0]?.evidence).toContain("'SecretInternal'");
+    // Every one of the six real referencing exports is named - none
+    // silently dropped by the aggregation.
+    for (const name of [
+      "WrapsInternal", // structural
+      "Leaky", // structural, reached through a re-export
+      "returnsInternalInferred", // inferred-return
+      "Holder", // generic-parameter
+      "WrapsViaTypeArgument", // structural, reached through a type argument
+      "WrapsViaOptionalArray", // structural, reached two structural ways - named once, not twice
+    ]) {
+      expect(leak.evidence, `expected '${name}' to be named in the aggregated evidence`).toContain(`'${name}'`);
+    }
+    // Not double-counted even though the walk reaches WrapsViaOptionalArray's
+    // own declaration two structural ways (its type argument and its index
+    // signature's value type both name SecretInternal).
+    expect(leak.evidence.match(/'WrapsViaOptionalArray'/g)).toHaveLength(1);
 
     // AlsoFine re-exports InternalRecord by name right in public.ts, so a
     // consumer has a name for it, and returnsPlain's annotated return type
-    // is self-contained - neither is a leak.
-    expect([...byExported.values()].some((v) => v.evidence.startsWith("'AlsoFine'"))).toBe(false);
-    expect([...byExported.values()].some((v) => v.evidence.startsWith("'returnsPlain'"))).toBe(false);
-
-    expect(violations.every((v) => v.rule === "type-leak")).toBe(true);
-    expect(violations.every((v) => v.because.length > 0)).toBe(true);
+    // is self-contained - neither is a leak, and neither type name (which
+    // never appears in the fixture's own internal type) shows up here.
+    expect(leak.evidence).not.toContain("InternalRecord");
   });
 
   test("a module with no surface has nothing to check - no entry point to walk", () => {

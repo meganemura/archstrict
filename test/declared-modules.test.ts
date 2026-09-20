@@ -106,14 +106,18 @@ describe("config.exclude", () => {
 });
 
 describe("checkTypeLeaks against a declared-module graph", () => {
-  test("flags the same 6 leaks the modulesGlob-built graph does", () => {
+  test("flags the same single, aggregated leak the modulesGlob-built graph does", () => {
     const graph = buildModuleGraph({
       projectRoot: TYPE_LEAK_FIXTURE,
       declaredModules: [{ name: "m", glob: "src/m/**", surface: "public.ts" }],
     });
     expect(graph.unresolvedSpecifierCount).toBe(0);
 
+    // This fixture's own six detection paths all leak the same internal
+    // type (SecretInternal) - one (module, internal type) violation, not
+    // six, same as test/type-leak.test.ts's own main test.
     const violations = checkTypeLeaks(graph);
-    expect(violations).toHaveLength(6);
+    expect(violations).toHaveLength(1);
+    expect(violations[0]!.evidence.startsWith("'SecretInternal'")).toBe(true);
   });
 });
