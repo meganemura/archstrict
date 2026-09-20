@@ -8,14 +8,12 @@ import type { Config } from "../../../src/config.js";
 
 export default {
   configPath: "<fixture>",
-  modules: "src/*",
-  kinds: { flat: "src/*" },
   because: "flat preset: every module carries one tag, no layering declared",
 
   scope: "src/**",
   surface: "index.ts",
 
-  classify: [{ glob: "src/*", tags: ["kind:app"] }],
+  classify: [{ glob: "src/**", tags: ["kind:app"] }],
 
   declaredModules: [
     { name: "matching", glob: "src/matching/**", surface: "index.ts" },

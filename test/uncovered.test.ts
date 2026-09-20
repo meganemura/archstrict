@@ -3,71 +3,43 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { buildModuleGraph } from "../src/module-graph.js";
 import { checkUncoveredModules } from "../src/rules/uncovered.js";
-import type { Config } from "../src/config.js";
 
 const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), "fixtures/uncovered");
 
 describe("checkUncoveredModules", () => {
-  test("flags a module with no matching kind, leaves covered ones alone", () => {
-    const graph = buildModuleGraph({ projectRoot: FIXTURE, modulesGlob: "src/*" });
-    const config: Config = {
-      configPath: "<test>",
-      modules: "src/*",
-      kinds: { covered: "src/a", also: "src/b" }, // c is not named anywhere
-      because: "test config",
-    };
+  test("flags a real file matching no declared module, leaves declared modules' own files alone", () => {
+    const graph = buildModuleGraph({
+      projectRoot: FIXTURE,
+      declaredModules: [
+        { name: "a", glob: "src/a/**", surface: "index.ts" },
+        { name: "b", glob: "src/b/**", surface: "index.ts" },
+        // "c" is deliberately not declared.
+      ],
+    });
 
-    const violations = checkUncoveredModules(graph, config);
+    const violations = checkUncoveredModules(graph);
     expect(violations).toHaveLength(1);
     expect(violations[0]!.rule).toBe("uncovered-module");
-    expect(violations[0]!.evidence).toContain("'c'");
+    expect(violations[0]!.path.endsWith("src/c/module.ts")).toBe(true);
+    expect(violations[0]!.evidence).toContain("matches no declared module");
   });
 
-  test("the flat preset's catch-all pattern covers every module", () => {
-    const graph = buildModuleGraph({ projectRoot: FIXTURE, modulesGlob: "src/*" });
-    const config: Config = {
-      configPath: "<test>",
-      modules: "src/*",
-      kinds: { flat: "src/*" },
-      because: "test config",
-    };
+  test("declaring every real directory leaves nothing uncovered", () => {
+    const graph = buildModuleGraph({
+      projectRoot: FIXTURE,
+      declaredModules: [
+        { name: "a", glob: "src/a/**", surface: "index.ts" },
+        { name: "b", glob: "src/b/**", surface: "index.ts" },
+        { name: "c", glob: "src/c/**", surface: "index.ts" },
+      ],
+    });
 
-    expect(checkUncoveredModules(graph, config)).toHaveLength(0);
+    expect(checkUncoveredModules(graph)).toHaveLength(0);
   });
 
-  test("an overlapping kind assignment is a config error, not a violation", () => {
+  test("v0-style discovery (no declaredModules) has no outsideFiles for a well-formed fixture, so nothing to flag", () => {
     const graph = buildModuleGraph({ projectRoot: FIXTURE, modulesGlob: "src/*" });
-    const config: Config = {
-      configPath: "<test>",
-      modules: "src/*",
-      kinds: { flat: "src/*", also: "src/a" }, // a matches both
-      because: "test config",
-    };
-
-    expect(() => checkUncoveredModules(graph, config)).toThrow(/more than one kind/);
-  });
-
-  test("a nested wildcard pattern is a config error, not silent non-coverage", () => {
-    const graph = buildModuleGraph({ projectRoot: FIXTURE, modulesGlob: "src/*" });
-    const config: Config = {
-      configPath: "<test>",
-      modules: "src/*",
-      kinds: { nested: "src/a/*" }, // out of scope for v0's single-level modules
-      because: "test config",
-    };
-
-    expect(() => checkUncoveredModules(graph, config)).toThrow(/not a shape v0 supports/);
-  });
-
-  test("a near-miss catch-all pattern gets a 'did you mean' hint", () => {
-    const graph = buildModuleGraph({ projectRoot: FIXTURE, modulesGlob: "src/*" });
-    const config: Config = {
-      configPath: "<test>",
-      modules: "src/*",
-      kinds: { flat: "src/*/" }, // trailing slash: meant the catch-all, typo'd it
-      because: "test config",
-    };
-
-    expect(() => checkUncoveredModules(graph, config)).toThrow(/did you mean 'src\/\*'/);
+    expect(graph.outsideFiles).toHaveLength(0);
+    expect(checkUncoveredModules(graph)).toHaveLength(0);
   });
 });

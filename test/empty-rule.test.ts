@@ -10,98 +10,89 @@ import type { Config } from "../src/config.js";
 const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), "fixtures/uncovered"); // a, b, c
 
 describe("checkEmptyRuleSet", () => {
-  test("a kind naming a nonexistent module is a violation", () => {
-    const graph = buildModuleGraph({ projectRoot: FIXTURE, modulesGlob: "src/*" });
+  test("a classify glob matching no real file is a violation", () => {
+    const graph = buildModuleGraph({
+      projectRoot: FIXTURE,
+      declaredModules: [
+        { name: "a", glob: "src/a/**", surface: "index.ts" },
+        { name: "b", glob: "src/b/**", surface: "index.ts" },
+        { name: "c", glob: "src/c/**", surface: "index.ts" },
+      ],
+    });
     const config: Config = {
       configPath: "<test>",
-      modules: "src/*",
-      kinds: { ghost: "src/nonexistent", real: "src/a" },
       because: "test config",
+      classify: [
+        { glob: "src/nonexistent/**", tags: ["kind:ghost"] },
+        { glob: "src/a/**", tags: ["kind:real"] },
+      ],
     };
 
     const violations = checkEmptyRuleSet(graph, config);
     expect(violations).toHaveLength(1);
     expect(violations[0]!.rule).toBe("empty-rule-set");
-    expect(violations[0]!.evidence).toContain("ghost");
+    expect(violations[0]!.evidence).toContain("src/nonexistent/**");
   });
 
-  test("the catch-all always matches when at least one module exists", () => {
-    const graph = buildModuleGraph({ projectRoot: FIXTURE, modulesGlob: "src/*" });
+  test("a classify glob matching a real file is a clean pass", () => {
+    const graph = buildModuleGraph({
+      projectRoot: FIXTURE,
+      declaredModules: [
+        { name: "a", glob: "src/a/**", surface: "index.ts" },
+        { name: "b", glob: "src/b/**", surface: "index.ts" },
+        { name: "c", glob: "src/c/**", surface: "index.ts" },
+      ],
+    });
     const config: Config = {
       configPath: "<test>",
-      modules: "src/*",
-      kinds: { flat: "src/*" },
       because: "test config",
+      classify: [{ glob: "src/**", tags: ["kind:flat"] }],
     };
 
     expect(checkEmptyRuleSet(graph, config)).toHaveLength(0);
   });
 
-  test("a layers entry naming a kind that doesn't exist is a violation", () => {
-    const graph = buildModuleGraph({ projectRoot: FIXTURE, modulesGlob: "src/*" });
+  test("a deprecated edge whose actual count has fallen to zero is a violation", () => {
+    const graph = buildModuleGraph({
+      projectRoot: FIXTURE,
+      declaredModules: [
+        { name: "a", glob: "src/a/**", surface: "index.ts" },
+        { name: "b", glob: "src/b/**", surface: "index.ts" },
+        { name: "c", glob: "src/c/**", surface: "index.ts" },
+      ],
+    });
     const config: Config = {
       configPath: "<test>",
-      modules: "src/*",
-      kinds: { flat: "src/*" },
-      layers: ["flat", "ghost-layer"],
       because: "test config",
+      deprecated: [{ from: "a", to: "b", count: 3, because: "test" }],
     };
 
     const violations = checkEmptyRuleSet(graph, config);
     expect(violations).toHaveLength(1);
-    expect(violations[0]!.evidence).toContain("ghost-layer");
+    expect(violations[0]!.evidence).toContain("a -> b");
   });
 
-  test("an invalid kind pattern shape throws, same as rule 3", () => {
-    const graph = buildModuleGraph({ projectRoot: FIXTURE, modulesGlob: "src/*" });
-    const config: Config = {
-      configPath: "<test>",
-      modules: "src/*",
-      kinds: { nested: "src/a/*" },
-      because: "test config",
-    };
+  test("no classify or deprecated entries at all is a clean pass", () => {
+    const graph = buildModuleGraph({
+      projectRoot: FIXTURE,
+      declaredModules: [{ name: "a", glob: "src/a/**", surface: "index.ts" }],
+    });
+    const config: Config = { configPath: "<test>", because: "test config" };
 
-    expect(() => checkEmptyRuleSet(graph, config)).toThrow(/not a shape v0 supports/);
+    expect(checkEmptyRuleSet(graph, config)).toHaveLength(0);
   });
 
   test("no modules at all is a violation, not silence", () => {
     const root = mkdtempSync(join(tmpdir(), "archstrict-empty-rule-"));
     try {
-      mkdirSync(join(root, "src"), { recursive: true }); // src/ exists, but has no module directories
+      mkdirSync(join(root, "src"), { recursive: true }); // src/ exists, but no declaredModules cover it
       writeFileSync(join(root, "tsconfig.json"), "{}");
-      const graph = buildModuleGraph({ projectRoot: root, modulesGlob: "src/*" });
-      const config: Config = {
-        configPath: "<test>",
-        modules: "src/*",
-        kinds: { flat: "src/*" },
-        because: "test config",
-      };
+      const graph = buildModuleGraph({ projectRoot: root, declaredModules: [] });
+      const config: Config = { configPath: "<test>", because: "test config" };
 
       const violations = checkEmptyRuleSet(graph, config);
       expect(violations).toHaveLength(1);
-      expect(violations[0]!.evidence).toContain("no modules under");
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  test("an invalid kind pattern shape throws even with no modules at all", () => {
-    // The bug review caught: validating shapes only while looping over
-    // graph.modules meant an empty graph skipped validation entirely,
-    // since the loop that would have found the invalid shape never ran.
-    const root = mkdtempSync(join(tmpdir(), "archstrict-empty-rule-"));
-    try {
-      mkdirSync(join(root, "src"), { recursive: true });
-      writeFileSync(join(root, "tsconfig.json"), "{}");
-      const graph = buildModuleGraph({ projectRoot: root, modulesGlob: "src/*" });
-      const config: Config = {
-        configPath: "<test>",
-        modules: "src/*",
-        kinds: { nested: "src/a/*" },
-        because: "test config",
-      };
-
-      expect(() => checkEmptyRuleSet(graph, config)).toThrow(/not a shape v0 supports/);
+      expect(violations[0]!.evidence).toContain("no modules declared in declaredModules");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

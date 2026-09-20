@@ -30,8 +30,6 @@ describe("checkDeprecatedEdges (property)", () => {
       const count = tc.draw(declaredCount);
       const config: Config = {
         configPath: "<test>",
-        modules: "src/*",
-        kinds: { flat: "src/*" },
         deprecated: [{ from: "c", to: "a", count, because: "property test" }],
         because: "test config",
       };

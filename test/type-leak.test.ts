@@ -68,3 +68,39 @@ describe("checkTypeLeaks", () => {
     expect(checkTypeLeaks(graph)).toHaveLength(0);
   });
 });
+
+describe("checkTypeLeaks (declared-module boundary)", () => {
+  const ROOT_BOUNDARY_FIXTURE = join(
+    dirname(fileURLToPath(import.meta.url)),
+    "fixtures/type-leak-root-boundary",
+  );
+
+  test("a type declared outside every declared module (a project-root-level file) is not flagged as an internal leak", () => {
+    // Found by direct measurement: under declared modules, rootDir is the
+    // whole project root, so a root-level file's own type declarations
+    // (archstrict.config.ts, a test helper, ...) would incorrectly count
+    // as "this project's own checked source" for every module's surface.
+    const graph = buildModuleGraph({
+      projectRoot: ROOT_BOUNDARY_FIXTURE,
+      declaredModules: [{ name: "m", glob: "src/m/**", surface: "public.ts" }],
+    });
+    expect(graph.unresolvedSpecifierCount).toBe(0);
+    expect(checkTypeLeaks(graph)).toHaveLength(0);
+  });
+
+  test("a type declared inside a DIFFERENT declared module still counts - a cross-module leak is still real", () => {
+    const graph = buildModuleGraph({
+      projectRoot: ROOT_BOUNDARY_FIXTURE,
+      declaredModules: [
+        { name: "m", glob: "src/m/**", surface: "public.ts" },
+        // Declaring root-type.ts's own directory as a second module (its
+        // own boundary) proves the fix is "any declared module", not "no
+        // module ever counts as internal to another".
+        { name: "root", glob: "*.ts", surface: "public.ts" },
+      ],
+    });
+    const violations = checkTypeLeaks(graph);
+    expect(violations).toHaveLength(1);
+    expect(violations[0]!.evidence).toContain("RootType");
+  });
+});

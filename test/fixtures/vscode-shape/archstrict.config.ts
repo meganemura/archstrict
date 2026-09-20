@@ -7,8 +7,6 @@ import type { Config } from "../../../src/config.js";
 
 export default {
   configPath: "<fixture>",
-  modules: "src/vs/*",
-  kinds: { flat: "src/vs/*" },
   because: "environment layering (common/browser/node/electron-*), ambient-tagged by directory name",
 
   scope: "src/vs/**",

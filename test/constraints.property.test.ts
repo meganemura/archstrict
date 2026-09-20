@@ -29,8 +29,6 @@ describe("checkAllowDeny (property)", () => {
 
       const config: Config = {
         configPath: "<test>",
-        modules: "src/*",
-        kinds: { flat: "src/*" },
         because: "test config",
         classify: [
           { glob: "src/a.ts", tags: [`domain:${domain}`, `layer:${sourceLayer}`] },

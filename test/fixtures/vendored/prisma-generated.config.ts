@@ -2,8 +2,6 @@ import type { Config } from "../../../src/config.js";
 
 export default {
   configPath: "<generated>",
-  modules: "packages/*",
-  kinds: { flat: "packages/*" },
   because: "converted from architecture.config.json",
   scope: "packages/**",
   classify: [

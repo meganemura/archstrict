@@ -8,8 +8,6 @@ import type { Config } from "../../../src/config.js";
 
 export default {
   configPath: "<fixture>",
-  modules: "packages/*", // v0 field, unused by this fixture's own v1 shape
-  kinds: { flat: "packages/*" }, // present only so Config's required v0 fields typecheck
   because: "module boundaries for a domain/layer/plane architecture, expressed as tags instead of fixed axes",
 
   scope: "packages/**",

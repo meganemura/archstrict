@@ -40,8 +40,6 @@ async function main() {
 
 export default {
   configPath: "<generated>",
-  modules: "src/vs/*",
-  kinds: { flat: "src/vs/*" },
   because: "converted from code-layering.ts's own table",
   scope: "src/vs/**",
   classifyByDirectoryName: ${JSON.stringify(classifyByDirectoryName, null, 2)},

@@ -118,9 +118,11 @@ describe("todo", () => {
       // consequence of "declare, not discover" (measured wrong under v0's
       // own index.ts-presence discovery: NestJS's and Drizzle's own real
       // code showed an undeclared directory is not evidence of an
-      // enforced boundary either way).
+      // enforced boundary either way). Rule 3 still catches it, the same
+      // way it catches any in-scope file no declared module covers.
       const beforeReinit = await check(root);
-      expect(beforeReinit.violations).toHaveLength(0);
+      expect(beforeReinit.violations).toHaveLength(1);
+      expect(beforeReinit.violations[0]!.rule).toBe("uncovered-module");
       expect(beforeReinit.modules).toBe(1); // only "app" is declared; "shared" isn't a module yet
 
       // Re-running init does NOT add "shared" to declaredModules either:
@@ -142,7 +144,8 @@ describe("todo", () => {
 
       const afterReinit = await check(root);
       expect(afterReinit.modules).toBe(1); // declaredModules in the untouched config still names only "app"
-      expect(afterReinit.violations).toHaveLength(0);
+      expect(afterReinit.violations).toHaveLength(1);
+      expect(afterReinit.violations[0]!.rule).toBe("uncovered-module");
     });
   });
 
@@ -152,7 +155,7 @@ describe("todo", () => {
       writeFileSync(
         join(root, "archstrict.config.ts"),
         `import type { Config } from "./archstrict.generated.js";\n` +
-          `export default { declaredModules: [{ name: "app", glob: "src/app/**", surface: "index.ts" }, { name: "shared", glob: "src/shared/**", surface: "index.ts" }], strict: ["shared"], because: "test" } satisfies Config;\n`,
+          `export default { declaredModules: [{ name: "app", glob: "src/app/**", surface: "index.ts" }, { name: "shared", glob: "src/shared/**", surface: "index.ts" }], strict: ["shared"], exclude: ["*.ts"], because: "test" } satisfies Config;\n`,
       );
       init(root); // writes archstrict.generated.ts; leaves the hand-written config alone
 
@@ -175,7 +178,7 @@ describe("todo", () => {
       writeFileSync(
         join(root, "archstrict.config.ts"),
         `import type { Config } from "./archstrict.generated.js";\n` +
-          `export default { declaredModules: [{ name: "app", glob: "src/app/**", surface: "index.ts" }, { name: "shared", glob: "src/shared/**", surface: "index.ts" }], strict: ["shared"], because: "test" } satisfies Config;\n`,
+          `export default { declaredModules: [{ name: "app", glob: "src/app/**", surface: "index.ts" }, { name: "shared", glob: "src/shared/**", surface: "index.ts" }], strict: ["shared"], exclude: ["*.ts"], because: "test" } satisfies Config;\n`,
       );
 
       const result = await check(root);

@@ -40,7 +40,12 @@ function isTypeReference(type: ts.Type): type is ts.TypeReference {
 // directly against an arbitrary entry file (nukadoko's own src/index.ts,
 // in test/type-leak.nukadoko.test.ts, matching this rule's own
 // promoted-from-spike history).
-export function detectTypeLeaks(checker: ts.TypeChecker, entrySf: ts.SourceFile, boundaryRoot: string): LeakFinding[] {
+export function detectTypeLeaks(
+  checker: ts.TypeChecker,
+  entrySf: ts.SourceFile,
+  boundaryRoot: string | readonly string[],
+): LeakFinding[] {
+  const boundaryRoots = typeof boundaryRoot === "string" ? [boundaryRoot] : boundaryRoot;
   const moduleSymbol = checker.getSymbolAtLocation(entrySf);
   if (moduleSymbol === undefined) return [];
   const exports = checker.getExportsOfModule(moduleSymbol);
@@ -84,8 +89,23 @@ export function detectTypeLeaks(checker: ts.TypeChecker, entrySf: ts.SourceFile,
     // module-graph.ts already hit and fixed with the same relative()
     // check). This also closes a prefix hole a plain startsWith has even
     // on one platform: "src-other" starts with "src" as a string.
-    const rel = relative(boundaryRoot, file);
-    if (rel.startsWith("..") || rel === file) return undefined; // outside boundaryRoot entirely (relative() returns the input unchanged across drives on Windows)
+    //
+    // Under declared modules, "internal" means inside SOME declared
+    // module's own directory - not the whole project root. A single,
+    // broad rootDir boundary was measured wrong: under declared mode
+    // rootDir is the project root, so a root-level file's own type
+    // declarations (archstrict.config.ts, a test helper, ...) would
+    // incorrectly count as "this project's own checked source, must be
+    // exported by name" for every module's surface. A cross-module leak
+    // (module A's surface exposing a type declared in module B) still
+    // counts - that's still real, still worth a name - checked against
+    // every declared module's own boundary, not just the leaking
+    // module's own.
+    const isInsideAnyBoundary = boundaryRoots.some((root) => {
+      const rel = relative(root, file);
+      return !(rel.startsWith("..") || rel === file); // rel === file: outside entirely (relative() returns the input unchanged across drives on Windows)
+    });
+    if (!isInsideAnyBoundary) return undefined;
     return { file };
   }
 
@@ -286,12 +306,17 @@ export type Violation = {
 const BECAUSE = "a consumer needs a name for every type it receives from a public surface, not just the type doing the exposing";
 
 export function checkTypeLeaks(graph: {
-  modules: Map<string, { name: string; surfaceFiles: string[] }>;
+  modules: Map<string, { name: string; dir: string; surfaceFiles: string[] }>;
   program: ts.Program;
   checker: ts.TypeChecker;
   rootDir: string;
 }): Violation[] {
   const violations: Violation[] = [];
+  // Every declared module's own directory, not the whole project root -
+  // see detectTypeLeaks' own comment on why a single, broad boundary was
+  // measured wrong.
+  const moduleBoundaries = [...graph.modules.values()].map((m) => m.dir);
+
   for (const [name, module] of graph.modules) {
     // A module's surface can be more than one file (a glob, not a single
     // name) - each is walked independently; a leak is reported against the
@@ -299,7 +324,7 @@ export function checkTypeLeaks(graph: {
     for (const surfacePath of module.surfaceFiles) {
       const sf = graph.program.getSourceFile(surfacePath);
       if (sf === undefined) continue;
-      const findings = detectTypeLeaks(graph.checker, sf, graph.rootDir);
+      const findings = detectTypeLeaks(graph.checker, sf, moduleBoundaries);
       for (const finding of findings) {
         const relativeInternalFile = relative(graph.rootDir, finding.internalFile);
         violations.push({

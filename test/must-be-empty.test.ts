@@ -56,8 +56,6 @@ describe("runRules wiring (check.ts)", () => {
     // conventions, not this rule alone).
     const config: Config = {
       configPath: "<test>",
-      modules: "src/*",
-      kinds: { flat: "src/*" },
       because: "test config",
       mustBeEmpty: [{ glob: "b/**", because: "b must stay empty in this test" }],
     };
@@ -72,8 +70,6 @@ describe("runRules wiring (check.ts)", () => {
     const graph = buildModuleGraph({ projectRoot: FIXTURE, modulesGlob: "src/*", surface: "public.ts" });
     const config: Config = {
       configPath: "<test>",
-      modules: "src/*",
-      kinds: { flat: "src/*" },
       because: "test config",
     };
 

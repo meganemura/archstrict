@@ -1,8 +1,7 @@
-// Property: a "kind matches no module" violation occurs exactly for the
-// kinds entries whose pattern names a module that doesn't exist among the
-// fixture's real modules (a, b, c) — checked against an independently
-// computed expected set, not against checkEmptyRuleSet re-deriving its own
-// answer.
+// Property: a classify glob is flagged exactly when it matches no real file
+// in scope (a declared module's own file, or an outsideFiles entry) —
+// checked against an independently computed expected set, not against
+// checkEmptyRuleSet re-deriving its own answer.
 import { describe, test } from "vitest";
 import assert from "node:assert/strict";
 import * as hegel from "@hegeldev/hegel";
@@ -14,51 +13,46 @@ import { checkEmptyRuleSet } from "../src/rules/empty-rule.js";
 import type { Config } from "../src/config.js";
 
 const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), "fixtures/uncovered"); // a, b, c
-// "x" and "y" name no real module; kept alongside the fixture's own names
-// rather than a separately hardcoded list, so drawing one of them always
-// means "doesn't exist" regardless of what the fixture happens to hold.
-const CANDIDATE_NAMES = ["a", "b", "c", "x", "y"] as const;
+// "nonexistent" and "ghost" name no real directory; kept alongside the
+// fixture's own module names rather than a separately hardcoded "doesn't
+// match" list, so drawing one of them always means "matches nothing"
+// regardless of what the fixture happens to hold.
+const CANDIDATE_GLOBS = ["src/a/**", "src/b/**", "src/c/**", "src/nonexistent/**", "src/ghost/**"] as const;
 
-const kindEntry = gs.record({
-  name: gs.fromRegex("kind[0-9]"),
-  moduleName: gs.sampledFrom([...CANDIDATE_NAMES]),
+const classifyEntry = gs.record({
+  glob: gs.sampledFrom([...CANDIDATE_GLOBS]),
+  tag: gs.fromRegex("kind:[a-z]{3,6}"),
 });
-const kindEntries = gs.arrays(kindEntry, { minSize: 0, maxSize: 5 });
+const classifyEntries = gs.arrays(classifyEntry, { minSize: 0, maxSize: 5 });
 
 describe("checkEmptyRuleSet (property)", () => {
-  test("a kind is flagged exactly when its named module does not exist", () => {
+  test("a classify entry is flagged exactly when its glob matches no real file", () => {
     // Built once: the fixture's files don't change between draws, only
-    // `kinds` does, so there is no reason to rebuild a ts.Program (an
+    // `classify` does, so there is no reason to rebuild a ts.Program (an
     // expensive real compile) on every one of hegel's iterations.
-    const graph = buildModuleGraph({ projectRoot: FIXTURE, modulesGlob: "src/*" });
-    // Derived from the fixture itself, not hardcoded: if a module is ever
-    // added to fixtures/uncovered/ for rule 3's sake, this stays correct
-    // instead of silently going stale and failing for an unrelated reason.
-    const realModules = new Set(graph.modules.keys());
+    const graph = buildModuleGraph({
+      projectRoot: FIXTURE,
+      declaredModules: [
+        { name: "a", glob: "src/a/**", surface: "index.ts" },
+        { name: "b", glob: "src/b/**", surface: "index.ts" },
+        { name: "c", glob: "src/c/**", surface: "index.ts" },
+      ],
+    });
+    const matchingGlobs = new Set(["src/a/**", "src/b/**", "src/c/**"]);
 
     hegel.test((tc) => {
-      const entries = tc.draw(kindEntries);
-      const kinds: Record<string, string> = {};
-      // A later entry with the same name overwrites an earlier one, same as
-      // any object literal assignment — the expected set below must use
-      // this same last-write-wins semantics, not the raw draw list, or two
-      // entries sharing a name (one naming a real module, one not) would
-      // disagree with what `kinds` actually ends up holding.
-      for (const { name, moduleName } of entries) kinds[name] = `src/${moduleName}`;
+      const entries = tc.draw(classifyEntries);
+      const classify = entries.map(({ glob, tag }) => ({ glob, tags: [tag] }));
 
-      const config: Config = { configPath: "<test>", modules: "src/*", kinds, because: "property test" };
+      const config: Config = { configPath: "<test>", because: "property test", classify };
       const violations = checkEmptyRuleSet(graph, config);
 
-      const expectedEmptyKinds = new Set(
-        Object.entries(kinds)
-          .filter(([, pattern]) => !realModules.has(pattern.slice("src/".length)))
-          .map(([name]) => name),
-      );
+      const expectedEmptyGlobs = entries.filter(({ glob }) => !matchingGlobs.has(glob));
 
-      assert.equal(violations.length, expectedEmptyKinds.size);
+      assert.equal(violations.length, expectedEmptyGlobs.length);
       for (const v of violations) {
         assert.ok(v.rule === "empty-rule-set");
-        assert.ok([...expectedEmptyKinds].some((k) => v.evidence.includes(`'${k}'`)));
+        assert.ok(expectedEmptyGlobs.some(({ glob }) => v.evidence.includes(`'${glob}'`)));
       }
     });
   });

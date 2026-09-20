@@ -56,8 +56,6 @@ const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), "fixtures/constrai
 // it works purely off tags, one module here is enough).
 const config: Config = {
   configPath: "<test>",
-  modules: "src/*",
-  kinds: { flat: "src/*" },
   because: "test config",
   declaredModules: [{ name: "all", glob: "src/**", surface: "index.ts" }],
   classify: [
@@ -103,8 +101,6 @@ describe("checkAllowDeny", () => {
   test("a deny list flags a listed value and lets everything else through", () => {
     const cfg: Config = {
       configPath: "<test>",
-      modules: "src/*",
-      kinds: { flat: "src/*" },
       because: "test config",
       classify: [
         { glob: "src/shared.ts", tags: ["plane:shared"] },
@@ -130,8 +126,6 @@ describe("checkAllowDeny", () => {
   test("an exceptions glob pair exempts an otherwise-forbidden edge", () => {
     const cfg: Config = {
       configPath: "<test>",
-      modules: "src/*",
-      kinds: { flat: "src/*" },
       because: "test config",
       classify: [
         { glob: "src/a.ts", tags: ["domain:framework"] },
@@ -156,8 +150,6 @@ describe("checkAllowDeny", () => {
   test("a target's synthesized pkg: tag composes with allowDeny the same as any internal tag", () => {
     const cfg: Config = {
       configPath: "<test>",
-      modules: "src/*",
-      kinds: { flat: "src/*" },
       because: "test config",
       classifyByDirectoryName: { tagNamespace: "env", names: ["browser", "node"] },
       edges: {
@@ -199,8 +191,6 @@ describe("checkOrder", () => {
   test("a tag value absent from its own sequence is a config error, not a silent pass", () => {
     const cfg: Config = {
       configPath: "<test>",
-      modules: "src/*",
-      kinds: { flat: "src/*" },
       because: "test config",
       classify: [
         { glob: "src/a.ts", tags: ["domain:sql", "layer:unlisted"] },
@@ -224,8 +214,6 @@ describe("checkOrder", () => {
   test("a within-value entirely absent from sequence is out of this rule's scope, not a config error - found by running against Prisma's own real config, whose layerOrder covers only 3 of its 5 real domains", () => {
     const cfg: Config = {
       configPath: "<test>",
-      modules: "src/*",
-      kinds: { flat: "src/*" },
       because: "test config",
       classify: [
         { glob: "src/a.ts", tags: ["domain:targets", "layer:core"] },
@@ -259,8 +247,6 @@ describe("checkPoint", () => {
   test("a tag-predicate point rule with exclude: drivers reachable only from adapters", () => {
     const cfg: Config = {
       configPath: "<test>",
-      modules: "src/*",
-      kinds: { flat: "src/*" },
       because: "test config",
       classify: [
         { glob: "src/adapters/**", tags: ["domain:sql", "layer:adapters"] },
@@ -289,8 +275,6 @@ describe("checkPoint", () => {
   test("edgeType: \"value\" exempts a type-only edge into the same forbidden target - Prisma's own CLI-control-seam rule", () => {
     const cfg: Config = {
       configPath: "<test>",
-      modules: "src/*",
-      kinds: { flat: "src/*" },
       because: "test config",
       edges: {
         point: [
@@ -323,8 +307,6 @@ describe("edge filters (edgeType, importForm)", () => {
   test("importForm: \"static\" exempts a dynamic import(), \"dynamic\" exempts a static one", () => {
     const cfg: Config = {
       configPath: "<test>",
-      modules: "src/*",
-      kinds: { flat: "src/*" },
       because: "test config",
       edges: {
         point: [{ from: "src/**", to: "src/internal/**", importForm: "static", because: "no lazy exception here" }],
@@ -340,8 +322,6 @@ describe("edge filters (edgeType, importForm)", () => {
   test("allowDeny's own edgeType filter works the same way as point's", () => {
     const cfg: Config = {
       configPath: "<test>",
-      modules: "src/*",
-      kinds: { flat: "src/*" },
       because: "test config",
       classify: [
         { glob: "src/a.ts", tags: ["domain:framework"] },

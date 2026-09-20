@@ -1,18 +1,15 @@
 // Responsibility: rule 4, the empty rule set (ArchUnitTS's Empty Test
-// Protection). A configured rule that matches zero modules must not look
-// like a pass — the same "a zero can look like success when it is really
-// an omission" principle as rule 3, from the other direction: rule 3 is "a
-// module no kind covers is a failure"; this is "a kind (or a layer) that
-// covers no module is a failure".
+// Protection). A configured rule that matches zero real things must not
+// look like a pass — the same "a zero can look like success when it is
+// really an omission" principle as rule 3, from the other direction: rule
+// 3 is "a file no declared module covers is a failure"; this is "a
+// declaration (a module, or a classify glob) that covers no real file is
+// a failure".
 // Boundary: a config-vs-graph consistency check, not an edge check. No
 // I/O, no output formatting.
-import {
-  assertDeprecatedModulesExist,
-  assertKindPatternsSupported,
-  kindPatternNames,
-  type Config,
-} from "../config.js";
-import type { ModuleGraph } from "../module-graph.js";
+import { assertDeprecatedModulesExist, type Config } from "../config.js";
+import { compileGlob } from "../classify.js";
+import { toProjectRelativePosix, type ModuleGraph } from "../module-graph.js";
 
 export type Violation = {
   rule: "empty-rule-set";
@@ -40,70 +37,46 @@ function violation(config: Config, evidence: string, next: string): Violation {
 }
 
 export function checkEmptyRuleSet(graph: ModuleGraph, config: Config): Violation[] {
-  // Both validated up front, before the zero-modules early return below: a
-  // config error must not depend on which branch runs first. Measured: the
-  // zero-modules return used to sit above these checks, so a `deprecated`
-  // entry naming a nonexistent module on an empty graph reached the
-  // "actual count is 0" case (below) instead of throwing as a config
-  // error — the same config was diagnosed two different ways depending on
-  // which rule (this one, or rule 5) happened to run first.
-  assertKindPatternsSupported(config);
+  // Validated up front, same reasoning as ever: a config error must not
+  // depend on which branch runs first.
   assertDeprecatedModulesExist(graph, config);
+
+  // No modules at all: not "a rule matched zero", but "nothing to check" -
+  // reported the same way (a violation, not a thrown error) so it fits
+  // the same 0-is-a-result shape as everything else `check` reports.
+  // Returned immediately rather than falling through to the classify loop
+  // below: with zero modules, every classify glob trivially matches
+  // nothing that belongs to any module either, so the loop would add one
+  // redundant violation per entry, all restating the same root cause.
+  if (graph.modules.size === 0) {
+    return [
+      violation(
+        config,
+        "no modules declared in declaredModules",
+        "add at least one declaredModules entry in archstrict.config.ts",
+      ),
+    ];
+  }
 
   const violations: Violation[] = [];
 
-  // No v0-style kinds/modules declared at all - see checkUncoveredModules'
-  // own comment; the kinds/layers-specific checks below have nothing to
-  // check yet for a declaredModules-only project. `deprecated` is checked
-  // regardless below - it's independent of kinds, keyed on module names
-  // directly.
-  if (config.kinds !== undefined && config.modules !== undefined) {
-    const kinds = config.kinds;
-    const modulesGlob = config.modules;
-
-    // No modules at all: not "a rule matched zero", but "nothing to check" —
-    // reported the same way (a violation, not a thrown error) so it fits the
-    // same 0-is-a-result shape as everything else `check` reports. Returned
-    // immediately rather than falling through to the per-kind loop below:
-    // with zero modules, EVERY kind trivially matches nothing, so the loop
-    // would add one redundant violation per configured kind, all restating
-    // the same root cause this one violation already names. Measured: a
-    // one-kind config produced 2 violations instead of 1 before this guard.
-    if (graph.modules.size === 0) {
-      return [
+  // Every classify glob must match at least one real, in-scope file - the
+  // classification-layer's own version of "a kind that matches no
+  // module": a glob that matches nothing is a config typo or a stale
+  // entry, either way a rule that checks nothing must not look like a
+  // pass.
+  const allFiles = [...graph.modules.values()].flatMap((m) => m.files).concat(graph.outsideFiles);
+  for (const entry of config.classify ?? []) {
+    const glob = compileGlob(entry.glob);
+    const matchesAny = allFiles.some((file) => glob.test(toProjectRelativePosix(file, graph.rootDir)));
+    if (!matchesAny) {
+      violations.push(
         violation(
           config,
-          `no modules under '${modulesGlob}'`,
-          `add at least one module directory under ${modulesGlob}, or check the modules glob in archstrict.config.ts`,
+          `classify glob '${entry.glob}' matches no file in scope`,
+          `remove this classify entry from archstrict.config.ts, or point its glob at real files`,
         ),
-      ];
-    }
-
-    for (const [kindName, pattern] of Object.entries(kinds)) {
-      const matchedAny = [...graph.modules.keys()].some(
-        (moduleName) => kindPatternNames(pattern, modulesGlob, moduleName) === true,
       );
-      if (!matchedAny) {
-        violations.push(
-          violation(
-            config,
-            `kind '${kindName}' (pattern '${pattern}') matches no discovered module`,
-            `remove '${kindName}' from archstrict.config.ts, or point its pattern at a real module`,
-          ),
-        );
-      }
-    }
-
-    for (const layerKind of config.layers ?? []) {
-      if (!(layerKind in kinds)) {
-        violations.push(
-          violation(
-            config,
-            `layers names '${layerKind}', which is not a key of kinds`,
-            `add '${layerKind}' to kinds in archstrict.config.ts, or remove it from layers`,
-          ),
-        );
-      }
     }
   }
 

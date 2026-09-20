@@ -20,6 +20,7 @@ export default defineStep({
     unsupportedSyntax: z.number(),
     todo: z.number(),
     violations: z.number().describe("count of result.violations, not the array itself"),
+    uncoveredModule: z.number().describe("count of result.violations whose rule is uncovered-module - these have no owning module directory, so todo can never freeze them"),
     exitCode: z.number(),
   }),
   from: { root: [setupNukadokoScratch, "root"] },
@@ -46,6 +47,7 @@ export default defineStep({
       unsupportedSyntax: parsed.unsupportedSyntax,
       todo: parsed.todo,
       violations: parsed.violations.length,
+      uncoveredModule: parsed.violations.filter((v: { rule: string }) => v.rule === "uncovered-module").length,
       exitCode,
     };
   },

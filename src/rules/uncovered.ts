@@ -1,16 +1,20 @@
-// Responsibility: rule 3, uncovered modules (deptrac's --fail-on-uncovered).
-// A module that matches no kind in the config fails the check — the
-// implementation of the project's own rule that a zero must never look
-// like success when it is really an omission (a check that silently
-// skipped a module must not look like that module passed).
-// Boundary: pure predicate over a ModuleGraph and a Config. No I/O, no
-// output formatting.
-import { assertKindPatternsSupported, kindPatternNames, type Config } from "../config.js";
+// Responsibility: rule 3, uncovered files (deptrac's --fail-on-uncovered,
+// generalized to v1's file-glob model). A real, in-scope file matching no
+// declared module fails the check - the implementation of the project's
+// own rule that a zero must never look like success when it is really an
+// omission (a check that silently skipped a file must not look like that
+// file passed). Under v0's directory-based discovery this was "a module
+// no kind names"; under v1's glob-based declaredModules, the same idea is
+// simpler and needs no pattern-matching of its own: module-graph.ts's own
+// `outsideFiles` already tracks exactly this (a file in scope, matching no
+// declared module) - this rule only reports it as a violation, one per
+// file, instead of silence.
+// Boundary: pure predicate over a ModuleGraph. No I/O, no output formatting.
 import type { ModuleGraph } from "../module-graph.js";
 
 export type Violation = {
   rule: "uncovered-module";
-  path: string; // the module's directory
+  path: string; // the file itself
   line: number;
   column: number;
   evidence: string;
@@ -18,50 +22,16 @@ export type Violation = {
   next: string;
 };
 
-const BECAUSE =
-  "a module matching no kind is unchecked, not passing (deptrac's --fail-on-uncovered)";
+const BECAUSE = "a file matching no declared module is unchecked, not passing (deptrac's --fail-on-uncovered)";
 
-export function checkUncoveredModules(graph: ModuleGraph, config: Config): Violation[] {
-  // No v0-style kinds declared at all (the CLI cutover's own interim
-  // state - a project using only declaredModules/classify has nothing
-  // here to check yet; a later ticket gives this rule a tag-general
-  // equivalent). Returning cleanly, not throwing: an absent kinds field
-  // is a real, honest state a fresh v1 project is in, not a config error.
-  if (config.kinds === undefined || config.modules === undefined) return [];
-  const kinds = config.kinds;
-  const modulesGlob = config.modules;
-
-  // Validated up front, independent of graph.modules: an unsupported
-  // pattern shape is unsupported whether or not the loop below ever
-  // reaches a module that would have exposed it.
-  assertKindPatternsSupported(config);
-
-  const violations: Violation[] = [];
-
-  for (const [name, module] of graph.modules) {
-    const matchingKinds = Object.entries(kinds).filter(
-      ([, pattern]) => kindPatternNames(pattern, modulesGlob, name) === true,
-    );
-
-    if (matchingKinds.length > 1) {
-      throw new Error(
-        `module '${name}' matches more than one kind (${matchingKinds.map(([k]) => k).join(", ")}); ` +
-          `kinds must not overlap`,
-      );
-    }
-
-    if (matchingKinds.length === 0) {
-      violations.push({
-        rule: "uncovered-module",
-        path: module.dir,
-        line: 1,
-        column: 1,
-        evidence: `module '${name}' matches no kind in ${JSON.stringify(kinds)}`,
-        because: BECAUSE,
-        next: `add '${name}' to an existing kind's pattern, or give it its own kind in archstrict.config.ts`,
-      });
-    }
-  }
-
-  return violations;
+export function checkUncoveredModules(graph: ModuleGraph): Violation[] {
+  return graph.outsideFiles.map((file) => ({
+    rule: "uncovered-module",
+    path: file,
+    line: 1,
+    column: 1,
+    evidence: `'${file}' is in scope but matches no declared module`,
+    because: BECAUSE,
+    next: `add a declaredModules entry covering '${file}' in archstrict.config.ts, or add it to exclude if it isn't module content`,
+  }));
 }

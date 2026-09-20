@@ -11,7 +11,7 @@ import type { Config } from "../src/config.js";
 const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), "fixtures/public-surface");
 
 function baseConfig(deprecated: Config["deprecated"]): Config {
-  return { configPath: "<test>", modules: "src/*", kinds: { flat: "src/*" }, deprecated, because: "test config" };
+  return { configPath: "<test>", deprecated, because: "test config" };
 }
 
 describe("checkDeprecatedEdges", () => {

@@ -80,8 +80,6 @@ async function main() {
 
 export default {
   configPath: "<generated>",
-  modules: "packages/*",
-  kinds: { flat: "packages/*" },
   because: "converted from architecture.config.json",
   scope: "packages/**",
   classify: ${JSON.stringify(classify, null, 2)},

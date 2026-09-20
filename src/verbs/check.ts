@@ -152,7 +152,7 @@ export function runRules(graph: ModuleGraph, config: Config): CheckResult {
     ...checkPublicSurfaceBypass(graph),
     ...checkCycles(graph, config),
     ...checkStaleCycleExceptions(graph, config),
-    ...checkUncoveredModules(graph, config),
+    ...checkUncoveredModules(graph),
     ...checkEmptyRuleSet(graph, config),
     ...checkMustBeEmpty(allProjectRelativeFiles(graph), config),
   ];

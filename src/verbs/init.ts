@@ -119,7 +119,7 @@ export default {
   // Root-level files (this config, the generated union type) are never
   // module content - kept out of analysis entirely, not just uncounted.
   exclude: ["*.ts"],
-  classify: [{ glob: ${JSON.stringify(modulesGlob)}, tags: ["kind:flat"] }],
+  classify: [{ glob: ${JSON.stringify(`${modulesRoot}**`)}, tags: ["kind:flat"] }],
   declaredModules: [
 ${declaredModulesEntries}
   ],
