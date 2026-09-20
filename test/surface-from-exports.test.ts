@@ -4,7 +4,7 @@
 // exports map (every entry confidently resolved back to a real, existing
 // source file), never a partial or guessed-wrong array.
 import { describe, expect, test } from "vitest";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildModuleGraph } from "../src/module-graph.js";
@@ -19,6 +19,47 @@ function withTempProject(fn: (root: string) => void): void {
 }
 
 describe("declaredModules[].surface derived from a real package.json exports map", () => {
+  test("an existing declaration output permits the default condition to resolve source", () => {
+    withTempProject((root) => {
+      const dir = join(root, "packages", "lib");
+      mkdirSync(join(dir, "src"), { recursive: true });
+      mkdirSync(join(dir, "dist"), { recursive: true });
+      writeFileSync(join(dir, "src", "index.ts"), "export const main = 1;\n");
+      writeFileSync(join(dir, "dist", "index.d.ts"), "export declare const main: number;\n");
+      writeFileSync(join(dir, "package.json"), JSON.stringify({
+        name: "lib",
+        // The resolver removes dist/ but does not insert src/ into a path.
+        exports: { ".": { types: "./dist/index.d.ts", default: "./src/index.js" } },
+      }));
+
+      const graph = buildModuleGraph({
+        projectRoot: root,
+        declaredModules: [{ name: "lib", glob: "packages/lib/**" }],
+      });
+      expect(graph.modules.get("lib")!.surfaceFiles).toEqual([realpathSync(join(dir, "src", "index.ts"))]);
+    });
+  });
+
+  test("an existing declaration output resolves through the built-to-source conversion", () => {
+    withTempProject((root) => {
+      const dir = join(root, "packages", "lib");
+      mkdirSync(join(dir, "src"), { recursive: true });
+      mkdirSync(join(dir, "dist", "src"), { recursive: true });
+      writeFileSync(join(dir, "src", "index.ts"), "export const main = 1;\n");
+      writeFileSync(join(dir, "dist", "src", "index.d.ts"), "export declare const main: number;\n");
+      writeFileSync(join(dir, "package.json"), JSON.stringify({
+        name: "lib",
+        exports: { ".": { types: "./dist/src/index.d.ts" } },
+      }));
+
+      const graph = buildModuleGraph({
+        projectRoot: root,
+        declaredModules: [{ name: "lib", glob: "packages/lib/**" }],
+      });
+      expect(graph.modules.get("lib")!.surfaceFiles).toEqual([realpathSync(join(dir, "src", "index.ts"))]);
+    });
+  });
+
   test("a multi-entry exports map with a source-pointing condition derives the full array", () => {
     withTempProject((root) => {
       const dir = join(root, "packages", "lib");

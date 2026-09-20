@@ -347,7 +347,9 @@ function resolveExportsEntry(value: unknown, moduleDir: string): string | undefi
 
   for (const raw of candidates) {
     const stripped = raw.replace(/^\.\//, "");
-    const asSource = stripped.endsWith(".ts") || stripped.endsWith(".tsx") ? stripped : undefined;
+    // Declaration outputs must pass through the built-to-source conversion.
+    const isDeclaration = /\.d\.(?:ts|mts|cts)$/.test(stripped);
+    const asSource = !isDeclaration && (stripped.endsWith(".ts") || stripped.endsWith(".tsx")) ? stripped : undefined;
     const guesses =
       asSource !== undefined
         ? [asSource]
