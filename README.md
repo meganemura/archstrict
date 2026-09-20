@@ -20,6 +20,6 @@ npm link
 npm link archstrict
 ```
 
-This puts a real `archstrict` binary at `node_modules/.bin/archstrict` in that project - what the CLI, `archstrict init`, and the PostToolUse hook (see [hook.md](skills/archstrict/references/hook.md)) all expect to find there. `npm unlink archstrict` in the target project removes it again.
+This puts a real `archstrict` binary at `node_modules/.bin/archstrict` in that project - the exact path the PostToolUse hook (see [hook.md](skills/archstrict/references/hook.md)) checks for before running `check` on your behalf after an edit. `npm unlink archstrict` in the target project removes it again.
 
 Without a global link: `npm pack` in this checkout produces a tarball (`archstrict-0.0.0.tgz`), then `npm install /path/to/that/tarball` in the target project does the same thing.
