@@ -72,11 +72,18 @@ describe("detectTypeLeaks against nukadoko's real src/index.ts", () => {
     // separate bug in that package, out of scope for this repository to
     // fix - so this asserts what is true of archstrict's own detector
     // (it finds real leaks in real code, not vacuously zero), not that
-    // nukadoko stays broken. 31 is today's measured count (nukadoko
-    // 0.12.0); an upper bound, not a pin, so a fix on nukadoko's side
-    // makes this stricter over time rather than failing here - the same
-    // "may only shrink" semantics deprecated-edge counts already have.
+    // nukadoko stays broken. 30 is today's measured count (nukadoko
+    // 0.12.0, once rule 6 also walks a type reference's own type
+    // arguments and dedupes findings that reach the identical
+    // declaration two structural ways - many of nukadoko's own
+    // step-record fields are arrays, e.g. ScreenshotEntry[], and TS does
+    // not always hand back the same Type object for an array's own type
+    // argument and its index signature's value type, even though both
+    // name the same declaration); an upper bound, not a pin, so a fix on
+    // nukadoko's side makes this stricter over time rather than failing
+    // here - the same "may only shrink" semantics deprecated-edge counts
+    // already have.
     expect(leaks.length).toBeGreaterThan(0);
-    expect(leaks.length).toBeLessThanOrEqual(31);
+    expect(leaks.length).toBeLessThanOrEqual(30);
   });
 });
