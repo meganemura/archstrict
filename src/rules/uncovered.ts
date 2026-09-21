@@ -24,22 +24,24 @@ export type Violation = {
 
 const BECAUSE = "a file matching no declared module is unchecked, not passing (deptrac's --fail-on-uncovered)";
 
+export function uncoveredViolationFor(file: string, rootDir: string): Violation {
+  // `path` stays absolute (a location every other rule's own `path`
+  // points at) - only the glob suggested in `next` needs to be
+  // project-relative, since that's a value meant to be pasted directly
+  // into declaredModules[].glob or exclude, both of which are always
+  // project-relative (config.md).
+  const rel = toProjectRelativePosix(file, rootDir);
+  return {
+    rule: "uncovered-module",
+    path: file,
+    line: 1,
+    column: 1,
+    evidence: `'${file}' is in scope but matches no declared module`,
+    because: BECAUSE,
+    next: `add a declaredModules entry covering '${rel}' in archstrict.config.ts, or add it to exclude if it isn't module content`,
+  };
+}
+
 export function checkUncoveredModules(graph: ModuleGraph): Violation[] {
-  return graph.outsideFiles.map((file) => {
-    // `path` stays absolute (a location every other rule's own `path`
-    // points at) - only the glob suggested in `next` needs to be
-    // project-relative, since that's a value meant to be pasted directly
-    // into declaredModules[].glob or exclude, both of which are always
-    // project-relative (config.md).
-    const rel = toProjectRelativePosix(file, graph.rootDir);
-    return {
-      rule: "uncovered-module",
-      path: file,
-      line: 1,
-      column: 1,
-      evidence: `'${file}' is in scope but matches no declared module`,
-      because: BECAUSE,
-      next: `add a declaredModules entry covering '${rel}' in archstrict.config.ts, or add it to exclude if it isn't module content`,
-    };
-  });
+  return graph.outsideFiles.map((file) => uncoveredViolationFor(file, graph.rootDir));
 }

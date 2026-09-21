@@ -286,7 +286,7 @@ function isWorkspaceSiblingResolution(resolvedFile: string, rootDir: string): bo
 // (moduleGlobBaseDir of `dm.glob`), one project-relative glob per surface
 // entry - a single string normalizes to one entry, an array to one per
 // element.
-function surfaceGlobsFor(dm: DeclaredModule, projectRoot: string, globalDefaultSurface: string): string[] {
+export function surfaceGlobsFor(dm: DeclaredModule, projectRoot: string, globalDefaultSurface: string): string[] {
   const moduleDir = join(projectRoot, moduleGlobBaseDir(dm.glob));
   const surface = effectiveSurface(dm, moduleDir, globalDefaultSurface);
   const entries = Array.isArray(surface) ? surface : [surface as string];
@@ -520,7 +520,7 @@ function buildDeclaredModules(
   return modules;
 }
 
-function moduleForDeclaredFile(
+export function moduleForDeclaredFile(
   filePath: string,
   projectRoot: string,
   declaredModules: readonly DeclaredModule[],
