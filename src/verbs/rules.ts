@@ -1,14 +1,49 @@
 // Responsibility: describe a current or proposed path using the project's config.
-// Boundary: reuses graph membership and violation constructors; does not project edge constraints.
+// Boundary: projects source-side constraints; actual target evaluation remains with check.
 import { existsSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { classifyFile, compileGlob } from "../classify.js";
 import { buildModuleGraph, DEFAULT_SURFACE, moduleForDeclaredFile, surfaceGlobsFor, toProjectRelativePosix } from "../module-graph.js";
 import { checkMustBeEmpty, type Violation as MustBeEmptyViolation } from "../rules/must-be-empty.js";
 import { uncoveredViolationFor, type Violation as UncoveredViolation } from "../rules/uncovered.js";
+import { assertSequenceListsValue, formatPredicate, matchesPredicate, sequenceFor } from "../rules/constraints.js";
 import { loadConfig } from "./check.js";
 
+export type AllowDenyProjection = {
+  source: string;
+  targetNamespace: string;
+  allow: string[] | undefined;
+  deny: string[] | undefined;
+  sameGroupExempt: true;
+  exceptionsFromP: { to: string; because: string }[];
+  edgeType: "value" | "type" | "both";
+  importForm: "static" | "dynamic" | "both";
+  because: string;
+};
+
+export type OrderProjection = {
+  tagNamespace: string;
+  within: string | undefined;
+  ownLayer: string;
+  sequence: string[];
+  mayDependOn: string[];
+  edgeType: "value" | "type" | "both";
+  importForm: "static" | "dynamic" | "both";
+  because: string;
+};
+
+export type PointProjection = {
+  identifier: string;
+  forbiddenTo: string;
+  edgeType: "value" | "type" | "both";
+  importForm: "static" | "dynamic" | "both";
+  because: string;
+};
+
 export type RulesResult = {
+  allowDenyConstraints: AllowDenyProjection[];
+  orderConstraints: OrderProjection[];
+  pointConstraints: PointProjection[];
   path: string;
   exists: boolean;
   excluded: boolean;
@@ -60,12 +95,69 @@ export async function rules(projectRoot: string, path: string): Promise<RulesRes
     }
   }
   const modules = [...graph.modules.values()].sort((a, b) => a.name.localeCompare(b.name));
+  const tags = [...classifyFile(rel, config)].sort();
+  const allowDenyConstraints: AllowDenyProjection[] = (config.edges?.allowDeny ?? [])
+    .filter((rule) => tags.includes(rule.source))
+    .map((rule) => ({
+      source: rule.source,
+      targetNamespace: rule.targetNamespace,
+      allow: rule.allow ? [...rule.allow] : undefined,
+      deny: rule.deny ? [...rule.deny] : undefined,
+      sameGroupExempt: true,
+      exceptionsFromP: (rule.exceptions ?? []).filter((ex) => compileGlob(ex.from).test(rel))
+        .map((ex) => ({ to: ex.to, because: ex.because })),
+      edgeType: rule.edgeType ?? "both",
+      importForm: rule.importForm ?? "both",
+      because: rule.because,
+    }));
+  const orderConstraints: OrderProjection[] = [];
+  for (const rule of config.edges?.order ?? []) {
+    const ownLayerTag = tags.find((tag) => tag.startsWith(`${rule.tagNamespace}:`));
+    if (ownLayerTag === undefined) continue;
+    let withinValue: string | undefined;
+    if (rule.within !== undefined) {
+      const withinTag = tags.find((tag) => tag.startsWith(`${rule.within}:`));
+      if (withinTag === undefined) continue;
+      withinValue = withinTag.slice(rule.within.length + 1);
+    }
+    const sequence = sequenceFor(rule, withinValue);
+    if (sequence === undefined) continue;
+    // Detect the same configuration error as check before an edge exists:
+    // the queried path's own layer must already be placed in its sequence.
+    assertSequenceListsValue(rule, withinValue, sequence, ownLayerTag);
+    const ownLayer = ownLayerTag.slice(rule.tagNamespace.length + 1);
+    const idx = sequence.indexOf(ownLayer);
+    orderConstraints.push({
+      tagNamespace: rule.tagNamespace,
+      within: rule.within,
+      ownLayer,
+      sequence: [...sequence],
+      // computeOrder permits targetIndex <= sourceIndex (downward-only),
+      // so this prefix includes the queried path's own layer.
+      mayDependOn: sequence.slice(0, idx + 1),
+      edgeType: rule.edgeType ?? "both",
+      importForm: rule.importForm ?? "both",
+      because: rule.because,
+    });
+  }
+  const pointConstraints: PointProjection[] = (config.edges?.point ?? [])
+    .filter((rule) => matchesPredicate(rule.from, rel, new Set(tags)))
+    .map((rule) => ({
+      identifier: `${formatPredicate(rule.from)} -> ${formatPredicate(rule.to)}`,
+      forbiddenTo: formatPredicate(rule.to),
+      edgeType: rule.edgeType ?? "both",
+      importForm: rule.importForm ?? "both",
+      because: rule.because,
+    }));
   return {
+    allowDenyConstraints,
+    orderConstraints,
+    pointConstraints,
     path: resolvedPath,
     exists,
     excluded,
     module,
-    tags: [...classifyFile(rel, config)].sort(),
+    tags,
     isSurfaceFile,
     importableFrom: modules.filter((m) => m.name !== module && m.surfaceFiles.length > 0)
       .map((m) => ({ module: m.name, surfaceFiles: m.surfaceFiles })),
@@ -102,6 +194,27 @@ export function formatRulesText(result: RulesResult): string {
   lines.push(`friend access:${result.friendAccess.length === 0 ? " (none)" : ""}`);
   for (const entry of result.friendAccess) {
     lines.push(`  ${entry.module} -> ${entry.file}`, `    from: ${entry.from}`, `    because: ${entry.because}`);
+  }
+  lines.push(`allowDeny constraints:${result.allowDenyConstraints.length === 0 ? " (none)" : ""}`);
+  for (const entry of result.allowDenyConstraints) {
+    lines.push(`  source: ${entry.source}`, `  target namespace: ${entry.targetNamespace}`,
+      `  allow: ${entry.allow === undefined ? "(unset)" : JSON.stringify(entry.allow)}`,
+      `  deny: ${entry.deny === undefined ? "(unset)" : JSON.stringify(entry.deny)}`,
+      `  same group exempt: ${entry.sameGroupExempt}`,
+      `  exceptions from path: ${entry.exceptionsFromP.length === 0 ? "(none)" : JSON.stringify(entry.exceptionsFromP)}`,
+      `  edge type: ${entry.edgeType}`, `  import form: ${entry.importForm}`, `  because: ${entry.because}`);
+  }
+  lines.push(`order constraints:${result.orderConstraints.length === 0 ? " (none)" : ""}`);
+  for (const entry of result.orderConstraints) {
+    lines.push(`  tag namespace: ${entry.tagNamespace}`, `  within: ${entry.within ?? "(unscoped)"}`,
+      `  own layer: ${entry.ownLayer}`, `  sequence: ${JSON.stringify(entry.sequence)}`,
+      `  may depend on: ${JSON.stringify(entry.mayDependOn)}`,
+      `  edge type: ${entry.edgeType}`, `  import form: ${entry.importForm}`, `  because: ${entry.because}`);
+  }
+  lines.push(`point constraints:${result.pointConstraints.length === 0 ? " (none)" : ""}`);
+  for (const entry of result.pointConstraints) {
+    lines.push(`  identifier: ${entry.identifier}`, `  forbidden to: ${entry.forbiddenTo}`,
+      `  edge type: ${entry.edgeType}`, `  import form: ${entry.importForm}`, `  because: ${entry.because}`);
   }
   return lines.join("\n") + "\n";
 }

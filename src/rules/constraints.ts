@@ -55,7 +55,11 @@ export type EdgeRuleCoverage = {
 type AllowDenyRule = NonNullable<Config["edges"]>["allowDeny"] extends readonly (infer R)[] | undefined ? R : never;
 type OrderRule = NonNullable<Config["edges"]>["order"] extends readonly (infer R)[] | undefined ? R : never;
 type PointRule = NonNullable<Config["edges"]>["point"] extends readonly (infer R)[] | undefined ? R : never;
-type FromToPredicate = string | { tags: readonly string[]; exclude?: { tags: readonly string[] } };
+export type FromToPredicate = string | { tags: readonly string[]; exclude?: { tags: readonly string[] } };
+
+export function formatPredicate(predicate: FromToPredicate): string {
+  return typeof predicate === "string" ? predicate : JSON.stringify(predicate);
+}
 
 // A resolved edge's target tags: a synthesized `pkg:<name>` tag when the
 // edge reaches outside this project entirely (a real npm package, a
@@ -130,7 +134,7 @@ function matchesEdgeFilters(
   return true;
 }
 
-function matchesPredicate(predicate: FromToPredicate, relPath: string | undefined, tags: Set<string>): boolean {
+export function matchesPredicate(predicate: FromToPredicate, relPath: string | undefined, tags: Set<string>): boolean {
   if (typeof predicate === "string") {
     return relPath !== undefined && compileGlob(predicate).test(relPath);
   }
@@ -223,11 +227,11 @@ export function checkAllowDeny(graph: ModuleGraph, config: Config): ConstraintVi
 // A `within` value that DOES have a sequence, but doesn't list this
 // specific layer value, is the real config error: classify assigned a
 // value the config's author forgot to place.
-function sequenceFor(rule: OrderRule, withinValue: string | undefined): readonly string[] | undefined {
+export function sequenceFor(rule: OrderRule, withinValue: string | undefined): readonly string[] | undefined {
   return rule.sequence[withinValue ?? ""];
 }
 
-function assertSequenceListsValue(
+export function assertSequenceListsValue(
   rule: OrderRule,
   withinValue: string | undefined,
   sequence: readonly string[],
@@ -331,7 +335,7 @@ function computePoint(
 ): { violations: ConstraintViolation[]; coverage: EdgeRuleCoverage[] } {
   const rules: readonly PointRule[] = config.edges?.point ?? [];
   const identifiers = rules.map(
-    (rule) => `${typeof rule.from === "string" ? rule.from : JSON.stringify(rule.from)} -> ${typeof rule.to === "string" ? rule.to : JSON.stringify(rule.to)}`,
+    (rule) => `${formatPredicate(rule.from)} -> ${formatPredicate(rule.to)}`,
   );
   const rootDir = graph.rootDir;
   const violations: ConstraintViolation[] = [];
