@@ -386,6 +386,7 @@ export function formatText(result: CheckResult): string {
     if (v.rule === "config-meaning") {
       lines.push(`  tier: ${v.tier}`);
       if (v.skipped) lines.push("  skipped: true");
+      else if (v.undecided) lines.push("  undecided: true");
       else lines.push(`  confidence: ${v.confidence}`);
     }
     lines.push(`  because: ${v.because}`);

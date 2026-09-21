@@ -1,5 +1,5 @@
 // Responsibility: verify config assessments with fake Provers and local CLI runs.
-// Boundary: tests never contact the scoring service or supply credentials.
+// Boundary: tests never contact the assessment service or supply credentials.
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import * as hegel from "@hegeldev/hegel";
 import * as gen from "@hegeldev/hegel/generators";
@@ -22,7 +22,12 @@ const config: Config = {
     point: [{ from: { tags: ["role:app"] }, to: "src/infra/**", because: "Do not access infrastructure directly." }],
   },
 };
-const answers = { "allowDeny-0": { score: 0.83 }, "order-0": { score: 0.49 }, "point-0": { score: 0.5 } };
+function answer(choice: "consistent" | "contradicts", confidence: number) {
+  return { type: "choice" as const, choice, confidence,
+    probabilities: { consistent: choice === "consistent" ? confidence : 1 - confidence,
+      contradicts: choice === "contradicts" ? confidence : 1 - confidence } };
+}
+const answers = { "allowDeny-0": answer("contradicts", 0.83), "order-0": answer("consistent", 0.49), "point-0": answer("contradicts", 0.7) };
 
 test("one batch preserves each complete rule and its reason", async () => {
   const prover = vi.fn<Prover>(async () => ({ answers }));
@@ -34,13 +39,14 @@ test("one batch preserves each complete rule and its reason", async () => {
   for (const kind of ["allowDeny", "order", "point"] as const) {
     const entry = config.edges![kind]![0]!;
     const question = request.questions[`${kind}-0`]!;
-    expect(question.type).toBe("score");
-    expect(question.criteria).toHaveLength(3);
+    expect(question.type).toBe("choice");
+    expect(question.criteria).toEqual({ consistent: "the shape agrees with what the because text claims",
+      contradicts: "the shape actually permits something the because text says must never happen" });
     expect(question.instructions).toContain(JSON.stringify({ kind, ...entry }));
     expect(question.instructions).toContain(entry.because);
   }
   expect(result).toHaveLength(2);
-  expect(result.map(v => "confidence" in v ? v.confidence : undefined)).toEqual([0.83, 0.5]);
+  expect(result.map(v => "confidence" in v ? v.confidence : undefined)).toEqual([0.83, 0.7]);
   expect(result.map(v => v.because)).toEqual([config.edges!.allowDeny![0]!.because, config.edges!.point![0]!.because]);
   for (const v of result) {
     expect(v).toMatchObject({ rule: "config-meaning", tier: "calibrated", path: config.configPath, line: 1, column: 1 });
@@ -83,23 +89,49 @@ test.each([
   expect(JSON.stringify(result)).not.toContain("private error details");
 });
 
-const invalidAnswers: Record<string, { score: number }>[] = [{}, { "allowDeny-0": { score: 0.9 } }, { ...answers, "order-0": { score: NaN } },
-  { ...answers, "order-0": { score: 1.1 } }, { ...answers, "order-0": { score: -0.1 } }];
+const invalidAnswers: unknown[] = [{}, { "allowDeny-0": answer("contradicts", 0.9) },
+  ...[NaN, Infinity, 1.1, -0.1, "0.8", undefined].map(confidence => ({ ...answers, "order-0": { ...answer("consistent", 0.8), confidence } })),
+  ...[null, {}, { ...answer("consistent", 0.8), type: "score" }, { ...answer("consistent", 0.8), choice: "unknown" },
+    { ...answer("consistent", 0.8), probabilities: null },
+    { ...answer("consistent", 0.8), probabilities: { consistent: 0.8 } },
+    { ...answer("consistent", 0.8), probabilities: { consistent: NaN, contradicts: 0.2 } },
+    { ...answer("consistent", 0.8), probabilities: { consistent: 0.8, contradicts: 2 } },
+  ].map(value => ({ ...answers, "order-0": value }))];
 test.each(invalidAnswers)(
   "incomplete or invalid answers discard partial findings", async (invalid) => {
-    const result = await checkConfigMeaning(config, true, async () => ({ answers: invalid }));
+    const result = await checkConfigMeaning(config, true, async () => ({ answers: invalid }) as Awaited<ReturnType<Prover>>);
     expect(result).toHaveLength(1);
     expect(result[0]).toMatchObject({ skipped: true });
     expect(result[0]).not.toHaveProperty("confidence");
+    expect(result[0]).not.toHaveProperty("undecided");
   });
 
-test("scores preserve their values and obey the inclusive threshold", async () => {
+test("low confidence contradictions are undecided assessments, not failures", async () => {
+  const confidence = 0.7 - Number.EPSILON;
+  const result = await checkConfigMeaning(config, true, async () => ({ answers: {
+    ...answers, "allowDeny-0": answer("consistent", 1), "point-0": answer("contradicts", confidence),
+  } }));
+  expect(result).toHaveLength(1);
+  expect(result[0]).toMatchObject({ undecided: true, tier: "calibrated", because: config.edges!.point![0]!.because });
+  expect(result[0]).not.toHaveProperty("confidence");
+  expect(result[0]).not.toHaveProperty("skipped");
+  expect(result[0]).not.toHaveProperty("todoModule");
+  expect(result[0]!.evidence).toContain(String(confidence));
+  expect(result[0]!.evidence).toContain(JSON.stringify(answer("contradicts", confidence).probabilities));
+  expect(result[0]!.next).toContain("human review");
+});
+
+test("choices preserve confidence and partition contradictions at the inclusive threshold", async () => {
   await hegel.testAsync(async tc => {
-    const values = tc.draw(gen.arrays(gen.integers({ minValue: 0, maxValue: 100 }), { minSize: 1 }));
+    const values = tc.draw(gen.arrays(gen.tuples(gen.booleans(), gen.floats({ minValue: 0, maxValue: 1 }))));
     const entries = values.map((_, i) => ({ source: `role:${i}`, targetNamespace: "role", deny: ["infra"], because: `Boundary ${i}` }));
     const result = await checkConfigMeaning({ ...config, edges: { allowDeny: entries } }, true,
-      async () => ({ answers: Object.fromEntries(values.map((n, i) => [`allowDeny-${i}`, { score: n / 100 }])) }));
-    expect(result.map(v => "confidence" in v ? v.confidence : undefined)).toEqual(values.filter(n => n >= 50).map(n => n / 100));
+      async () => ({ answers: Object.fromEntries(values.map(([contradicts, confidence], i) =>
+        [`allowDeny-${i}`, answer(contradicts ? "contradicts" : "consistent", confidence)])) }));
+    expect(result.map(v => v.because)).toEqual(values.flatMap(([contradicts], i) => contradicts ? [`Boundary ${i}`] : []));
+    expect(result.filter(v => !v.undecided).map(v => v.confidence)).toEqual(
+      values.filter(([contradicts, confidence]) => contradicts && confidence >= 0.7).map(([, confidence]) => confidence));
+    expect(result.filter(v => v.undecided)).toHaveLength(values.filter(([contradicts, confidence]) => contradicts && confidence < 0.7).length);
   });
 });
 
@@ -116,15 +148,16 @@ async function project(fn: (root: string) => Promise<void>) {
   try { await fn(root); } finally { rmSync(root, { recursive: true, force: true }); }
 }
 
-test("check keeps assessments advisory in strict modules and applies the existing file filter", async () => project(async root => {
-  const prover: Prover = async () => ({ answers: { "allowDeny-0": { score: 1 } } });
+test.each([1, 0.6])("check keeps assessments advisory in strict modules and applies the existing file filter: %s", async confidence => project(async root => {
+  const prover: Prover = async () => ({ answers: { "allowDeny-0": answer("contradicts", confidence) } });
   const result = await check(root, undefined, { prove: true, prover });
   expect(result.violations).toHaveLength(1);
   expect(result.violations[0]!.rule).toBe("config-meaning");
   expect(hasBlockingViolations(result)).toBe(false);
   expect(result.todo).toBe(0);
   expect(formatText(result)).toContain("tier: calibrated");
-  expect(formatText(result)).toContain("confidence: 1");
+  expect(formatText(result)).toContain(confidence === 1 ? "confidence: 1" : "undecided: true");
+  expect(formatText(result)).not.toContain("undefined");
   expect((await check(root, join(root, "src/app/index.ts"), { prove: true, prover })).violations).toEqual([]);
   expect((await check(root, join(root, "archstrict.config.ts"), { prove: true, prover })).violations).toHaveLength(1);
   expect((await check(root)).violations).toEqual([]);

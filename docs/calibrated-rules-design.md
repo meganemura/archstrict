@@ -1,4 +1,4 @@
-archstrict now provides the built-in `config-meaning` assessment through `archstrict check --prove`. This check is advisory and cannot enter todo. The general, user-authored `calibrated: [...]` array remains a design only. Neither `check` nor `rules <path>` reads that array. Adding it to a real config has no effect.
+archstrict provides the built-in `config-meaning` assessment through `archstrict check --prove`. Jev chooses whether a rule's shape agrees with or contradicts its `because` text. A contradiction produces a finding when confidence reaches 0.7. A lower confidence produces an `undecided` result. A consistent choice produces no finding. This check is advisory and cannot enter todo. The general, user-authored `calibrated: [...]` array remains a design only. Neither `check` nor `rules <path>` reads that array. Adding it to a real config has no effect.
 
 # Calibrated rules
 
@@ -48,6 +48,22 @@ Each skipped entry carries the rule id, its configured `because`, and the reason
 The report must retain these entries rather than omit them.
 
 This reuses the principle of rule 4, `empty-rule-set`: a rule that checks nothing must not look like a pass.
+
+The built-in `config-meaning` check is a deliberate, stricter exception to this general activation rule.
+It also requires `--prove` as explicit permission for each invocation.
+A routine CI or pre-commit check must not make paid requests because an unrelated tool has set the same credential.
+Without `--prove`, this check produces no assessment and makes no request.
+With `--prove`, a missing key or a failed batch produces one `skipped` entry for the whole batch.
+A contradiction with confidence below 0.7 produces an `undecided` entry with the rule's own `because` text.
+Its evidence includes the returned confidence and probabilities, but it has no `confidence` field.
+A contradiction at or above 0.7 produces a finding with a `confidence` field.
+All three outcomes carry `tier: "calibrated"`; they remain advisory and cannot enter todo, including in modules marked `strict`.
+The general field, threshold, and todo design below applies to future user-authored rules.
+
+An exhaustive allow list does not require a semantic assessment.
+Static config validation alone cannot establish the set of real values, but the dependency graph supplies those values.
+A deterministic graph check can detect an exhaustive allow list; the claim that static analysis cannot catch this case was incorrect.
+The built-in assessment instead checks whether the configured shape contradicts its own reason.
 
 ## 3. Violation shape
 

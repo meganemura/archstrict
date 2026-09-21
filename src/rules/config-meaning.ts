@@ -1,11 +1,18 @@
-// Responsibility: assess the meaning of configured edge rules through one Jev batch.
+// Responsibility: assess contradictions between edge rules and their reasons through one Jev batch.
 // Boundary: advisory config findings only; no module ownership or todo policy.
 import type { Config } from "../config.js";
 
+type ChoiceAnswer = {
+  type: "choice";
+  choice: "consistent" | "contradicts";
+  confidence: number;
+  probabilities: { consistent: number; contradicts: number };
+};
+
 export type Prover = (request: {
   state: string;
-  questions: Record<string, { type: "score"; instructions: string; criteria: string[] }>;
-}) => Promise<{ answers: Record<string, { score: number }> }>;
+  questions: Record<string, { type: "choice"; instructions: string; criteria: { consistent: string; contradicts: string } }>;
+}) => Promise<{ answers: Record<string, ChoiceAnswer> }>;
 
 // Like src/rules/empty-rule.ts, these findings use config.configPath and have no owning module to freeze debt against.
 // isFreezable() in src/verbs/check.ts tests for todoModule; omitting that field excludes these findings from todo files.
@@ -19,27 +26,24 @@ type BaseFinding = {
   next: string;
   tier: "calibrated";
 };
-type ScoredFinding = BaseFinding & { confidence: number; skipped?: never };
-type SkippedFinding = BaseFinding & { skipped: true; confidence?: never };
-export type Violation = ScoredFinding | SkippedFinding;
+type ContradictionFinding = BaseFinding & { confidence: number; skipped?: never; undecided?: never };
+type SkippedFinding = BaseFinding & { skipped: true; confidence?: never; undecided?: never };
+type UndecidedFinding = BaseFinding & { undecided: true; confidence?: never; skipped?: never };
+export type Violation = ContradictionFinding | SkippedFinding | UndecidedFinding;
 
-// Without calibration data, the probability midpoint is the initial threshold; equality also produces a finding.
-// Real usage data may justify a different threshold; 0.5 does not come from empirical tuning.
-const VACUOUS_THRESHOLD = 0.5;
+const CONTRADICTION_THRESHOLD = 0.7;
 // Fixed instructions compare each entry's JSON shape with its own because text to assess the config's internal consistency.
 // They do not assess design fitness against source code; empty-rule.ts checks structural applicability against real graph edges.
 const STATE = "This is an architecture-linting config for a TypeScript project. " +
   "allowDeny restricts which tags may depend on which; order enforces a layer sequence; point forbids specific from/to edges. " +
   "Every entry has a mandatory, human-written because text that explains its intent. " +
-  "A rule is vacuous in practice when its allow/deny/sequence/from-to shape does not forbid anything meaningful relative to its because text. " +
-  "For example, an allow list can name every value that could ever appear.";
-const QUESTION = "Given this rule's configured shape and its own stated because text above, what is the probability (0 to 1) " +
-  "that this rule is vacuous in practice - that its actual shape does not really forbid anything meaningful relative to what its because text claims to constrain?";
-const CRITERIA = [
-  "Low: the rule's shape clearly forbids something specific and consistent with its because text.",
-  "Middle: the rule technically restricts something, but its relationship to the because text is unclear.",
-  "High: the shape imposes no meaningful restriction relative to its because text, such as an exhaustive allow list or a sequence without an ordering constraint.",
-];
+  "Assess whether each rule's configured shape contradicts its own because text.";
+const QUESTION = "Does this rule's configured shape agree with (consistent) or contradict (contradicts) " +
+  "what its because text claims the rule restricts?";
+const CRITERIA = {
+  consistent: "the shape agrees with what the because text claims",
+  contradicts: "the shape actually permits something the because text says must never happen",
+};
 
 export class ProverFailure extends Error {
   constructor(readonly kind: "missing-key" | "http-status" | "invalid-json") {
@@ -79,6 +83,10 @@ function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function probability(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1;
+}
+
 export async function checkConfigMeaning(config: Config, prove: boolean, prover: Prover = realProver): Promise<Violation[]> {
   // Other tools can share this credential. Only --prove authorizes paid calls for this invocation.
   // A key alone must not cause paid requests during routine CI or pre-commit checks.
@@ -95,9 +103,9 @@ export async function checkConfigMeaning(config: Config, prove: boolean, prover:
   ];
   if (entries.length === 0) return [];
   const questions: Parameters<Prover>[0]["questions"] = Object.fromEntries(entries.map(({ id, kind, rule }) => [id, {
-    type: "score" as const,
+    type: "choice" as const,
     instructions: `${JSON.stringify({ kind, ...rule })}\nbecause: ${rule.because}\n${QUESTION}`,
-    criteria: [...CRITERIA],
+    criteria: { ...CRITERIA },
   }]));
   try {
     const response: unknown = await prover({ state: STATE, questions });
@@ -106,22 +114,32 @@ export async function checkConfigMeaning(config: Config, prove: boolean, prover:
     if (!record(response) || !record(response.answers)) {
       return skipped(config, "the Jev API request failed: invalid answers", "retry archstrict check --prove after checking the service response");
     }
-    const scores: number[] = [];
+    const assessments: ChoiceAnswer[] = [];
     for (const { id } of entries) {
       const answer = response.answers[id];
       if (!Object.hasOwn(response.answers, id)) {
         return skipped(config, "the Jev API request failed: missing an expected answer", "retry archstrict check --prove after checking the service response");
       }
-      if (!record(answer) || typeof answer.score !== "number" || !Number.isFinite(answer.score) || answer.score < 0 || answer.score > 1) {
-        return skipped(config, "the Jev API request failed: invalid score", "retry archstrict check --prove after checking the service response");
+      if (!record(answer) || answer.type !== "choice" ||
+        (answer.choice !== "consistent" && answer.choice !== "contradicts") || !probability(answer.confidence) ||
+        !record(answer.probabilities) || !probability(answer.probabilities.consistent) || !probability(answer.probabilities.contradicts)) {
+        return skipped(config, "the Jev API request failed: invalid choice answer", "retry archstrict check --prove after checking the service response");
       }
-      scores.push(answer.score);
+      assessments.push({ type: "choice", choice: answer.choice, confidence: answer.confidence,
+        probabilities: { consistent: answer.probabilities.consistent, contradicts: answer.probabilities.contradicts } });
     }
     return entries.flatMap(({ rule, label }, i): Violation[] => {
-      const confidence = scores[i]!;
-      if (confidence < VACUOUS_THRESHOLD) return [];
+      const { choice, confidence, probabilities } = assessments[i]!;
+      if (choice === "consistent") return [];
+      if (confidence < CONTRADICTION_THRESHOLD) {
+        return [{ rule: "config-meaning", path: config.configPath, line: 1, column: 1,
+          evidence: `${label}: Jev returned contradicts but could not decide with sufficient confidence (confidence ${confidence}; probabilities ${JSON.stringify(probabilities)})`,
+          because: rule.because,
+          next: `request a human review of the ${label} in archstrict.config.ts: the automated check could not decide`,
+          undecided: true, tier: "calibrated" }];
+      }
       return [{ rule: "config-meaning", path: config.configPath, line: 1, column: 1,
-        evidence: `${label}: Jev assessed this as vacuous in practice (probability ${confidence}) despite its 'because' text`,
+        evidence: `${label}: Jev assessed that its configured shape contradicts its 'because' text (confidence ${confidence})`,
         because: rule.because,
         next: `review the ${label} in archstrict.config.ts: correct its configured shape or its because text so they describe the same restriction`,
         confidence, tier: "calibrated" }];
