@@ -26,6 +26,8 @@ export function computeMoves(violation: ConstraintViolation, graph: ModuleGraph,
   const legal = rule.allow !== undefined ? new Set(rule.allow.map(value => `${prefix}${value}`)) :
     new Set([...targetTagsInGraph(graph, config)].filter(tag => tag.startsWith(prefix) && tag !== rule.source &&
       !(rule.deny ?? []).includes(tag.slice(prefix.length))));
+  // Use public surfaces as import targets; a module's full file list includes private implementation files.
+  // Proposing those files could trade a tag-boundary violation for the public-surface-bypass violation that rule 1 detects.
   const surfaces = new Set<string>();
   for (const module of graph.modules?.values() ?? []) {
     const tags = new Set(classifyByDirectoryName(toProjectRelativePosix(module.dir, graph.rootDir), config.classifyByDirectoryName));
@@ -42,6 +44,8 @@ export function computeMoves(violation: ConstraintViolation, graph: ModuleGraph,
 
   const from = toProjectRelativePosix(edge.fromFile, graph.rootDir);
   const to = edge.externalPackage === undefined ? toProjectRelativePosix(edge.resolvedFile, graph.rootDir) : undefined;
+  // compileGlob treats a literal star as a wildcard and provides no escape mechanism.
+  // Such a path could silently exempt other pairs; omit the move rather than promise an exact exception we cannot guarantee.
   if (to !== undefined && !from.includes("*") && !to.includes("*")) {
     const entry = { from, to, because: "<author must state a real reason>" };
     moves.push({ kind: "exception", widens: true,
@@ -52,11 +56,15 @@ export function computeMoves(violation: ConstraintViolation, graph: ModuleGraph,
   const value = violatingTag.slice(prefix.length);
   const modified = rule.allow !== undefined ? { ...rule, allow: [...rule.allow, value] } :
     { ...rule, deny: (rule.deny ?? []).filter(item => item !== value) };
+  // Verify widening with the real constraint and exhaustive-list checks; a shallow config copy preserves the caller's rules.
+  // This follows the empirical verification policy: a property test checks that expanding allow cannot add denied edges instead of assuming it.
   const hypothetical: Config = { ...config, edges: { ...config.edges,
     allowDeny: rules.map((entry, index) => index === ruleIndex ? modified : entry) } };
   const before = computeAllowDeny(graph, config).matches;
   const after = computeAllowDeny(graph, hypothetical).matches;
   const sameEdgeRule = (a: AllowDenyMatch, b: AllowDenyMatch) => a.edge === b.edge && a.ruleIndex === b.ruleIndex;
+  // Keep last-resort moves visible and name new findings from either check in creates.
+  // Hiding an imperfect option would conceal a real choice; labeling its consequences lets the reader assess it honestly.
   const creates = new Set(after.filter(match => !before.some(old => sameEdgeRule(old, match))).map(match => match.violation.rule as string));
   const beforeExhaustive = checkExhaustiveAllow(graph, config);
   for (const finding of checkExhaustiveAllow(graph, hypothetical)) {
@@ -65,6 +73,8 @@ export function computeMoves(violation: ConstraintViolation, graph: ModuleGraph,
   }
   const move: Move = {
     kind: rule.allow !== undefined ? "widen-allow" : "widen-deny", widens: true,
+    // One import can carry several tags in the same namespace, such as synthesized pkg: tags.
+    // Admitting one value can leave another forbidden, so a proposed widening does not automatically verify the edge.
     verified: !after.some(match => match.edge === edge && match.ruleIndex === ruleIndex),
     next: rule.allow !== undefined ? `add ${JSON.stringify(value)} to allow for allowDeny entry ${ruleIndex}` :
       `remove ${JSON.stringify(value)} from deny for allowDeny entry ${ruleIndex}`,
