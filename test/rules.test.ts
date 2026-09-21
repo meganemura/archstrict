@@ -262,3 +262,31 @@ describe("constraint projections", () => {
     expect(formatRulesText(result)).toContain('  forbidden to: {"tags":["area:shared"]}');
   }));
 });
+
+test.each([
+  ["z", "a"],
+  ["a", "z"],
+])("order projection and check select the same layer and scope from %s then %s", async (first, second) => withProject(async (root) => {
+  const cfg: Config = {
+    ...config,
+    configPath: join(root, "archstrict.config.ts"),
+    classify: [
+      { glob: "src/app/**", tags: [`layer:${first}`, `layer:${second}`, `scope:${first}`, `scope:${second}`] },
+      { glob: "src/shared/**", tags: ["layer:target", `scope:${first}`, `scope:${second}`] },
+    ],
+    edges: { order: [{ tagNamespace: "layer", within: "scope", sequence: {
+      [first]: [first, "target", second],
+      [second]: [second, "target", first],
+    }, direction: "downward-only", because: "consistent selection" }] },
+  };
+  writeFileSync(cfg.configPath, `export default ${JSON.stringify(cfg)};`);
+  writeFileSync(join(root, "src/app/main.ts"), 'import { value } from "../shared/index.js"; export { value };');
+  const graph = buildModuleGraph({ projectRoot: root, declaredModules: cfg.declaredModules, exclude: cfg.exclude });
+  const violations = checkOrder(graph, cfg);
+  expect(violations).toHaveLength(1);
+  expect(violations[0]!.evidence).toBe(`'../shared/index.js' reaches 'layer:target' from 'layer:${first}' (layer sequence: ${first} -> target -> ${second})`);
+  const result = await rules(root, join(root, "src/app/main.ts"));
+  expect(result.tags).toEqual(["area:app", "layer:a", "layer:z", "scope:a", "scope:z"]);
+  expect(result.orderConstraints).toHaveLength(1);
+  expect(result.orderConstraints[0]).toMatchObject({ ownLayer: first, sequence: [first, "target", second], mayDependOn: [first] });
+}));

@@ -30,6 +30,7 @@ JSON omits fields whose values are undefined, including `module` when membership
   A target with the same source tag is exempt from that rule.
   `exceptionsFromP` lists matching importer exceptions; each target must still match its `to` glob for the exception to apply.
 - `orderConstraints` reports the path's own layer and the sequence for its scope.
+  `rules` and `check` select the same layer and scope when a path has multiple tags in one namespace.
   `mayDependOn` contains the sequence prefix through that layer, inclusive, following downward-only order.
   Missing layer tags, missing scope tags, and undeclared scope sequences omit the rule.
   A layer missing from a declared sequence produces the same configuration error as check, before an import exists.

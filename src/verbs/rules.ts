@@ -95,7 +95,8 @@ export async function rules(projectRoot: string, path: string): Promise<RulesRes
     }
   }
   const modules = [...graph.modules.values()].sort((a, b) => a.name.localeCompare(b.name));
-  const tags = [...classifyFile(rel, config)].sort();
+  const sourceTags = classifyFile(rel, config);
+  const tags = [...sourceTags].sort();
   const allowDenyConstraints: AllowDenyProjection[] = (config.edges?.allowDeny ?? [])
     .filter((rule) => tags.includes(rule.source))
     .map((rule) => ({
@@ -112,11 +113,11 @@ export async function rules(projectRoot: string, path: string): Promise<RulesRes
     }));
   const orderConstraints: OrderProjection[] = [];
   for (const rule of config.edges?.order ?? []) {
-    const ownLayerTag = tags.find((tag) => tag.startsWith(`${rule.tagNamespace}:`));
+    const ownLayerTag = [...sourceTags].find((tag) => tag.startsWith(`${rule.tagNamespace}:`));
     if (ownLayerTag === undefined) continue;
     let withinValue: string | undefined;
     if (rule.within !== undefined) {
-      const withinTag = tags.find((tag) => tag.startsWith(`${rule.within}:`));
+      const withinTag = [...sourceTags].find((tag) => tag.startsWith(`${rule.within}:`));
       if (withinTag === undefined) continue;
       withinValue = withinTag.slice(rule.within.length + 1);
     }
