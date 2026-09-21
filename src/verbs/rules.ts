@@ -73,7 +73,8 @@ export async function rules(projectRoot: string, path: string): Promise<RulesRes
       .filter((friend) => compileGlob(friend.from).test(rel))
       .map((friend) => ({ module: m.name, file: friend.fileGlob, from: friend.from, because: friend.because }))),
     mustBeEmptyViolation: excluded ? undefined : checkMustBeEmpty([rel], config)[0],
-    uncoveredViolation: !excluded && module === undefined ? uncoveredViolationFor(resolvedPath, graph.rootDir) : undefined,
+    uncoveredViolation: !excluded && (exists ? graph.outsideFiles.includes(resolvedPath) : module === undefined)
+      ? uncoveredViolationFor(resolvedPath, graph.rootDir) : undefined,
   };
 }
 

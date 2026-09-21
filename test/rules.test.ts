@@ -55,6 +55,25 @@ describe("rules", () => {
     expect(declaration.exists).toBe(true);
     expect(declaration.module).toBeUndefined();
     expect(declaration.isSurfaceFile).toBe(false);
+    expect(declaration.uncoveredViolation).toBeUndefined();
+    const checked = spawnSync(process.execPath, [cli, "check", "--json"], { cwd: root, encoding: "utf8" });
+    expect(checked.status).toBe(1); // The fixture intentionally contains a must-be-empty violation.
+    const violations = JSON.parse(checked.stdout).violations as { path: string }[];
+    expect(violations.filter((v) => v.path === declaration.path)).toEqual([]);
+  }));
+
+  test("existing build outputs and non-source files agree with check's uncovered scope", async () => withProject(async (root) => {
+    mkdirSync(join(root, "dist"));
+    writeFileSync(join(root, "dist/output.ts"), "export const output = 1;");
+    writeFileSync(join(root, "README.md"), "Project notes\n");
+    const checked = await check(root);
+    for (const file of ["dist/output.ts", "README.md"]) {
+      const result = await rules(root, join(root, file));
+      expect(result.exists).toBe(true);
+      expect(result.module).toBeUndefined();
+      expect(result.uncoveredViolation).toBeUndefined();
+      expect(checked.violations.filter((v) => v.path === result.path)).toEqual([]);
+    }
   }));
 
   test("uses globs for new files, including new module surfaces", async () => withProject(async (root) => {
