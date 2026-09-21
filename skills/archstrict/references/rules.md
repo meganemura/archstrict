@@ -102,7 +102,7 @@ A node builtin also carries a second, shared `pkg:node` tag alongside its own ba
 
 - because: whatever the `point` entry's own `because` gives (mandatory)
 - evidence: `'<specifier>' matches a forbidden edge`
-- next: `remove this edge, or narrow the point rule in archstrict.config.ts if it's too broad`
+- next: `remove this edge, or narrow the point rule '<from> -> <to>' in archstrict.config.ts if it's too broad`. Glob values appear unchanged; tag predicates use `JSON.stringify` for `<from>` and `<to>`.
 - `todoModule`: the edge's own source module
 
 ## must-be-empty
