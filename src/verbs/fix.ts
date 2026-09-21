@@ -17,6 +17,9 @@ export type FixResult = {
   reverted: { path: string; reason: string }[];
 };
 
+// A bare interface or type can leak through an inferred return type without its declaring file ever exporting it.
+// Re-exporting that declaration produces TS2459, but the surface's new export name can make the type-leak rule report success.
+// Verification runs architecture rules, not a full semantic-diagnostics pass, so this guard must reject the declaration before any write.
 function exportedFromInternal(graph: ModuleGraph, leak: NonNullable<Violation["leak"]>): boolean {
   const source = graph.program.getSourceFile(leak.internalFile);
   const symbol = source === undefined ? undefined : graph.checker.getSymbolAtLocation(source);
@@ -52,6 +55,9 @@ export async function fix(projectRoot: string, file?: string, dryRun = false): P
       sources.add(leak.internalFile);
       declarations.set(leak.internalType, sources);
     }
+    // Rule 6 checks exported names, so one re-export can make two distinct declarations with the same name appear fixed.
+    // Consumers of the other declaration would receive the wrong type. A partial fix cannot resolve which declaration should own the name.
+    // Leave the whole file unchanged until a human resolves the collision, including the otherwise fixable leaks.
     const collisions = [...declarations].filter(([, sources]) => sources.size > 1);
     if (collisions.length > 0) {
       const reason = collisions.map(([name, sources]) => `name collision for '${name}' in ${[...sources].sort().join(", ")}; rename by hand`).join("; ");
@@ -73,6 +79,8 @@ export async function fix(projectRoot: string, file?: string, dryRun = false): P
       }
       const rel = relative(dirname(path), leak.internalFile).split(sep).join("/").replace(/(?:\.d)?\.[cm]?tsx?$/, "");
       const base = rel.startsWith("../") ? rel : `./${rel}`;
+      // A formatted relative path can still fail under the compiler's extension and module resolution rules.
+      // Require the real resolver to confirm the exact internal file before emitting a specifier that only appears correct.
       const specifier = [`${base}.js`, base, `${base}.ts`].find(candidate =>
         ts.resolveModuleName(candidate, path, prepared.compilerOptionsForFile(path), host).resolvedModule?.resolvedFileName === leak.internalFile);
       if (specifier === undefined) {
@@ -91,6 +99,9 @@ export async function fix(projectRoot: string, file?: string, dryRun = false): P
       result.planned.push({ path, lines });
       continue;
     }
+    // A re-export can remove a type leak while crossing a module boundary that the project's tag rules forbid.
+    // Compare the full violation set with baselineKeys: the regression can appear elsewhere, even when every targeted leak disappears.
+    // Restore the original bytes on failure so a locally successful type fix cannot leave a new architecture violation behind.
     const target = resolveWriteTarget(path);
     const original = readFileSync(target);
     const firstNewline = original.indexOf(10);
