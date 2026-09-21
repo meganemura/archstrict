@@ -391,6 +391,10 @@ export function formatText(result: CheckResult): string {
     }
     lines.push(`  because: ${v.because}`);
     lines.push(`  next: ${v.next}`);
+    if (v.rule === "tag-boundary" && v.moves?.length) {
+      lines.push("  moves:");
+      for (const move of v.moves) lines.push(`    ${move.kind}: ${move.next}`);
+    }
   }
   for (const s of result.suggestions) {
     lines.push(`[${s.rule}] ${s.path}:${s.line}:${s.column}`);

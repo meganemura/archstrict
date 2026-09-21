@@ -21,6 +21,7 @@
 // Also identifies allow lists that cover every real target value in the graph.
 // Boundary: pure predicates over a ModuleGraph and a Config, same as every
 // other rule file. No I/O, no output formatting, no todo handling.
+import { computeMoves, type Move } from "./moves.js";
 import { compileGlob } from "../classify.js";
 import { classifyFile } from "../classify.js";
 import { toProjectRelativePosix, type Edge, type ModuleGraph } from "../module-graph.js";
@@ -35,6 +36,7 @@ export type ConstraintViolation = {
   because: string;
   next: string;
   todoModule: string;
+  moves?: Move[];
 };
 
 // One entry per configured allowDeny/order/point rule, regardless of
@@ -144,7 +146,7 @@ export function matchesPredicate(predicate: FromToPredicate, relPath: string | u
   return true;
 }
 
-function isExemptedByGlobPair(
+export function isExemptedByGlobPair(
   edge: Edge,
   exceptions: readonly { from: string; to: string; because: string }[] | undefined,
   rootDir: string,
@@ -157,15 +159,18 @@ function isExemptedByGlobPair(
   );
 }
 
-function computeAllowDeny(
+export type AllowDenyMatch = { violation: ConstraintViolation; edge: Edge; ruleIndex: number; violatingTag: string };
+
+export function computeAllowDeny(
   graph: ModuleGraph,
   config: Config,
-): { violations: ConstraintViolation[]; coverage: EdgeRuleCoverage[] } {
+): { violations: ConstraintViolation[]; coverage: EdgeRuleCoverage[]; matches: AllowDenyMatch[] } {
   const rules: readonly AllowDenyRule[] = config.edges?.allowDeny ?? [];
   const rootDir = graph.rootDir;
   const violations: ConstraintViolation[] = [];
+  const matches: AllowDenyMatch[] = [];
   const evaluatedCounts = rules.map(() => 0);
-  if (rules.length === 0) return { violations, coverage: [] };
+  if (rules.length === 0) return { violations, coverage: [], matches };
 
   for (const edge of graph.edges) {
     const sourceTags = classifyFile(toProjectRelativePosix(edge.fromFile, rootDir), config);
@@ -195,7 +200,7 @@ function computeAllowDeny(
       }
       if (violatingTag === undefined) return;
 
-      violations.push({
+      const violation: ConstraintViolation = {
         rule: "tag-boundary",
         path: edge.fromFile,
         line: edge.fromPosition.line,
@@ -204,7 +209,9 @@ function computeAllowDeny(
         because: rule.because,
         next: `remove this edge, or add '${violatingTag.slice(namespacePrefix.length)}' to '${rule.source}'s allow list in archstrict.config.ts and record why`,
         todoModule: edge.fromModule,
-      });
+      };
+      violations.push(violation);
+      matches.push({ violation, edge, ruleIndex: i, violatingTag });
     });
   }
 
@@ -213,7 +220,15 @@ function computeAllowDeny(
     identifier: `${rule.source} -> ${rule.targetNamespace}`,
     evaluated: evaluatedCounts[i]!,
   }));
-  return { violations, coverage };
+  return { violations, coverage, matches };
+}
+
+export function targetTagsInGraph(graph: ModuleGraph, config: Config): Set<string> {
+  const tags = new Set<string>();
+  for (const edge of graph.edges) {
+    for (const tag of tagsForTarget(edge, config, graph.rootDir)) tags.add(tag);
+  }
+  return tags;
 }
 
 // Use the whole graph: a value reached only by another source still gives
@@ -227,26 +242,26 @@ function computeAllowDeny(
 // exempted, type-only, or dynamic edges currently reach it.
 // Apply this check only to allow lists. A deny list can legitimately name
 // a value that does not exist yet to guard against a future regression.
-export function checkExhaustiveAllow(graph: ModuleGraph, config: Config): { identifier: string; rule: AllowDenyRule }[] {
+export function checkExhaustiveAllow(graph: ModuleGraph, config: Config): { identifier: string; rule: AllowDenyRule; ruleId: "exhaustive-allow-list" }[] {
   const rules = config.edges?.allowDeny ?? [];
   if (!rules.some(rule => rule.allow !== undefined)) return [];
   const { coverage } = computeAllowDeny(graph, config);
-  const allTargetTags = new Set<string>();
-  for (const edge of graph.edges) {
-    for (const tag of tagsForTarget(edge, config, graph.rootDir)) allTargetTags.add(tag);
-  }
+  const allTargetTags = targetTagsInGraph(graph, config);
   return rules.flatMap((rule, i) => {
     if (rule.allow === undefined || coverage[i]!.evaluated === 0) return [];
     const prefix = `${rule.targetNamespace}:`;
     const universe = [...allTargetTags].filter(tag => tag.startsWith(prefix) && tag !== rule.source);
     const allowed = new Set(rule.allow.map(value => `${prefix}${value}`));
     return universe.length > 0 && universe.every(tag => allowed.has(tag))
-      ? [{ identifier: coverage[i]!.identifier, rule }] : [];
+      ? [{ identifier: coverage[i]!.identifier, rule, ruleId: "exhaustive-allow-list" as const }] : [];
   });
 }
 
 export function checkAllowDeny(graph: ModuleGraph, config: Config): ConstraintViolation[] {
-  return computeAllowDeny(graph, config).violations;
+  return computeAllowDeny(graph, config).matches.map(match => {
+    const moves = computeMoves(match.violation, graph, config, match);
+    return moves?.length ? { ...match.violation, moves } : match.violation;
+  });
 }
 
 // Two different things, confirmed distinct by running against Prisma's own
