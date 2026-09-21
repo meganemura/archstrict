@@ -33,6 +33,7 @@ import {
   type ConstraintViolation,
   type EdgeRuleCoverage,
 } from "../rules/constraints.js";
+import { checkConfigMeaning, type Prover, type Violation as ConfigMeaningViolation } from "../rules/config-meaning.js";
 import { fingerprintOf, readTodo } from "../todo-store.js";
 
 // Not one of the six rules: reported when a todo entry matches no current
@@ -74,7 +75,8 @@ export type AnyViolation =
   | CleanModuleHasTodoViolation
   | StaleCycleExceptionViolation
   | MustBeEmptyViolation
-  | ConstraintViolation;
+  | ConstraintViolation
+  | ConfigMeaningViolation;
 
 export type CheckResult = {
   modules: number;
@@ -348,7 +350,13 @@ export function applyTodo(graph: ModuleGraph, config: Config, result: CheckResul
   return { ...result, violations: remaining, todo: suppressed };
 }
 
-export async function check(projectRoot: string, focusFile?: string): Promise<CheckResult> {
+export type CheckOptions = { prove?: boolean; prover?: Prover };
+
+export function hasBlockingViolations(result: CheckResult): boolean {
+  return result.violations.some((v) => v.rule !== "config-meaning");
+}
+
+export async function check(projectRoot: string, focusFile?: string, options: CheckOptions = {}): Promise<CheckResult> {
   const configPath = resolve(projectRoot, "archstrict.config.ts");
   const config = await loadConfig(configPath);
   // declaredModules is the only source of scope now - REQUIRED_FIELDS
@@ -360,7 +368,9 @@ export async function check(projectRoot: string, focusFile?: string): Promise<Ch
     declaredModules: config.declaredModules,
     exclude: config.exclude,
   });
-  const result = applyTodo(graph, config, runRules(graph, config));
+  const evaluated = runRules(graph, config);
+  evaluated.violations.push(...await checkConfigMeaning(config, options.prove ?? false, options.prover));
+  const result = applyTodo(graph, config, evaluated);
   return focusFile === undefined ? result : filterToFile(result, focusFile);
 }
 
@@ -373,6 +383,11 @@ export function formatText(result: CheckResult): string {
   for (const v of result.violations) {
     lines.push(`[${v.rule}] ${v.path}:${v.line}:${v.column}`);
     lines.push(`  ${v.evidence}`);
+    if (v.rule === "config-meaning") {
+      lines.push(`  tier: ${v.tier}`);
+      if (v.skipped) lines.push("  skipped: true");
+      else lines.push(`  confidence: ${v.confidence}`);
+    }
     lines.push(`  because: ${v.because}`);
     lines.push(`  next: ${v.next}`);
   }
@@ -402,7 +417,7 @@ export function formatText(result: CheckResult): string {
   // just produced this clean result is circular, unlike every other
   // next: this tool ever prints (each names the one thing to actually
   // do about a real finding).
-  if (result.violations.length > 0) {
+  if (result.violations.some((v) => v.rule !== "config-meaning")) {
     lines.push(`next: archstrict todo`);
   }
   return lines.join("\n") + "\n";

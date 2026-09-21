@@ -3,7 +3,7 @@
 // Boundary: no rule logic here; verbs live in their own modules.
 import { agents, formatAgentsText } from "./verbs/agents.js";
 import { init } from "./verbs/init.js";
-import { check, formatText } from "./verbs/check.js";
+import { check, formatText, hasBlockingViolations } from "./verbs/check.js";
 import { todo } from "./verbs/todo.js";
 import { rules, formatRulesText } from "./verbs/rules.js";
 
@@ -22,14 +22,14 @@ function runInit(args: string[]): number {
 
 async function runCheck(args: string[]): Promise<number> {
   const asJson = args.includes("--json");
-  const [focusFile] = args.filter((a) => a !== "--json");
-  const result = await check(process.cwd(), focusFile);
+  const [focusFile] = args.filter((a) => a !== "--json" && a !== "--prove");
+  const result = await check(process.cwd(), focusFile, { prove: args.includes("--prove") });
   if (asJson) {
     process.stdout.write(JSON.stringify(result, null, 2) + "\n");
   } else {
     process.stdout.write(formatText(result));
   }
-  return result.violations.length > 0 ? 1 : 0;
+  return hasBlockingViolations(result) ? 1 : 0;
 }
 
 async function runTodo(args: string[]): Promise<number> {

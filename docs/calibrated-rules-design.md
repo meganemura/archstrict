@@ -1,4 +1,4 @@
-This design record describes a feature that archstrict does not implement yet. `archstrict check` and `archstrict rules <path>` do not read `calibrated` yet. Do not add a `calibrated` block to a real `archstrict.config.ts` for use today.
+archstrict now provides the built-in `config-meaning` assessment through `archstrict check --prove`. This check is advisory and cannot enter todo. The general, user-authored `calibrated: [...]` array remains a design only. Neither `check` nor `rules <path>` reads that array. Adding it to a real config has no effect.
 
 # Calibrated rules
 
