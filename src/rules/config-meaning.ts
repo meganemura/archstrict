@@ -7,6 +7,8 @@ export type Prover = (request: {
   questions: Record<string, { type: "score"; instructions: string; criteria: string[] }>;
 }) => Promise<{ answers: Record<string, { score: number }> }>;
 
+// Like src/rules/empty-rule.ts, these findings use config.configPath and have no owning module to freeze debt against.
+// isFreezable() in src/verbs/check.ts tests for todoModule; omitting that field excludes these findings from todo files.
 type BaseFinding = {
   rule: "config-meaning";
   path: string;
@@ -21,7 +23,11 @@ type ScoredFinding = BaseFinding & { confidence: number; skipped?: never };
 type SkippedFinding = BaseFinding & { skipped: true; confidence?: never };
 export type Violation = ScoredFinding | SkippedFinding;
 
+// Without calibration data, the probability midpoint is the initial threshold; equality also produces a finding.
+// Real usage data may justify a different threshold; 0.5 does not come from empirical tuning.
 const VACUOUS_THRESHOLD = 0.5;
+// Fixed instructions compare each entry's JSON shape with its own because text to assess the config's internal consistency.
+// They do not assess design fitness against source code; empty-rule.ts checks structural applicability against real graph edges.
 const STATE = "This is an architecture-linting config for a TypeScript project. " +
   "allowDeny restricts which tags may depend on which; order enforces a layer sequence; point forbids specific from/to edges. " +
   "Every entry has a mandatory, human-written because text that explains its intent. " +
@@ -61,6 +67,9 @@ const realProver: Prover = async (request) => {
   }
 };
 
+// HTTP errors can echo request details, including credentials; proving otherwise for every failure path is costly.
+// Fixed, authored reasons prevent caught request details from leaking TYPESAFE_API_KEY into evidence without repeated sanitization.
+// Error categories can select a reason, but evidence must never copy error.message or error.name.
 function skipped(config: Config, reason: string, next: string): Violation[] {
   return [{ rule: "config-meaning", path: config.configPath, line: 1, column: 1,
     tier: "calibrated", skipped: true, evidence: reason,
@@ -72,7 +81,10 @@ function record(value: unknown): value is Record<string, unknown> {
 
 export async function checkConfigMeaning(config: Config, prove: boolean, prover: Prover = realProver): Promise<Violation[]> {
   // Other tools can share this credential. Only --prove authorizes paid calls for this invocation.
+  // A key alone must not cause paid requests during routine CI or pre-commit checks.
   if (!prove) return [];
+  // Kind and index provide unique keys within one batch request and response; stable identities serve no purpose here.
+  // These keys are neither persisted nor compared across checks, and this config-level check never uses todo fingerprints.
   const entries = [
     ...(config.edges?.allowDeny ?? []).map((rule, i) => ({ id: `allowDeny-${i}`, kind: "allowDeny", rule,
       label: `allowDeny rule (source '${rule.source}', targetNamespace '${rule.targetNamespace}')` })),
@@ -89,6 +101,8 @@ export async function checkConfigMeaning(config: Config, prove: boolean, prover:
   }]));
   try {
     const response: unknown = await prover({ state: STATE, questions });
+    // Every expected answer must satisfy the response contract before we report any assessment.
+    // One skip marks an incomplete batch; partial findings would require guessing which answers to trust after a contract failure.
     if (!record(response) || !record(response.answers)) {
       return skipped(config, "the Jev API request failed: invalid answers", "retry archstrict check --prove after checking the service response");
     }
