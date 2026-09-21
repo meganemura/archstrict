@@ -335,6 +335,33 @@ describe("checkOrder", () => {
 });
 
 describe("checkPoint", () => {
+  test.each([
+    { from: "src/**", to: "src/**", identifier: "src/** -> src/**" },
+    {
+      from: { tags: ["kind:app"], exclude: { tags: ["role:adapter"] } },
+      to: { tags: ["kind:app"] },
+      identifier: '{"tags":["kind:app"],"exclude":{"tags":["role:adapter"]}} -> {"tags":["kind:app"]}',
+    },
+  ])("next identifies the matching point rule: $identifier", ({ from, to, identifier }) => {
+    const cfg: Config = {
+      configPath: "<test>",
+      declaredModules: [],
+      because: "test config",
+      classify: [{ glob: "src/**", tags: ["kind:app"] }],
+      edges: { point: [
+        { from: "other/**", to: "other/**", because: "unrelated rule" },
+        { from, to, because: "keep this boundary" },
+      ] },
+    };
+    const violations = checkPoint(fakeGraph([edge({})]), cfg);
+    expect(violations).toHaveLength(1);
+    expect(violations[0]!.next).toBe(
+      `remove this edge, or narrow the point rule '${identifier}' in archstrict.config.ts if it's too broad`,
+    );
+    expect(violations[0]!.evidence).toBe("'./b.js' matches a forbidden edge");
+    expect(violations[0]!.because).toBe("keep this boundary");
+  });
+
   test("flags an edge reaching src/internal/**", () => {
     const violations = checkPoint(graph(), config);
     const flaggedFiles = violations.map((v) => v.path.split("/").slice(-2).join("/"));

@@ -330,6 +330,9 @@ function computePoint(
   config: Config,
 ): { violations: ConstraintViolation[]; coverage: EdgeRuleCoverage[] } {
   const rules: readonly PointRule[] = config.edges?.point ?? [];
+  const identifiers = rules.map(
+    (rule) => `${typeof rule.from === "string" ? rule.from : JSON.stringify(rule.from)} -> ${typeof rule.to === "string" ? rule.to : JSON.stringify(rule.to)}`,
+  );
   const rootDir = graph.rootDir;
   const violations: ConstraintViolation[] = [];
   const evaluatedCounts = rules.map(() => 0);
@@ -354,15 +357,15 @@ function computePoint(
         column: edge.fromPosition.column,
         evidence: `'${edge.specifier}' matches a forbidden edge`,
         because: rule.because,
-        next: `remove this edge, or narrow the point rule in archstrict.config.ts if it's too broad`,
+        next: `remove this edge, or narrow the point rule '${identifiers[i]}' in archstrict.config.ts if it's too broad`,
         todoModule: edge.fromModule,
       });
     });
   }
 
-  const coverage = rules.map((rule, i) => ({
+  const coverage = identifiers.map((identifier, i) => ({
     kind: "point" as const,
-    identifier: `${typeof rule.from === "string" ? rule.from : JSON.stringify(rule.from)} -> ${typeof rule.to === "string" ? rule.to : JSON.stringify(rule.to)}`,
+    identifier,
     evaluated: evaluatedCounts[i]!,
   }));
   return { violations, coverage };
