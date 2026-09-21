@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-// Responsibility: parse argv and dispatch to a verb (init, check, todo, rules, agents).
+// Responsibility: parse argv and dispatch to a verb (init, check, todo, rules, agents, recommend).
 // Boundary: no rule logic here; verbs live in their own modules.
 import { agents, formatAgentsText } from "./verbs/agents.js";
+import { recommend, formatRecommendText } from "./verbs/recommend.js";
 import { init } from "./verbs/init.js";
 import { check, formatText, hasBlockingViolations } from "./verbs/check.js";
 import { todo } from "./verbs/todo.js";
@@ -66,13 +67,24 @@ function runAgents(args: string[]): number {
   return 0;
 }
 
+function runRecommend(args: string[]): number {
+  const paths = args.filter(arg => arg !== "--json");
+  if (paths.length > 1 || paths.some(arg => arg.startsWith("-"))) {
+    throw new Error("usage: archstrict recommend [modulesGlob] [--json]");
+  }
+  const result = recommend(process.cwd(), paths[0]);
+  process.stdout.write(args.includes("--json") ? JSON.stringify(result, null, 2) + "\n" : formatRecommendText(result));
+  return 0;
+}
+
 async function main(argv: string[]): Promise<number> {
   const [verb, ...rest] = argv;
   if (verb === undefined) {
-    process.stderr.write("usage: archstrict <init|check|todo|rules|agents> [args]\n");
+    process.stderr.write("usage: archstrict <init|check|todo|rules|agents|recommend> [args]\n");
     return 1;
   }
   try {
+    if (verb === "recommend") return runRecommend(rest);
     if (verb === "init") return runInit(rest);
     if (verb === "check") return await runCheck(rest);
     if (verb === "todo") return await runTodo(rest);
