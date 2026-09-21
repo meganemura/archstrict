@@ -216,6 +216,17 @@ function computeAllowDeny(
   return { violations, coverage };
 }
 
+// Use the whole graph: a value reached only by another source still gives
+// this rule something to forbid if its source later imports that value.
+// Looking only at the source's current edges would mistake a healthy rule
+// for an exhaustive list whenever those edges happen to obey it.
+// Exclude the source tag itself: computeAllowDeny exempts targets carrying
+// that tag, so this value cannot be a violation candidate for this rule.
+// exceptions, edgeType, and importForm select edges to judge, not values
+// that exist. An out-of-list value prevents exhaustiveness even when only
+// exempted, type-only, or dynamic edges currently reach it.
+// Apply this check only to allow lists. A deny list can legitimately name
+// a value that does not exist yet to guard against a future regression.
 export function checkExhaustiveAllow(graph: ModuleGraph, config: Config): { identifier: string; rule: AllowDenyRule }[] {
   const rules = config.edges?.allowDeny ?? [];
   if (!rules.some(rule => rule.allow !== undefined)) return [];
