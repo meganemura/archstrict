@@ -138,10 +138,12 @@ test("choices preserve confidence and partition contradictions at the inclusive 
 async function project(fn: (root: string) => Promise<void>) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "archstrict-meaning-")));
   mkdirSync(join(root, "src/app"), { recursive: true });
+  mkdirSync(join(root, "src/other"), { recursive: true });
+  writeFileSync(join(root, "src/other/index.ts"), 'import "node:path";');
   writeFileSync(join(root, "src/app/index.ts"), 'import "node:fs"; export const value = 1;');
   writeFileSync(join(root, "tsconfig.json"), '{"compilerOptions":{"noLib":true,"types":[]}}');
   writeFileSync(join(root, "archstrict.config.ts"), `export default ${JSON.stringify({
-    declaredModules: [{ name: "app", glob: "src/app/**" }], exclude: ["*.ts"], strict: ["app"],
+    declaredModules: [{ name: "app", glob: "src/app/**" }, { name: "other", glob: "src/other/**" }], exclude: ["*.ts"], strict: ["app"],
     classify: [{ glob: "src/app/**", tags: ["role:app"] }], because: "test architecture",
     edges: { allowDeny: [{ source: "role:app", targetNamespace: "pkg", allow: ["fs", "node"], because: "Restrict external imports." }] },
   })};`);

@@ -18,6 +18,7 @@
 // `edgeType`/`importForm` filter which edges a rule can match at all,
 // checked before the rule's own from/to or allow/deny logic runs. Default
 // "both" for each - unfiltered, matching every prior ticket's edges.
+// Also identifies allow lists that cover every real target value in the graph.
 // Boundary: pure predicates over a ModuleGraph and a Config, same as every
 // other rule file. No I/O, no output formatting, no todo handling.
 import { compileGlob } from "../classify.js";
@@ -213,6 +214,24 @@ function computeAllowDeny(
     evaluated: evaluatedCounts[i]!,
   }));
   return { violations, coverage };
+}
+
+export function checkExhaustiveAllow(graph: ModuleGraph, config: Config): { identifier: string; rule: AllowDenyRule }[] {
+  const rules = config.edges?.allowDeny ?? [];
+  if (!rules.some(rule => rule.allow !== undefined)) return [];
+  const { coverage } = computeAllowDeny(graph, config);
+  const allTargetTags = new Set<string>();
+  for (const edge of graph.edges) {
+    for (const tag of tagsForTarget(edge, config, graph.rootDir)) allTargetTags.add(tag);
+  }
+  return rules.flatMap((rule, i) => {
+    if (rule.allow === undefined || coverage[i]!.evaluated === 0) return [];
+    const prefix = `${rule.targetNamespace}:`;
+    const universe = [...allTargetTags].filter(tag => tag.startsWith(prefix) && tag !== rule.source);
+    const allowed = new Set(rule.allow.map(value => `${prefix}${value}`));
+    return universe.length > 0 && universe.every(tag => allowed.has(tag))
+      ? [{ identifier: coverage[i]!.identifier, rule }] : [];
+  });
 }
 
 export function checkAllowDeny(graph: ModuleGraph, config: Config): ConstraintViolation[] {

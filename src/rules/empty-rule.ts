@@ -4,16 +4,16 @@
 // really an omission" principle as rule 3, from the other direction: rule
 // 3 is "a file no declared module covers is a failure"; this is "a
 // declaration (a module, or a classify glob) that covers no real file is
-// a failure".
+// a failure". Also reports allow lists that cover every real target value.
 // Boundary: a config-vs-graph consistency check, not an edge check. No
 // I/O, no output formatting.
 import { assertDeprecatedModulesExist, type Config } from "../config.js";
 import { compileGlob } from "../classify.js";
 import { toProjectRelativePosix, type ModuleGraph } from "../module-graph.js";
-import { checkEdgesCoverage } from "./constraints.js";
+import { checkEdgesCoverage, checkExhaustiveAllow } from "./constraints.js";
 
 export type Violation = {
-  rule: "empty-rule-set";
+  rule: "empty-rule-set" | "exhaustive-allow-list";
   path: string; // config.configPath — this is a config-vs-graph check, not an edge check
   line: number;
   column: number;
@@ -106,11 +106,11 @@ export function checkEmptyRuleSet(graph: ModuleGraph, config: Config): Violation
   // never applies to any real edge in the graph is the constraint
   // engine's own version of the same idea: a rule that structurally
   // cannot fire must not look like a clean pass. This only catches the
-  // zero case - a rule that evaluates real edges and genuinely finds
-  // nothing forbidden reads as a real, meaningful pass, not a violation
-  // (and rules.md documents why a nonzero "clean" result still deserves a
-  // positive-control check before it's trusted, which this rule cannot
-  // substitute for).
+  // zero case. For an allow list, a genuine pass also needs a real target
+  // value outside the list, after the source-group exemption. Otherwise,
+  // the list guarantees a pass; the exhaustive-list check reports it below.
+  // rules.md explains why a nonzero clean result still needs a positive
+  // control, which these checks cannot replace.
   for (const c of checkEdgesCoverage(graph, config)) {
     if (c.evaluated === 0) {
       violations.push(
@@ -121,6 +121,15 @@ export function checkEmptyRuleSet(graph: ModuleGraph, config: Config): Violation
         ),
       );
     }
+  }
+
+  for (const { identifier, rule } of checkExhaustiveAllow(graph, config)) {
+    violations.push({
+      rule: "exhaustive-allow-list", path: config.configPath, line: 1, column: 1,
+      evidence: `allowDeny rule '${identifier}' allows every real target value with allow ${JSON.stringify(rule.allow)}`,
+      because: rule.because,
+      next: `narrow the allow list for '${identifier}' in archstrict.config.ts to a genuine subset of real target values, or remove the rule if it should forbid nothing today`,
+    });
   }
 
   return violations;

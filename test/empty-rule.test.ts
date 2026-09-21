@@ -131,7 +131,7 @@ describe("checkEmptyRuleSet", () => {
     expect(violations[0]!.evidence).toContain("matches no real edge in scope");
   });
 
-  test("an allowDeny rule that genuinely evaluates real edges and finds nothing forbidden is NOT flagged", () => {
+  test("an allowDeny rule covering every real target value is exhaustive", () => {
     const graph = buildModuleGraph({
       projectRoot: EDGES_FIXTURE,
       declaredModules: [
@@ -148,11 +148,73 @@ describe("checkEmptyRuleSet", () => {
         { glob: "src/b/**", tags: ["kind:b"] },
         { glob: "src/c/**", tags: ["kind:c"] },
       ],
-      // c really does import from both a and b - a genuinely evaluated,
-      // genuinely clean rule, not a rule that checks nothing.
+      // Both real target values are allowed, so every evaluated edge must pass.
       edges: { allowDeny: [{ source: "kind:c", targetNamespace: "kind", allow: ["a", "b"], because: "test" }] },
     };
 
-    expect(checkEmptyRuleSet(graph, config)).toHaveLength(0);
+    const findings = checkEmptyRuleSet(graph, config);
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({ rule: "exhaustive-allow-list", path: config.configPath,
+      line: 1, column: 1, because: "test" });
+    expect(findings[0]).not.toHaveProperty("todoModule");
+    expect(findings[0]!.evidence).toContain("kind:c -> kind");
+    expect(findings[0]!.evidence).toContain('["a","b"]');
+    expect(findings[0]!.next).toContain("kind:c -> kind");
+    expect(findings[0]!.next).toContain("narrow the allow list");
+    expect(findings[0]!.next).toContain("remove the rule");
   });
 });
+
+function roleProject(run: (root: string, config: Config) => void) {
+  const root = mkdtempSync(join(tmpdir(), "archstrict-allow-universe-"));
+  try {
+    for (const name of ["app", "infra", "shared", "db", "other"]) {
+      mkdirSync(join(root, "src", name), { recursive: true });
+      writeFileSync(join(root, "src", name, "index.ts"), "export const value = 1;");
+    }
+    writeFileSync(join(root, "src/app/index.ts"), 'import "../infra/index.js"; import "../shared/index.js";');
+    writeFileSync(join(root, "src/other/index.ts"), 'import "../app/index.js"; import "../db/index.js";');
+    writeFileSync(join(root, "tsconfig.json"), '{"compilerOptions":{"noLib":true,"types":[]}}');
+    const config: Config = { configPath: join(root, "archstrict.config.ts"), because: "test",
+      declaredModules: [{ name: "all", glob: "src/**" }],
+      classify: ["app", "infra", "shared", "db"].map(name => ({ glob: `src/${name}/**`, tags: [`role:${name}`] })),
+      edges: { allowDeny: [{ source: "role:app", targetNamespace: "role", allow: ["infra", "shared"], because: "Keep database access outside app." }] },
+    };
+    run(root, config);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+}
+
+test("a healthy allow list stays valid when another source reaches the forbidden database value", () => roleProject((root, config) => {
+  const graph = buildModuleGraph({ projectRoot: root, declaredModules: config.declaredModules });
+  expect(graph.edges.some(edge => edge.fromFile.endsWith("/other/index.ts") && edge.resolvedFile.endsWith("/db/index.ts"))).toBe(true);
+  expect(graph.edges.some(edge => edge.fromFile.endsWith("/app/index.ts") && edge.resolvedFile.endsWith("/db/index.ts"))).toBe(false);
+  expect(checkEmptyRuleSet(graph, config)).toEqual([]);
+}));
+
+test("the source value does not prevent an exhaustive finding", () => roleProject((root, config) => {
+  writeFileSync(join(root, "src/other/index.ts"), 'import "../app/index.js";');
+  const graph = buildModuleGraph({ projectRoot: root, declaredModules: config.declaredModules });
+  expect(checkEmptyRuleSet(graph, config).map(v => v.rule)).toEqual(["exhaustive-allow-list"]);
+}));
+
+test("deny-only forward guards do not produce exhaustive findings", () => roleProject((root, config) => {
+  config.edges = { allowDeny: [{ source: "role:app", targetNamespace: "role", deny: ["future"], because: "Prevent future access." }] };
+  const graph = buildModuleGraph({ projectRoot: root, declaredModules: config.declaredModules });
+  expect(checkEmptyRuleSet(graph, config)).toEqual([]);
+}));
+
+test("zero evaluated edges produce only the existing coverage finding", () => roleProject((root, config) => {
+  config.edges = { allowDeny: [{ source: "role:absent", targetNamespace: "role", allow: ["app", "infra", "shared", "db"], because: "test" }] };
+  const graph = buildModuleGraph({ projectRoot: root, declaredModules: config.declaredModules });
+  expect(checkEmptyRuleSet(graph, config).map(v => v.rule)).toEqual(["empty-rule-set"]);
+}));
+
+test.each(["type", "dynamic", "exception"] as const)("whole-graph values survive %s edge filters", mode => roleProject((root, config) => {
+  writeFileSync(join(root, "src/other/index.ts"), mode === "type" ? 'import type { value } from "../db/index.js";' :
+    mode === "dynamic" ? 'void import("../db/index.js");' : 'import "../db/index.js";');
+  const rule = config.edges!.allowDeny![0]!;
+  config.edges = { allowDeny: [{ ...rule, edgeType: "value", importForm: "static",
+    exceptions: [{ from: "src/other/**", to: "src/db/**", because: "Other access is exempt." }] }] };
+  const graph = buildModuleGraph({ projectRoot: root, declaredModules: config.declaredModules });
+  expect(checkEmptyRuleSet(graph, config)).toEqual([]);
+}));

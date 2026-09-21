@@ -7,6 +7,8 @@ import assert from "node:assert/strict";
 import * as hegel from "@hegeldev/hegel";
 import * as gs from "@hegeldev/hegel/generators";
 import { fileURLToPath } from "node:url";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { buildModuleGraph } from "../src/module-graph.js";
 import { checkEmptyRuleSet } from "../src/rules/empty-rule.js";
@@ -56,4 +58,28 @@ describe("checkEmptyRuleSet (property)", () => {
       }
     });
   });
+});
+
+test("adding a real target outside allow removes the exhaustive finding", () => {
+  hegel.test(tc => {
+    const values = tc.draw(gs.arrays(gs.integers(), { minSize: 1, unique: true })).map(value => `v${value}`);
+    const root = mkdtempSync(join(tmpdir(), "archstrict-allow-property-"));
+    try {
+      mkdirSync(join(root, "src"));
+      writeFileSync(join(root, "tsconfig.json"), '{"compilerOptions":{"noLib":true,"types":[]}}');
+      writeFileSync(join(root, "src/app.ts"), 'import "./target.js";');
+      writeFileSync(join(root, "src/target.ts"), 'export const value = 1;');
+      const config: Config = { configPath: "<test>", because: "test", declaredModules: [{ name: "all", glob: "src/**" }],
+        classify: [{ glob: "src/app.ts", tags: ["role:app"] },
+          { glob: "src/target.ts", tags: values.map(value => `role:${value}`) },
+          { glob: "src/new.ts", tags: ["role:new"] }],
+        edges: { allowDeny: [{ source: "role:app", targetNamespace: "role", allow: values, because: "test" }] } };
+      const findings = () => checkEmptyRuleSet(buildModuleGraph({ projectRoot: root, declaredModules: config.declaredModules }), config)
+        .filter(v => v.rule === "exhaustive-allow-list");
+      assert.equal(findings().length, 1);
+      writeFileSync(join(root, "src/new.ts"), 'export const value = 2;');
+      writeFileSync(join(root, "src/other.ts"), 'import "./new.js";');
+      assert.equal(findings().length, 0);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  }, { testCases: 20 });
 });
