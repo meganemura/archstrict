@@ -31,6 +31,8 @@ type SkippedFinding = BaseFinding & { skipped: true; confidence?: never; undecid
 type UndecidedFinding = BaseFinding & { undecided: true; confidence?: never; skipped?: never };
 export type Violation = ContradictionFinding | SkippedFinding | UndecidedFinding;
 
+// Each entry gets one decision; no later triage of a larger candidate set filters out model noise.
+// Use a conservative 0.7 bar instead of a casual 0.5 guess; weaker contradictions remain undecided because model noise can resemble a problem.
 const CONTRADICTION_THRESHOLD = 0.7;
 // Fixed instructions compare each entry's JSON shape with its own because text to assess the config's internal consistency.
 // They do not assess design fitness against source code; empty-rule.ts checks structural applicability against real graph edges.
@@ -131,6 +133,9 @@ export async function checkConfigMeaning(config: Config, prove: boolean, prover:
     return entries.flatMap(({ rule, label }, i): Violation[] => {
       const { choice, confidence, probabilities } = assessments[i]!;
       if (choice === "consistent") return [];
+      // A skip means the request never ran or failed to yield a valid assessment; it cannot establish agreement with the reason.
+      // Here Jev answered contradicts successfully, but its confidence does not justify a finding.
+      // A separate undecided category preserves this inconclusive assessment instead of hiding it among request failures.
       if (confidence < CONTRADICTION_THRESHOLD) {
         return [{ rule: "config-meaning", path: config.configPath, line: 1, column: 1,
           evidence: `${label}: Jev returned contradicts but could not decide with sufficient confidence (confidence ${confidence}; probabilities ${JSON.stringify(probabilities)})`,
