@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-// Responsibility: parse argv and dispatch to a verb (init, check, todo, rules).
+// Responsibility: parse argv and dispatch to a verb (init, check, todo, rules, agents).
 // Boundary: no rule logic here; verbs live in their own modules.
+import { agents, formatAgentsText } from "./verbs/agents.js";
 import { init } from "./verbs/init.js";
 import { check, formatText } from "./verbs/check.js";
 import { todo } from "./verbs/todo.js";
@@ -56,10 +57,19 @@ async function runRules(args: string[]): Promise<number> {
   return 0;
 }
 
+function runAgents(args: string[]): number {
+  if (args.some((arg) => arg !== "--json" && arg !== "--remove")) {
+    throw new Error("usage: archstrict agents [--remove] [--json]");
+  }
+  const result = agents(process.cwd(), args.includes("--remove"));
+  process.stdout.write(args.includes("--json") ? JSON.stringify(result, null, 2) + "\n" : formatAgentsText(result));
+  return 0;
+}
+
 async function main(argv: string[]): Promise<number> {
   const [verb, ...rest] = argv;
   if (verb === undefined) {
-    process.stderr.write("usage: archstrict <init|check|todo|rules> [args]\n");
+    process.stderr.write("usage: archstrict <init|check|todo|rules|agents> [args]\n");
     return 1;
   }
   try {
@@ -67,6 +77,7 @@ async function main(argv: string[]): Promise<number> {
     if (verb === "check") return await runCheck(rest);
     if (verb === "todo") return await runTodo(rest);
     if (verb === "rules") return await runRules(rest);
+    if (verb === "agents") return runAgents(rest);
     process.stderr.write(`archstrict: '${verb}' is not implemented yet\n`);
     return 1;
   } catch (error) {

@@ -13,6 +13,8 @@ Every violation carries a rule id, `path:line:col`, the `evidence` (what was fou
 
 ## Workflow
 
+Run `archstrict agents` to install the fixed pre-edit guidance in `AGENTS.md`; use `--remove` to remove it. See [agent instructions](references/agents-verb.md).
+
 Before creating a file, run `archstrict rules <path> [--json]` to inspect its module, tags, public surfaces, friend access, and placement violations; see [path rules](references/path-rules.md).
 
 1. **Start a project**: `archstrict init [modulesGlob]` (default `src/*`) - if there's no `archstrict` command available in this project yet, see the [README's Install section](../../README.md#install) first. Writes `archstrict.types.ts` (the module-name union type, regenerated every run) and, if absent, `archstrict.config.ts` with a default flat preset (`declaredModules` for every directory `init` found under the glob, plus a catch-all `classify` entry) - it never overwrites a hand-edited config. Re-run any time a module directory is added or removed; re-running never adds a newly-created directory to an existing config's own `declaredModules` - declaring a genuinely new module means hand-adding its own entry (the same trade-off Prisma's own `architecture.config.json` makes: a new package needs its own new config entry, not automatic discovery).
