@@ -21,6 +21,8 @@
 // the latter as a syntax error, so in practice this count is driven by the
 // former.
 import ts from "typescript";
+import { createHash } from "node:crypto";
+import { readEdgeCache, writeEdgeCache, type EdgeCache } from "./edge-cache.js";
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { builtinModules } from "node:module";
@@ -593,7 +595,7 @@ function makeCompilerOptionsForFile(
   };
 }
 
-export function buildModuleGraph(options: BuildOptions): ModuleGraph {
+function prepareGraph(options: BuildOptions) {
   // Realpath'd up front, not just at whichever comparison happens to need
   // it: TypeScript's own resolver already returns a symlink-resolved
   // `resolvedFileName` for any import that passes through one (measured
@@ -630,6 +632,15 @@ export function buildModuleGraph(options: BuildOptions): ModuleGraph {
     resolveModuleForFile = (filePath) => moduleForFile(filePath, projectRoot, modulesGlob);
   }
 
+  return { projectRoot, surface, rootDir, rootNames, modules, resolveModuleForFile, compilerOptions, compilerOptionsForFile };
+}
+
+export function buildModuleGraph(options: BuildOptions): ModuleGraph {
+  return buildPreparedGraph(prepareGraph(options));
+}
+
+function buildPreparedGraph(prepared: ReturnType<typeof prepareGraph>): ModuleGraph {
+  const { projectRoot, surface, rootDir, rootNames, modules, resolveModuleForFile, compilerOptions, compilerOptionsForFile } = prepared;
   const program = ts.createProgram({ rootNames, options: compilerOptions });
   const host = ts.createCompilerHost(compilerOptions);
 
@@ -757,6 +768,75 @@ export function buildModuleGraph(options: BuildOptions): ModuleGraph {
     surface,
     rootDir,
     program,
-    checker: program.getTypeChecker(),
+    get checker() {
+      return program.getTypeChecker();
+    },
   };
+}
+
+function hash(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+const ARCHSTRICT_VERSION: string = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
+
+function cacheMetadata(projectRoot: string, options: BuildOptions): Record<string, number | null> {
+  const packages = [join(projectRoot, "package.json"), ...(options.declaredModules ?? [])
+    .map((dm) => join(projectRoot, moduleGlobBaseDir(dm.glob), "package.json"))];
+  const lock = ["package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lock"]
+    .map((name) => join(projectRoot, name)).find((path) => existsSync(path));
+  if (lock !== undefined) packages.push(lock);
+  return Object.fromEntries([...new Set(packages)].sort().map((path) => [path, existsSync(path) ? statSync(path).mtimeMs : null]));
+}
+
+// File membership, nearest compiler options, and package metadata all affect
+// resolution. A change to any input discards the entire snapshot.
+export function buildModuleGraphForRules(options: BuildOptions): ModuleGraph {
+  const prepared = prepareGraph(options);
+  const { projectRoot, rootNames, modules, resolveModuleForFile, compilerOptions, compilerOptionsForFile } = prepared;
+  const path = join(projectRoot, "node_modules/.cache/archstrict/edges.json");
+  const tsconfigHash = hash({ root: compilerOptions, files: rootNames.map((file) => [file, compilerOptionsForFile(file)]) });
+  const buildOptionsHash = hash({ declaredModules: options.declaredModules, modulesGlob: options.modulesGlob,
+    exclude: options.exclude, surface: prepared.surface });
+  const metadata = cacheMetadata(projectRoot, options);
+  const mtimes = Object.fromEntries(rootNames.map((file) => [file, statSync(file).mtimeMs]));
+  const cached = readEdgeCache(path);
+  if (cached !== undefined && cached.archstrictVersion === ARCHSTRICT_VERSION && cached.tsconfigHash === tsconfigHash &&
+      cached.buildOptionsHash === buildOptionsHash && hash(cached.metadata) === hash(metadata) &&
+      Object.keys(cached.files).length === rootNames.length &&
+      rootNames.every((file) => cached.files[file]?.mtimeMs === mtimes[file])) {
+    const edges: Edge[] = [];
+    const outsideFiles: string[] = [];
+    for (const file of cached.sourceOrder) {
+      const owner = resolveModuleForFile(file);
+      if (owner === undefined) outsideFiles.push(file);
+      else modules.get(owner)?.files.push(file);
+      for (const edge of cached.files[file]!.edges) {
+        // JSON omits undefined fields; restore the same Edge shape as a fresh walk.
+        edges.push({ ...edge, fromModule: owner!, toModule: edge.resolvedFile.startsWith("node:") ? undefined : resolveModuleForFile(edge.resolvedFile),
+          externalPackage: edge.externalPackage });
+      }
+    }
+    let fullGraph: ModuleGraph | undefined;
+    const full = () => fullGraph ??= buildModuleGraph(options);
+    return { modules, edges, outsideFiles,
+      crossModuleEdges: edges.filter((e) => e.toModule !== undefined && e.toModule !== e.fromModule),
+      unsupportedSyntaxCount: cached.unsupportedSyntaxCount,
+      unresolvedSpecifierCount: cached.unresolvedSpecifiers.length,
+      unresolvedSpecifiers: cached.unresolvedSpecifiers,
+      surface: prepared.surface, rootDir: prepared.rootDir,
+      get program() { return full().program; },
+      get checker() { return full().checker; },
+    };
+  }
+  const graph = buildPreparedGraph(prepared);
+  const files: EdgeCache["files"] = Object.fromEntries(rootNames.map((file) => [file, { mtimeMs: mtimes[file]!, edges: [] }]));
+  for (const edge of graph.edges) files[edge.fromFile]!.edges.push(edge);
+  // Do not label an analysis with mtimes from a concurrent edit.
+  if (rootNames.every((file) => existsSync(file) && statSync(file).mtimeMs === mtimes[file])) {
+    writeEdgeCache(path, { schema: 1, tsconfigHash, archstrictVersion: ARCHSTRICT_VERSION, buildOptionsHash, metadata, files,
+      sourceOrder: graph.program.getSourceFiles().map((sf) => sf.fileName).filter((file) => Object.hasOwn(files, file)),
+      unsupportedSyntaxCount: graph.unsupportedSyntaxCount, unresolvedSpecifiers: graph.unresolvedSpecifiers });
+  }
+  return graph;
 }

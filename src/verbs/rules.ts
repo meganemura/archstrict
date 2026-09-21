@@ -3,7 +3,7 @@
 import { existsSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { classifyFile, compileGlob } from "../classify.js";
-import { buildModuleGraph, DEFAULT_SURFACE, moduleForDeclaredFile, surfaceGlobsFor, toProjectRelativePosix } from "../module-graph.js";
+import { buildModuleGraphForRules, DEFAULT_SURFACE, moduleForDeclaredFile, surfaceGlobsFor, toProjectRelativePosix } from "../module-graph.js";
 import { checkMustBeEmpty, type Violation as MustBeEmptyViolation } from "../rules/must-be-empty.js";
 import { uncoveredViolationFor, type Violation as UncoveredViolation } from "../rules/uncovered.js";
 import { assertSequenceListsValue, formatPredicate, matchesPredicate, sequenceFor } from "../rules/constraints.js";
@@ -77,7 +77,7 @@ export async function rules(projectRoot: string, path: string): Promise<RulesRes
     throw new Error(`rules ${path}: path is outside project root '${root}'`);
   }
   const config = await loadConfig(resolve(root, "archstrict.config.ts"));
-  const graph = buildModuleGraph({ projectRoot: root, declaredModules: config.declaredModules, exclude: config.exclude });
+  const graph = buildModuleGraphForRules({ projectRoot: root, declaredModules: config.declaredModules, exclude: config.exclude });
   const exists = existsSync(resolvedPath);
   const excluded = (config.exclude ?? []).some((glob) => compileGlob(glob).test(rel));
   let module: string | undefined;
