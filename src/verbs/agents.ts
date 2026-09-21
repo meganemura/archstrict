@@ -22,7 +22,7 @@ export type AgentsResult = {
   path: string;
 };
 
-function resolveWriteTarget(path: string): string {
+export function resolveWriteTarget(path: string): string {
   let current = path;
   const seen = new Set<string>();
   for (;;) {
@@ -68,7 +68,7 @@ function removeSection(contents: Buffer, start: number, end: number): Buffer {
   return Buffer.concat([contents.subarray(0, start), contents.subarray(end)]);
 }
 
-function writeTarget(path: string, contents: Buffer): void {
+export function writeTarget(path: string, contents: Buffer): void {
   mkdirSync(dirname(path), { recursive: true });
   const temporary = join(dirname(path), `.archstrict-agents-${randomUUID()}.tmp`);
   const mode = existsSync(path) ? statSync(path).mode & 0o777 : undefined;

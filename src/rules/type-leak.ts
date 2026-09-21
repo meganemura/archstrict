@@ -301,6 +301,7 @@ export type Violation = {
   because: string;
   next: string;
   todoModule: string;
+  leak?: { internalType: string; internalFile: string; exportedAs: string[] };
 };
 
 const BECAUSE = "a consumer needs a name for every type it receives from a public surface, not just the type doing the exposing";
@@ -416,6 +417,7 @@ export function checkTypeLeaks(graph: {
         because: BECAUSE,
         next: `export '${group.type}' by name from ${group.path} (it's declared in ${relativeInternalFile}), or change the referencing exports to not expose it`,
         todoModule: name,
+        leak: { internalType: group.type, internalFile: group.file, exportedAs: names },
       });
     }
   }

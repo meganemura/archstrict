@@ -1,8 +1,9 @@
 #!/usr/bin/env node
-// Responsibility: parse argv and dispatch to a verb (init, check, todo, rules, agents, recommend).
+// Responsibility: parse argv and dispatch to a verb (init, check, todo, rules, agents, recommend, fix).
 // Boundary: no rule logic here; verbs live in their own modules.
 import { agents, formatAgentsText } from "./verbs/agents.js";
 import { recommend, formatRecommendText } from "./verbs/recommend.js";
+import { fix, formatFixText } from "./verbs/fix.js";
 import { init } from "./verbs/init.js";
 import { check, formatText, hasBlockingViolations } from "./verbs/check.js";
 import { todo } from "./verbs/todo.js";
@@ -77,13 +78,25 @@ function runRecommend(args: string[]): number {
   return 0;
 }
 
+async function runFix(args: string[]): Promise<number> {
+  const paths = args.filter(arg => arg !== "--json" && arg !== "--dry-run");
+  if (paths.length > 1 || paths.some(arg => arg.startsWith("-"))) {
+    throw new Error("usage: archstrict fix [file] [--dry-run] [--json]");
+  }
+  const dryRun = args.includes("--dry-run");
+  const result = await fix(process.cwd(), paths[0], dryRun);
+  process.stdout.write(args.includes("--json") ? JSON.stringify(result, null, 2) + "\n" : formatFixText(result));
+  return dryRun || (result.unfixable.length === 0 && result.reverted.length === 0) ? 0 : 1;
+}
+
 async function main(argv: string[]): Promise<number> {
   const [verb, ...rest] = argv;
   if (verb === undefined) {
-    process.stderr.write("usage: archstrict <init|check|todo|rules|agents|recommend> [args]\n");
+    process.stderr.write("usage: archstrict <init|check|todo|rules|agents|recommend|fix> [args]\n");
     return 1;
   }
   try {
+    if (verb === "fix") return await runFix(rest);
     if (verb === "recommend") return runRecommend(rest);
     if (verb === "init") return runInit(rest);
     if (verb === "check") return await runCheck(rest);
