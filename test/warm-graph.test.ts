@@ -89,6 +89,8 @@ test("checker remains a lazy getter after a warm refresh", () => project((_root,
 
 const kinds = ["imports", "add-root", "delete-root", "tsconfig", "config", "delete-non-root", "resolve-missing", "shadow"] as const;
 type Kind = typeof kinds[number];
+// Twenty generated cases, each with up to 16 real Program rebuilds, measured 17–18s under load and exceeded the 15s default.
+// Give this test a 60s margin without changing the default for other tests.
 test("every edit in generated sequences preserves cold facts and exercises all resolution transitions", () => {
   const counts = Object.fromEntries(kinds.map(kind => [kind, 0])) as Record<Kind, number>;
   let cases = 0, edits = 0;
@@ -149,4 +151,4 @@ test("every edit in generated sequences preserves cold facts and exercises all r
   }), { testCases: 20 });
   for (const kind of kinds) expect(counts[kind]).toBeGreaterThanOrEqual(cases);
   console.log(JSON.stringify({ cases, sequenceLength: "8..16", edits, exercised: counts }));
-});
+}, 60000);

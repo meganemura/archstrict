@@ -22,6 +22,8 @@ function cachingHost(program: ts.Program): ts.CompilerHost {
     if (mtimeMs !== undefined) cache.set(resolve(sourceFile.fileName), { mtimeMs, sourceFile });
   }
   const getSourceFile = host.getSourceFile.bind(host);
+  // The absolute path identifies the file; mtimeMs detects content changes without a read or hash of its contents.
+  // A missing mtime cannot validate cached content. The underlying host must handle a deleted or inaccessible file with its normal behavior.
   host.getSourceFile = (fileName, ...args) => {
     const path = resolve(fileName);
     const mtimeMs = mtime(path);
@@ -40,14 +42,20 @@ export function createWarmGraph(): { refresh(options: BuildOptions): ModuleGraph
   return {
     refresh(options) {
       const prepared = prepareGraph(options);
+      // The CLI reads config afresh before each edge-cache lookup. This holder instead retains state across refresh calls.
+      // The config mtime therefore provides a separate signal that the architecture config changed since the previous refresh.
       const fingerprint = JSON.stringify({ ...graphBuildFingerprint(options, prepared),
         configMtime: mtime(join(prepared.projectRoot, "archstrict.config.ts")) });
+      // A changed fingerprint can mean new compiler options, package metadata, or module declarations, so the old host's assumptions are no longer valid.
+      // Discard that host rather than patch it. Seed a new host from the cold Program to reuse only the newly established state.
       if (held === undefined || held.fingerprint !== fingerprint) {
         held = undefined;
         const graph = buildModuleGraph(options);
         held = { host: cachingHost(graph.program), program: graph.program, options, fingerprint };
         return graph;
       }
+      // An importer can keep the same SourceFile while its target disappears, becomes available, or gives way to a preferred target.
+      // Parsed source reuse remains valid, but a held resolution answer can become stale. A fresh cache prevents that error on every refresh.
       const resolutionCache = ts.createModuleResolutionCache(prepared.projectRoot,
         held.host.getCanonicalFileName.bind(held.host), prepared.compilerOptions);
       const graph = buildPreparedGraph(prepared, { host: held.host, oldProgram: held.program, resolutionCache });
