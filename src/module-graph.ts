@@ -595,7 +595,7 @@ function makeCompilerOptionsForFile(
   };
 }
 
-function prepareGraph(options: BuildOptions) {
+export function prepareGraph(options: BuildOptions) {
   // Realpath'd up front, not just at whichever comparison happens to need
   // it: TypeScript's own resolver already returns a symlink-resolved
   // `resolvedFileName` for any import that passes through one (measured
@@ -639,10 +639,16 @@ export function buildModuleGraph(options: BuildOptions): ModuleGraph {
   return buildPreparedGraph(prepareGraph(options));
 }
 
-function buildPreparedGraph(prepared: ReturnType<typeof prepareGraph>): ModuleGraph {
+export type GraphBuildOverrides = {
+  host?: ts.CompilerHost;
+  oldProgram?: ts.Program;
+  resolutionCache?: ts.ModuleResolutionCache;
+};
+
+export function buildPreparedGraph(prepared: ReturnType<typeof prepareGraph>, overrides: GraphBuildOverrides = {}): ModuleGraph {
   const { projectRoot, surface, rootDir, rootNames, modules, resolveModuleForFile, compilerOptions, compilerOptionsForFile } = prepared;
-  const program = ts.createProgram({ rootNames, options: compilerOptions });
-  const host = ts.createCompilerHost(compilerOptions);
+  const program = ts.createProgram({ rootNames, options: compilerOptions, host: overrides.host, oldProgram: overrides.oldProgram });
+  const host = overrides.host ?? ts.createCompilerHost(compilerOptions);
 
   const outsideFiles: string[] = [];
   const edges: Edge[] = [];
@@ -722,7 +728,7 @@ function buildPreparedGraph(prepared: ReturnType<typeof prepareGraph>): ModuleGr
           // package's package.json `exports` under nodenext, so the only
           // thing gating that path before was this project's own code,
           // not TypeScript.
-          const resolved = ts.resolveModuleName(specifier.text, sf.fileName, compilerOptionsForFile(sf.fileName), host);
+          const resolved = ts.resolveModuleName(specifier.text, sf.fileName, compilerOptionsForFile(sf.fileName), host, overrides.resolutionCache);
           const resolvedModule = resolved.resolvedModule;
           if (resolvedModule === undefined) {
             unresolvedSpecifierCount++;
@@ -789,16 +795,22 @@ function cacheMetadata(projectRoot: string, options: BuildOptions): Record<strin
   return Object.fromEntries([...new Set(packages)].sort().map((path) => [path, existsSync(path) ? statSync(path).mtimeMs : null]));
 }
 
-// File membership, nearest compiler options, and package metadata all affect
-// resolution. A change to any input discards the entire snapshot.
-export function buildModuleGraphForRules(options: BuildOptions): ModuleGraph {
-  const prepared = prepareGraph(options);
-  const { projectRoot, rootNames, modules, resolveModuleForFile, compilerOptions, compilerOptionsForFile } = prepared;
-  const path = join(projectRoot, "node_modules/.cache/archstrict/edges.json");
+export function graphBuildFingerprint(options: BuildOptions, prepared: ReturnType<typeof prepareGraph>) {
+  const { projectRoot, rootNames, compilerOptions, compilerOptionsForFile } = prepared;
   const tsconfigHash = hash({ root: compilerOptions, files: rootNames.map((file) => [file, compilerOptionsForFile(file)]) });
   const buildOptionsHash = hash({ declaredModules: options.declaredModules, modulesGlob: options.modulesGlob,
     exclude: options.exclude, surface: prepared.surface });
   const metadata = cacheMetadata(projectRoot, options);
+  return { tsconfigHash, buildOptionsHash, metadata, archstrictVersion: ARCHSTRICT_VERSION };
+}
+
+// File membership, nearest compiler options, and package metadata all affect
+// resolution. A change to any input discards the entire snapshot.
+export function buildModuleGraphForRules(options: BuildOptions): ModuleGraph {
+  const prepared = prepareGraph(options);
+  const { projectRoot, rootNames, modules, resolveModuleForFile } = prepared;
+  const path = join(projectRoot, "node_modules/.cache/archstrict/edges.json");
+  const { tsconfigHash, buildOptionsHash, metadata } = graphBuildFingerprint(options, prepared);
   const mtimes = Object.fromEntries(rootNames.map((file) => [file, statSync(file).mtimeMs]));
   const cached = readEdgeCache(path);
   if (cached !== undefined && cached.archstrictVersion === ARCHSTRICT_VERSION && cached.tsconfigHash === tsconfigHash &&
