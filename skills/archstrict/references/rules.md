@@ -69,9 +69,11 @@ One violation per (module, internal type), not per exported symbol that reaches 
 
 The violation's own `line`/`column` anchor to the earliest referencing export's own declaration site: whichever exported symbol's own position sorts first by line, then by column, among every export that references the leaking type in one surface file. This is a deterministic, stable anchor independent of which exported symbol the walk happened to visit first - the same reasoning as the alphabetical evidence order above, applied to position instead of naming. When a module's surface is more than one file (`surface` as a glob or array), the anchor is the position within whichever surface file the leak's group was first assembled from, not necessarily the earliest position across every surface file combined.
 
+A module can have more than one surface file. A type declared in one surface file and used in another does not count as a leak. For a type from an internal file, you can add that file to the module's `surface`, re-export the type, or remove its exposure. Consider the wider surface when you adopt module boundaries one file at a time. To compare results, run `archstrict check`, edit the real config, then run `archstrict check` again. `archstrict simulate` uses the config on disk; it does not preview config changes.
+
 - because: "a consumer needs a name for every type it receives from a public surface, not just the type doing the exposing"
 - evidence: `'<InternalType>', declared in '<relative path>', is never exported by name from module '<module>' - referenced by '<Exported1>', '<Exported2>', ...`
-- next: `export '<InternalType>' by name from <surface absolute path> (it's declared in <relative path>), or change the referencing exports to not expose it` - `<surface absolute path>` is the surface file's full absolute path (e.g. `/project/src/m/index.ts`), unlike rule 1's own `<surface>` placeholder above, which is the bare file name
+- next: `export '<InternalType>' by name from <surface absolute path> (it's declared in <relative path>), change the referencing exports to not expose it, or add <relative path> to this module's own surface` - `<surface absolute path>` is the surface file's full absolute path (e.g. `/project/src/m/index.ts`), unlike rule 1's own `<surface>` placeholder above, which is the bare file name
 - `todoModule`: the module owning the leaking surface (a leak is a self-violation, not a cross-module edge)
 
 ## 7. tag-boundary / tag-order / point-rule (the constraint engine)

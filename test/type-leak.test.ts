@@ -1,6 +1,9 @@
 import { describe, expect, test } from "vitest";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { check } from "../src/verbs/check.js";
 import { buildModuleGraph } from "../src/module-graph.js";
 import { checkTypeLeaks } from "../src/rules/type-leak.js";
 
@@ -90,3 +93,39 @@ describe("checkTypeLeaks (declared-module boundary)", () => {
     expect(violations[0]!.evidence).toContain("RootType");
   });
 });
+
+
+async function withSiblingSurfaces(surface: string | string[], internal: boolean, run: (root: string) => Promise<void>) {
+  const root = mkdtempSync(join(tmpdir(), "archstrict-sibling-surface-"));
+  try {
+    mkdirSync(join(root, "src/m"), { recursive: true });
+    writeFileSync(join(root, "tsconfig.json"), JSON.stringify({ compilerOptions: { noLib: true, types: [] } }));
+    writeFileSync(join(root, "archstrict.config.ts"), `export default ${JSON.stringify({
+      declaredModules: [{ name: "m", glob: "src/m/**", surface }], exclude: ["*.ts"], because: "Expose the named public files.",
+    })};`);
+    writeFileSync(join(root, "src/m/a.ts"), "export interface PublicType { value: string }");
+    writeFileSync(join(root, "src/m/b.ts"),
+      'import type { PublicType } from "./a.js"; export interface Wrapper { item: PublicType }' +
+      (internal ? '\nimport type { Hidden } from "./internal.js"; export interface Leaky { item: Hidden }' : ""));
+    if (internal) writeFileSync(join(root, "src/m/internal.ts"), "export interface Hidden { secret: string }");
+    await run(root);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+}
+
+test.each([{ surface: "*.ts" }, { surface: ["a.ts", "b.ts"] }])("a named type on a sibling surface is public with surface $surface", ({ surface }) =>
+  withSiblingSurfaces(surface, false, async root => {
+    const result = await check(root);
+    expect(result.violations.filter(violation => violation.rule === "type-leak")).toEqual([]);
+    expect(result.typeLeaks).toBe(0);
+  }));
+
+test("a non-surface declaration still leaks beside a public sibling type", () =>
+  withSiblingSurfaces(["a.ts", "b.ts"], true, async root => {
+    const result = await check(root);
+    const leaks = result.violations.filter(violation => violation.rule === "type-leak");
+    expect(leaks).toHaveLength(1);
+    const leak = leaks[0]!;
+    expect(leak.leak?.internalType).toBe("Hidden");
+    const internalFile = join("src", "m", "internal.ts");
+    expect(leak.next).toBe(`export 'Hidden' by name from ${leak.path} (it's declared in ${internalFile}), change the referencing exports to not expose it, or add ${internalFile} to this module's own surface`);
+  }));

@@ -44,6 +44,7 @@ export function detectTypeLeaks(
   checker: ts.TypeChecker,
   entrySf: ts.SourceFile,
   boundaryRoot: string | readonly string[],
+  siblingSurfaceFiles: readonly string[] = [],
 ): LeakFinding[] {
   const boundaryRoots = typeof boundaryRoot === "string" ? [boundaryRoot] : boundaryRoot;
   const moduleSymbol = checker.getSymbolAtLocation(entrySf);
@@ -80,7 +81,8 @@ export function detectTypeLeaks(
     if (!(symbol.flags & NAMED_TYPE_DECLARATION)) return undefined;
     const file = declaredIn(symbol);
     if (file === undefined) return undefined;
-    if (file === entrySf.fileName) return undefined; // declared at the surface itself
+    // A sibling surface also gives consumers a public path to the declaration.
+    if (file === entrySf.fileName || siblingSurfaceFiles.includes(file)) return undefined;
     if (exportedNames.has(symbol.name)) return undefined; // has its own public name
     // TS file names are always forward-slash; boundaryRoot comes from
     // node:path's own join/dirname, which uses the platform separator on
@@ -390,7 +392,7 @@ export function checkTypeLeaks(graph: {
     for (const surfacePath of module.surfaceFiles) {
       const sf = graph.program.getSourceFile(surfacePath);
       if (sf === undefined) continue;
-      const findings = detectTypeLeaks(graph.checker, sf, moduleBoundaries);
+      const findings = detectTypeLeaks(graph.checker, sf, moduleBoundaries, module.surfaceFiles.filter(p => p !== surfacePath));
       for (const [key, group] of groupByInternalType(findings, surfacePath)) {
         const existing = groups.get(key);
         if (existing === undefined) {
@@ -415,7 +417,7 @@ export function checkTypeLeaks(graph: {
         column: group.column,
         evidence: `'${group.type}', declared in '${relativeInternalFile}', is never exported by name from module '${name}'${REFERENCED_BY_MARKER}${shown}${more}`,
         because: BECAUSE,
-        next: `export '${group.type}' by name from ${group.path} (it's declared in ${relativeInternalFile}), or change the referencing exports to not expose it`,
+        next: `export '${group.type}' by name from ${group.path} (it's declared in ${relativeInternalFile}), change the referencing exports to not expose it, or add ${relativeInternalFile} to this module's own surface`,
         todoModule: name,
         leak: { internalType: group.type, internalFile: group.file, exportedAs: names },
       });

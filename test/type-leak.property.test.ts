@@ -142,3 +142,29 @@ describe("checkTypeLeaks (property)", () => {
     );
   }, 20_000);
 });
+
+test("generated sibling surfaces expose their named types while private files still leak", () => {
+  hegel.test(tc => {
+    const suffix = tc.draw(gs.fromRegex("[a-z]{1,12}"));
+    const publicType = `Public${suffix}`;
+    const hiddenType = `Hidden${suffix}`;
+    const first = `a${suffix}.public.ts`;
+    const second = `b${suffix}.public.ts`;
+    const surface = tc.draw(gs.booleans()) ? "*.public.ts" : [first, second];
+    const root = mkdtempSync(join(tmpdir(), "archstrict-sibling-types-"));
+    try {
+      const dir = join(root, "src/m");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(root, "tsconfig.json"), JSON.stringify({ compilerOptions: { noLib: true, types: [] } }));
+      writeFileSync(join(dir, first), `export interface ${publicType} { value: string }`);
+      writeFileSync(join(dir, "private.ts"), `export interface ${hiddenType} { secret: string }`);
+      writeFileSync(join(dir, second), `import type { ${publicType} } from "./${first.replace(/\.ts$/, ".js")}";
+import type { ${hiddenType} } from "./private.js";
+export interface Wrapper { publicValue: ${publicType}; privateValue: ${hiddenType} }`);
+      const graph = buildModuleGraph({ projectRoot: root, declaredModules: [{ name: "m", glob: "src/m/**", surface }] });
+      assert.equal(graph.unresolvedSpecifierCount, 0);
+      const violations = checkTypeLeaks(graph);
+      assert.deepEqual(violations.map(violation => violation.leak?.internalType), [hiddenType]);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  }, { testCases: 25 });
+});
