@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, test } from "vitest";
+import { describe, expect, test } from "vitest";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -16,9 +16,6 @@ const CLI_PATH = new URL("../dist/cli.js", import.meta.url).pathname;
 // separate node process (as this file's tests do) needs the real .js
 // files a build produces. Measured: `node src/cli.ts init` failed with
 // ERR_MODULE_NOT_FOUND for "./verbs/init.js" before this fix.
-beforeAll(() => {
-  execFileSync("npm", ["run", "build"], { cwd: REPO_ROOT });
-});
 
 describe("cli", () => {
   test("prints usage with no arguments", () => {

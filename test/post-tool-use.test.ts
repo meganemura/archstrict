@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, test } from "vitest";
+import { describe, expect, test } from "vitest";
 import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -13,9 +13,6 @@ const DIST_CLI_PATH = join(REPO_ROOT, "dist", "cli.js");
 // doesn't remap a .js-extension specifier to a sibling .ts file across a
 // spawned process, so the hook (like the CLI itself) has to run against a
 // real build, not src/cli.ts directly.
-beforeAll(() => {
-  execFileSync("npm", ["run", "build"], { cwd: REPO_ROOT, stdio: "pipe" });
-});
 
 function invokedMarkerPath(projectRoot: string): string {
   return join(projectRoot, ".archstrict-bin-invoked");

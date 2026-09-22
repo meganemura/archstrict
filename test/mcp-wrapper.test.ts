@@ -1,6 +1,6 @@
 // Responsibility: test plugin delegation and fallback through real subprocesses.
 // Boundary: use copied builds and installed dependencies in disposable consumer projects.
-import { beforeAll, expect, test } from "vitest";
+import { expect, test } from "vitest";
 import ts from "typescript";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -12,7 +12,6 @@ import { tmpdir } from "node:os";
 
 const repo = resolve(import.meta.dirname, "..");
 const wrapper = join(repo, "mcp/server.mjs");
-beforeAll(() => { execFileSync("npm", ["run", "build"], { cwd: repo }); }, 60000);
 
 function installArchstrictPackage(consumerRoot: string) {
   const installed = join(consumerRoot, "node_modules", "archstrict");

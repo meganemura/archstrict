@@ -2,6 +2,7 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
+    globalSetup: "./test/global-setup.ts",
     // The three property tests (cycles/public-surface/type-leak) run ~25
     // real cases each, ~4-5s idle - fine alone, but they hit vitest's own
     // 20s timeout under a shared machine's real CPU contention, even though

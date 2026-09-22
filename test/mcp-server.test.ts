@@ -1,6 +1,6 @@
 // Responsibility: compare MCP query results with real verbs and the built CLI.
 // Boundary: real protocol transports and disposable projects, without external services.
-import { beforeAll, expect, test } from "vitest";
+import { expect, test } from "vitest";
 import * as hegel from "@hegeldev/hegel";
 import * as gen from "@hegeldev/hegel/generators";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -19,7 +19,6 @@ import { simulate } from "../src/verbs/simulate.js";
 
 const repo = resolve(import.meta.dirname, "..");
 const cli = join(repo, "dist/cli.js");
-beforeAll(() => { execFileSync("npm", ["run", "build"], { cwd: repo }); }, 60000);
 
 function put(root: string, path: string, content: string) {
   mkdirSync(dirname(join(root, path)), { recursive: true });
