@@ -8,7 +8,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSyn
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
-import { fix } from "../src/verbs/fix.js";
+import { fix, formatFixText, type FixResult } from "../src/verbs/fix.js";
 import { check } from "../src/verbs/check.js";
 import * as writes from "../src/verbs/agents.js";
 import * as graphs from "../src/module-graph.js";
@@ -256,3 +256,39 @@ test("generated type names and files are fixed with exact compiler-resolved targ
     expect([...seen].sort()).toEqual([...names].sort());
   }), { testCases: 20 });
 }, 60000);
+
+
+test("a failed revert reports both write failures without throwing", () => project(async ({ root, surface }) => {
+  const write = vi.spyOn(writes, "writeTarget")
+    .mockImplementationOnce(() => { throw new Error("initial write blocked"); })
+    .mockImplementationOnce(() => { throw new Error("revert write blocked"); });
+  const result = await fix(root);
+  expect(write).toHaveBeenCalledTimes(2);
+  expect(result.reverted).toHaveLength(1);
+  expect(result.reverted[0]!.path).toBe(surface);
+  expect(result.reverted[0]!.reason).toContain("verification or write failed: initial write blocked");
+  expect(result.reverted[0]!.reason).toContain("revert write blocked");
+  expect(result.fixed).toEqual([]);
+}));
+
+test("formatFixText prints every category and the exact summary", () => {
+  const result: FixResult = {
+    fixed: [{ path: "src/a/index.ts", lines: ['export type { A } from "./a.js";'] }],
+    planned: [{ path: "src/b/index.ts", lines: ['export type { B } from "./b.js";'] }],
+    unfixable: [{ path: "src/c/index.ts", type: "C", reason: "name collision" }],
+    reverted: [{ path: "src/d/index.ts", reason: "verification reports a new violation" }],
+  };
+  expect(formatFixText(result)).toBe([
+    "fixed: src/a/index.ts", 'export type { A } from "./a.js";',
+    "planned: src/b/index.ts", 'export type { B } from "./b.js";',
+    "unfixable: src/c/index.ts (C): name collision",
+    "reverted: src/d/index.ts: verification reports a new violation",
+    "fixed: 1; planned: 1; unfixable: 1; reverted: 1", "",
+  ].join("\n"));
+});
+
+test("the built fix CLI prints a real fixed surface in text mode", () => project(async ({ root, surface }) => {
+  const output = cli(root);
+  expect(output.status).toBe(0);
+  expect(output.stdout).toBe(`fixed: ${surface}\nexport type { Hidden } from "./internal.js";\nfixed: 1; planned: 0; unfixable: 0; reverted: 0\n`);
+}));

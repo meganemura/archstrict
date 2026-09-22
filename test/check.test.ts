@@ -427,3 +427,10 @@ describe("check", () => {
     });
   });
 });
+
+
+test("a non-object config default export gives the exact load error", () => withTempProject(async root => {
+  const configPath = join(root, "archstrict.config.ts");
+  writeFileSync(configPath, "export default 5;\n");
+  await expect(check(root)).rejects.toEqual(new Error(`${configPath} has no default export`));
+}));

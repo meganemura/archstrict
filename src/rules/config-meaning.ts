@@ -56,7 +56,7 @@ function isTimeout(error: unknown): boolean {
   return typeof error === "object" && error !== null && "name" in error &&
     (error.name === "AbortError" || error.name === "TimeoutError");
 }
-const realProver: Prover = async (request) => {
+export const realProver: Prover = async (request) => {
   const key = process.env.TYPESAFE_API_KEY;
   if (!key) throw new ProverFailure("missing-key");
   const response = await fetch("https://api.typesafe.ai/v1/systemone", {

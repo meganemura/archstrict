@@ -122,7 +122,13 @@ export async function fix(projectRoot: string, file?: string, dryRun = false): P
       failure = `verification or write failed: ${error instanceof Error ? error.message : String(error)}`;
     }
     if (failure !== undefined) {
-      writeTarget(target, original);
+      // A failure that blocks the first write can also block the revert at the same path.
+      // Preserve both failures so the report does not imply that restoration succeeded.
+      try {
+        writeTarget(target, original);
+      } catch (error) {
+        failure += `; revert failed: ${error instanceof Error ? error.message : String(error)}`;
+      }
       graph = warm.refresh(options);
       result.reverted.push({ path, reason: failure });
     } else {

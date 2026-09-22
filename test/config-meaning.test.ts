@@ -1,6 +1,6 @@
 // Responsibility: verify config assessments with fake Provers and local CLI runs.
 // Boundary: tests never contact the assessment service or supply credentials.
-import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import * as hegel from "@hegeldev/hegel";
 import * as gen from "@hegeldev/hegel/generators";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync } from "node:fs";
@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import type { Config } from "../src/config.js";
-import { checkConfigMeaning, ProverFailure, type Prover } from "../src/rules/config-meaning.js";
+import { checkConfigMeaning, realProver, ProverFailure, type Prover } from "../src/rules/config-meaning.js";
 import { check, formatText, hasBlockingViolations } from "../src/verbs/check.js";
 
 beforeEach(() => vi.stubEnv("TYPESAFE_API_KEY", undefined));
@@ -183,3 +183,67 @@ test("the built CLI accepts --prove in JSON and text and never blocks on a skip"
     }
   }
 }));
+
+
+test("an invalid answers container produces the exact skip", async () => {
+  const prover = vi.fn<Prover>().mockResolvedValue({ answers: null } as unknown as Awaited<ReturnType<Prover>>);
+  expect(await checkConfigMeaning(config, true, prover)).toEqual([{
+    rule: "config-meaning", path: config.configPath, line: 1, column: 1,
+    tier: "calibrated", skipped: true,
+    evidence: "the Jev API request failed: invalid answers",
+    because: "a rule that checks nothing must not look like a pass",
+    next: "retry archstrict check --prove after checking the service response",
+  }]);
+});
+
+describe("realProver HTTP contract", () => {
+  const fetchMock = vi.fn<typeof fetch>();
+  const request: Parameters<Prover>[0] = {
+    state: "Assess the rule.",
+    questions: { rule: { type: "choice", instructions: "Check the reason.",
+      criteria: { consistent: "agrees", contradicts: "disagrees" } } },
+  };
+  beforeEach(() => {
+    vi.stubEnv("TYPESAFE_API_KEY", "test-only-dummy-key");
+    fetchMock.mockReset();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  test("sends the real request shape and returns the parsed answers", async () => {
+    const response = { answers: { rule: answer("consistent", 0.9) } };
+    fetchMock.mockResolvedValue(new Response(JSON.stringify(response)));
+    expect(await realProver(request)).toEqual(response);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, options] = fetchMock.mock.calls[0]!;
+    expect(url).toBe("https://api.typesafe.ai/v1/systemone");
+    expect(options!.method).toBe("POST");
+    expect(options!.headers).toEqual({ Authorization: "Bearer test-only-dummy-key", "Content-Type": "application/json" });
+    expect(JSON.parse(options!.body as string)).toEqual({ ...request, model: "jev-latest" });
+    expect(options!.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  test("rejects a non-2xx response with http-status", async () => {
+    fetchMock.mockResolvedValue(new Response("unavailable", { status: 503 }));
+    await expect(realProver(request)).rejects.toMatchObject({ constructor: ProverFailure, kind: "http-status" });
+  });
+
+  test("rejects an invalid JSON body with invalid-json", async () => {
+    fetchMock.mockResolvedValue(new Response("not JSON"));
+    await expect(realProver(request)).rejects.toMatchObject({ constructor: ProverFailure, kind: "invalid-json" });
+  });
+
+  test.each(["AbortError", "TimeoutError"])("preserves a fetch %s error by identity", async name => {
+    const error = Object.assign(new Error("request interrupted"), { name });
+    fetchMock.mockRejectedValue(error);
+    await expect(realProver(request)).rejects.toBe(error);
+  });
+
+  test.each(["AbortError", "TimeoutError"])("preserves a response-body %s error by identity", async name => {
+    const error = Object.assign(new Error("response interrupted"), { name });
+    const response = new Response();
+    vi.spyOn(response, "json").mockRejectedValue(error);
+    fetchMock.mockResolvedValue(response);
+    await expect(realProver(request)).rejects.toBe(error);
+  });
+});

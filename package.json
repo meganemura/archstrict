@@ -16,6 +16,7 @@
   ],
   "scripts": {
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage --testTimeout=60000",
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.build.json",
     "dogfood:nukadoko": "npm run build && nuka run features",

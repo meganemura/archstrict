@@ -34,3 +34,5 @@ spike/fixtures/generated-union/tsconfig.oneoff.json
 # path and cannot be committed clean. report.md carries the durable,
 # path-free record of a passing run instead.
 features/*.md
+
+coverage/

@@ -293,3 +293,12 @@ test("line shifts preserve violation identity and resolved text uses the shared 
   expect(output.stdout).toBe(formatSimulateText(result));
   expect(output.stdout).toContain("resolved violations:\n[public-surface-bypass]");
 }));
+
+
+test("duplicate canonical change paths give the exact error", () => project(async root => {
+  const path = "src/a/../a/index.ts";
+  await expect(simulate(root, [
+    { path: "src/a/index.ts", content: "export const value = 3;" },
+    { path, content: null },
+  ])).rejects.toEqual(new Error(`duplicate change path: ${path}`));
+}));
