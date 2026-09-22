@@ -7,7 +7,7 @@
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import ts from "typescript";
-import { buildModuleGraph, toProjectRelativePosix, type ModuleGraph } from "../module-graph.js";
+import { buildModuleGraph, toProjectRelativePosix, type ModuleGraph, type BuildOptions } from "../module-graph.js";
 import { assertEdgesShapeValid, type Config } from "../config.js";
 import { checkPublicSurfaceBypass, type Violation as PublicSurfaceViolation } from "../rules/public-surface.js";
 import {
@@ -350,7 +350,7 @@ export function applyTodo(graph: ModuleGraph, config: Config, result: CheckResul
   return { ...result, violations: remaining, todo: suppressed };
 }
 
-export type CheckOptions = { prove?: boolean; prover?: Prover };
+export type CheckOptions = { prove?: boolean; prover?: Prover; buildGraph?: (options: BuildOptions) => ModuleGraph };
 
 export function hasBlockingViolations(result: CheckResult): boolean {
   return result.violations.some((v) => v.rule !== "config-meaning");
@@ -363,7 +363,7 @@ export async function check(projectRoot: string, focusFile?: string, options: Ch
   // above already guarantees a loaded config has it. config.exclude keeps
   // a project's own root-level files (archstrict.config.ts itself,
   // dist/, etc.) out of scope entirely; `init` writes one by default.
-  const graph = buildModuleGraph({
+  const graph = (options.buildGraph ?? buildModuleGraph)({
     projectRoot,
     declaredModules: config.declaredModules,
     exclude: config.exclude,

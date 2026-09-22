@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // Responsibility: parse argv and dispatch to a verb (init, check, todo, rules, agents, recommend, fix, simulate, search).
 // Boundary: no rule logic here; verbs live in their own modules.
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { createArchstrictMcpServer } from "./mcp-server.js";
 import { search, formatSearchText } from "./verbs/search.js";
 import { simulate, formatSimulateText, type Change } from "./verbs/simulate.js";
 import { agents, formatAgentsText } from "./verbs/agents.js";
@@ -112,13 +114,20 @@ async function runSearch(args: string[]): Promise<number> {
   return 0;
 }
 
+async function runMcp(): Promise<number> {
+  const server = createArchstrictMcpServer(process.cwd());
+  await server.connect(new StdioServerTransport());
+  return 0;
+}
+
 async function main(argv: string[]): Promise<number> {
   const [verb, ...rest] = argv;
   if (verb === undefined) {
-    process.stderr.write("usage: archstrict <init|check|todo|rules|agents|recommend|fix|simulate|search> [args]\n");
+    process.stderr.write("usage: archstrict <init|check|todo|rules|agents|recommend|fix|simulate|search|mcp> [args]\n");
     return 1;
   }
   try {
+    if (verb === "mcp") return await runMcp();
     if (verb === "search") return await runSearch(rest);
     if (verb === "simulate") return await runSimulate(rest);
     if (verb === "fix") return await runFix(rest);

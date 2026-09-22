@@ -22,6 +22,7 @@
     "ci:ts7-probe": "node scripts/probe-typescript7.mjs"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
     "typescript": "6.0.3"
   },
   "devDependencies": {
