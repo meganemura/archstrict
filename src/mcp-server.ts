@@ -100,6 +100,8 @@ export function createArchstrictMcpServer(projectRoot: string): Server {
   return server;
 }
 
+// The CLI and plugin wrapper need identical server construction and stdio setup.
+// A shared entry point keeps those callers aligned when startup behavior changes.
 export async function startArchstrictMcpServer(projectRoot: string): Promise<Server> {
   const server = createArchstrictMcpServer(projectRoot);
   await server.connect(new StdioServerTransport());
