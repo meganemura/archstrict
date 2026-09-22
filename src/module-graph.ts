@@ -159,6 +159,7 @@ export type ModuleGraph = {
 };
 
 export type BuildOptions = {
+  fileListOverride?: (realFiles: string[]) => string[];
   projectRoot: string;
   // v0 discovery path - e.g. "src/*" (only single-level globs). Ignored
   // when `declaredModules` is given.
@@ -455,21 +456,23 @@ function listAllSourceFiles(
   declaredModules: readonly DeclaredModule[] = [],
   globalDefaultSurface: string = DEFAULT_SURFACE,
 ): string[] {
-  const compiledExcludes = excludeGlobs.map((g) => compileGlob(g));
-  const compiledDtsSurfaces = surfaceGlobsAllowingDts(declaredModules, projectRoot, globalDefaultSurface).map((g) =>
-    compileGlob(g),
-  );
   return ts.sys
     .readDirectory(projectRoot, [".ts"], ["**/node_modules/**", "**/dist/**"])
-    .filter((f) => {
-      if (!f.endsWith(".d.ts")) return true;
-      const rel = toProjectRelativePosix(f, projectRoot);
-      return compiledDtsSurfaces.some((glob) => glob.test(rel));
-    })
-    .filter((f) => {
-      const rel = toProjectRelativePosix(f, projectRoot);
-      return !compiledExcludes.some((glob) => glob.test(rel));
-    });
+    .filter((file) => isEligibleSourceFile(file, projectRoot, excludeGlobs, declaredModules, globalDefaultSurface));
+}
+
+export function isEligibleSourceFile(
+  file: string,
+  projectRoot: string,
+  excludeGlobs: readonly string[],
+  declaredModules: readonly DeclaredModule[],
+  globalDefaultSurface: string,
+): boolean {
+  const rel = toProjectRelativePosix(file, projectRoot);
+  if (!file.endsWith(".ts") || rel.split("/").some((part) => part === "node_modules" || part === "dist")) return false;
+  if (excludeGlobs.some((glob) => compileGlob(glob).test(rel))) return false;
+  return !file.endsWith(".d.ts") || surfaceGlobsAllowingDts(declaredModules, projectRoot, globalDefaultSurface)
+    .some((glob) => compileGlob(glob).test(rel));
 }
 
 function buildDeclaredModules(
@@ -618,6 +621,7 @@ export function prepareGraph(options: BuildOptions) {
   if (declaredModules !== undefined) {
     rootDir = projectRoot;
     rootNames = listAllSourceFiles(projectRoot, exclude, declaredModules, surface);
+    if (options.fileListOverride) rootNames = options.fileListOverride(rootNames);
     modules = buildDeclaredModules(projectRoot, declaredModules, rootNames, surface);
     resolveModuleForFile = (filePath) => moduleForDeclaredFile(filePath, projectRoot, declaredModules);
   } else {

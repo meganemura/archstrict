@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-// Responsibility: parse argv and dispatch to a verb (init, check, todo, rules, agents, recommend, fix).
+// Responsibility: parse argv and dispatch to a verb (init, check, todo, rules, agents, recommend, fix, simulate).
 // Boundary: no rule logic here; verbs live in their own modules.
+import { simulate, formatSimulateText, type Change } from "./verbs/simulate.js";
 import { agents, formatAgentsText } from "./verbs/agents.js";
 import { recommend, formatRecommendText } from "./verbs/recommend.js";
 import { fix, formatFixText } from "./verbs/fix.js";
@@ -89,13 +90,28 @@ async function runFix(args: string[]): Promise<number> {
   return dryRun || (result.unfixable.length === 0 && result.reverted.length === 0) ? 0 : 1;
 }
 
+async function runSimulate(args: string[]): Promise<number> {
+  if (args.some(arg => arg !== "--json")) throw new Error("usage: archstrict simulate [--json]");
+  let input = "";
+  process.stdin.setEncoding("utf8");
+  for await (const chunk of process.stdin) input += chunk;
+  const body: unknown = JSON.parse(input);
+  if (typeof body !== "object" || body === null || !("changes" in body) || !Array.isArray(body.changes)) {
+    throw new Error("stdin must contain a JSON object with a changes array");
+  }
+  const result = await simulate(process.cwd(), body.changes as Change[]);
+  process.stdout.write(args.includes("--json") ? JSON.stringify(result, null, 2) + "\n" : formatSimulateText(result));
+  return result.added.length === 0 ? 0 : 1;
+}
+
 async function main(argv: string[]): Promise<number> {
   const [verb, ...rest] = argv;
   if (verb === undefined) {
-    process.stderr.write("usage: archstrict <init|check|todo|rules|agents|recommend|fix> [args]\n");
+    process.stderr.write("usage: archstrict <init|check|todo|rules|agents|recommend|fix|simulate> [args]\n");
     return 1;
   }
   try {
+    if (verb === "simulate") return await runSimulate(rest);
     if (verb === "fix") return await runFix(rest);
     if (verb === "recommend") return runRecommend(rest);
     if (verb === "init") return runInit(rest);
