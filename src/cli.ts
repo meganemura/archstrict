@@ -1,8 +1,7 @@
 #!/usr/bin/env node
 // Responsibility: parse argv and dispatch to a verb (init, check, todo, rules, agents, recommend, fix, simulate, search).
 // Boundary: no rule logic here; verbs live in their own modules.
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { createArchstrictMcpServer } from "./mcp-server.js";
+import { startArchstrictMcpServer } from "./mcp-server.js";
 import { search, formatSearchText } from "./verbs/search.js";
 import { simulate, formatSimulateText, type Change } from "./verbs/simulate.js";
 import { agents, formatAgentsText } from "./verbs/agents.js";
@@ -118,8 +117,7 @@ async function runSearch(args: string[]): Promise<number> {
 // A real subprocess stayed alive with stdin open and exited when stdin closed;
 // the host can also terminate it. A separate server-closed promise is unnecessary.
 async function runMcp(): Promise<number> {
-  const server = createArchstrictMcpServer(process.cwd());
-  await server.connect(new StdioServerTransport());
+  await startArchstrictMcpServer(process.cwd());
   return 0;
 }
 

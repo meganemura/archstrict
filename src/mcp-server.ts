@@ -3,6 +3,7 @@
 // McpServer's registration helpers typically expect zod input schemas. These inputs
 // are simple enough for manual validation, so Server uses raw JSON Schema instead.
 // This avoids a second direct dependency: zod remains an SDK dependency, not a project import.
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { CallToolRequestSchema, ListToolsRequestSchema, type Tool } from "@modelcontextprotocol/sdk/types.js";
 import { createWarmGraph } from "./warm-graph.js";
@@ -96,5 +97,11 @@ export function createArchstrictMcpServer(projectRoot: string): Server {
       return { isError: true, content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }] };
     }
   });
+  return server;
+}
+
+export async function startArchstrictMcpServer(projectRoot: string): Promise<Server> {
+  const server = createArchstrictMcpServer(projectRoot);
+  await server.connect(new StdioServerTransport());
   return server;
 }
