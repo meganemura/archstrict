@@ -159,6 +159,9 @@ export type ModuleGraph = {
 };
 
 export type BuildOptions = {
+  // simulate must adjust the disk file list before buildDeclaredModules
+  // derives module metadata. All consumers then use metadata consistent
+  // with that list, without a second, manually constructed prepared object.
   fileListOverride?: (realFiles: string[]) => string[];
   projectRoot: string;
   // v0 discovery path - e.g. "src/*" (only single-level globs). Ignored
@@ -461,6 +464,11 @@ function listAllSourceFiles(
     .filter((file) => isEligibleSourceFile(file, projectRoot, excludeGlobs, declaredModules, globalDefaultSurface));
 }
 
+// A proposed new path has never passed through ts.sys.readDirectory.
+// Export the eligibility predicate so callers can ask whether that path
+// would qualify, using the same rules as the real scan. Keeping these
+// rules separate from directory traversal lets both paths agree before
+// the proposed file exists on disk.
 export function isEligibleSourceFile(
   file: string,
   projectRoot: string,
