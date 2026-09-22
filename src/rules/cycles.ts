@@ -21,6 +21,7 @@
 // module for the same cycle.
 import type { Config } from "../config.ts";
 import type { Edge, ModuleGraph } from "../module-graph.ts";
+import { toProjectRelativePosix } from "../module-graph.js";
 
 export type Violation = {
   rule: "cycle";
@@ -165,6 +166,9 @@ export function checkCycles(
     const anchor = sorted[0]!;
     const { modules, edges } = shortestCycleFrom(anchor, new Set(component), adjacency);
     const firstEdge = edges[0]!;
+    const fileChain = edges
+      .map((e) => `${toProjectRelativePosix(e.fromFile, graph.rootDir)} -> ${toProjectRelativePosix(e.resolvedFile, graph.rootDir)}`)
+      .join(", ");
 
     violations.push({
       rule: "cycle",
@@ -173,7 +177,7 @@ export function checkCycles(
       column: firstEdge.fromPosition.column,
       evidence: modules.join(" -> "),
       because: BECAUSE,
-      next: `break the cycle at ${modules[0]} -> ${modules[1]}, or merge the modules involved`,
+      next: `break the cycle at ${toProjectRelativePosix(firstEdge.fromFile, graph.rootDir)} -> ${toProjectRelativePosix(firstEdge.resolvedFile, graph.rootDir)} (module ${modules[0]} -> ${modules[1]}), or merge the modules involved - real import chain: ${fileChain}`,
       todoModule: anchor,
     });
   }

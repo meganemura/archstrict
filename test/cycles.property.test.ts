@@ -141,6 +141,8 @@ describe("checkCycles (property)", () => {
               assert.ok(path.length >= 3); // at least a 2-module cycle plus the repeated start
               assert.equal(path[0], path.at(-1));
               assert.equal(v.todoModule, path[0]);
+              const filePairs = path.slice(0, -1).map((from, i) => `${from}/importer.ts -> ${path[i + 1]}/module.ts`);
+              assert.equal(v.next, `break the cycle at ${filePairs[0]} (module ${path[0]} -> ${path[1]}), or merge the modules involved - real import chain: ${filePairs.join(", ")}`);
               const component = components.find((c) => c.includes(v.todoModule));
               assert.ok(component !== undefined);
               assert.equal(v.todoModule, [...component!].sort()[0]);

@@ -1,5 +1,12 @@
 import { describe, expect, test } from "vitest";
-import { fingerprintOf } from "../src/todo-store.js";
+import { fingerprintOf, writeTodo } from "../src/todo-store.js";
+import * as hegel from "@hegeldev/hegel";
+import * as gen from "@hegeldev/hegel/generators";
+import { mkdtempSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { buildModuleGraph } from "../src/module-graph.js";
+import { runRules, applyTodo } from "../src/verbs/check.js";
 
 describe("fingerprintOf", () => {
   test("a cycle violation's fingerprint excludes path, so it survives which file's edge happened to be reported", () => {
@@ -45,4 +52,46 @@ describe("fingerprintOf", () => {
     });
     expect(a).not.toBe(b);
   });
+});
+
+
+test("a real legacy cycle stays frozen across diagnostic changes and file renames", () => {
+  hegel.test(tc => {
+    const renamed = `renamed${tc.draw(gen.fromRegex("[a-z]{1,12}"))}.ts`;
+    const root = mkdtempSync(join(tmpdir(), "archstrict-cycle-todo-"));
+    try {
+      for (const name of ["a", "b"]) mkdirSync(join(root, "src", name), { recursive: true });
+      writeFileSync(join(root, "tsconfig.json"), JSON.stringify({ compilerOptions: { noLib: true, types: [] } }));
+      writeFileSync(join(root, "src/a/work.ts"), 'import "../b/service.js";');
+      writeFileSync(join(root, "src/b/service.ts"), 'import "../a/work.js";');
+      const config = { configPath: join(root, "archstrict.config.ts"), because: "Keep modules independent.",
+        declaredModules: ["a", "b"].map(name => ({ name, glob: `src/${name}/**`, surface: "*.ts" })) };
+      const evaluate = () => {
+        const graph = buildModuleGraph({ projectRoot: root, declaredModules: config.declaredModules });
+        return { graph, result: runRules(graph, config) };
+      };
+      const before = evaluate();
+      expect(before.result.violations).toHaveLength(1);
+      const cycle = before.result.violations[0]!;
+      const legacy = { rule: "cycle", path: cycle.path, evidence: "a -> b -> a" };
+      const fingerprint = fingerprintOf(legacy);
+      expect(fingerprintOf(cycle)).toBe(fingerprint);
+      writeTodo(before.graph.modules.get("a")!.dir, [{ ...legacy, fingerprint }]);
+      const frozen = applyTodo(before.graph, config, before.result);
+      expect(frozen.todo).toBe(1);
+      expect(frozen.violations).toEqual([]);
+
+      renameSync(join(root, "src/a/work.ts"), join(root, "src/a", renamed));
+      writeFileSync(join(root, "src/b/service.ts"), `import "../a/${renamed.replace(/\.ts$/, ".js")}";`);
+      const after = evaluate();
+      expect(after.result.violations).toHaveLength(1);
+      const renamedCycle = after.result.violations[0]!;
+      expect(renamedCycle.next).toContain(`src/a/${renamed}`);
+      expect(renamedCycle.next).not.toBe(cycle.next);
+      expect(fingerprintOf(renamedCycle)).toBe(fingerprint);
+      const stillFrozen = applyTodo(after.graph, config, after.result);
+      expect(stillFrozen.todo).toBe(1);
+      expect(stillFrozen.violations).toEqual([]);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  }, { testCases: 25 });
 });
