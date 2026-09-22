@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-// Responsibility: parse argv and dispatch to a verb (init, check, todo, rules, agents, recommend, fix, simulate).
+// Responsibility: parse argv and dispatch to a verb (init, check, todo, rules, agents, recommend, fix, simulate, search).
 // Boundary: no rule logic here; verbs live in their own modules.
+import { search, formatSearchText } from "./verbs/search.js";
 import { simulate, formatSimulateText, type Change } from "./verbs/simulate.js";
 import { agents, formatAgentsText } from "./verbs/agents.js";
 import { recommend, formatRecommendText } from "./verbs/recommend.js";
@@ -104,13 +105,21 @@ async function runSimulate(args: string[]): Promise<number> {
   return result.added.length === 0 ? 0 : 1;
 }
 
+async function runSearch(args: string[]): Promise<number> {
+  const query = args.filter(arg => arg !== "--json").join(" ");
+  const result = await search(process.cwd(), query);
+  process.stdout.write(args.includes("--json") ? JSON.stringify(result, null, 2) + "\n" : formatSearchText(result));
+  return 0;
+}
+
 async function main(argv: string[]): Promise<number> {
   const [verb, ...rest] = argv;
   if (verb === undefined) {
-    process.stderr.write("usage: archstrict <init|check|todo|rules|agents|recommend|fix|simulate> [args]\n");
+    process.stderr.write("usage: archstrict <init|check|todo|rules|agents|recommend|fix|simulate|search> [args]\n");
     return 1;
   }
   try {
+    if (verb === "search") return await runSearch(rest);
     if (verb === "simulate") return await runSimulate(rest);
     if (verb === "fix") return await runFix(rest);
     if (verb === "recommend") return runRecommend(rest);
