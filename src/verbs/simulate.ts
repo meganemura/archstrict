@@ -1,5 +1,5 @@
-// Responsibility: compare proposed source changes with the current project through the full rule pipeline.
-// Boundary: all changes stay in memory; configuration and todo files remain inputs from disk.
+// Responsibility: compare proposed source and config changes with the current project through the full rule pipeline.
+// Boundary: all changes stay in memory; the baseline and todo files remain inputs from disk.
 import { existsSync, realpathSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import ts from "typescript";
@@ -74,7 +74,9 @@ function overlayHost(options: ts.CompilerOptions, changes: ReadonlyMap<string, s
 
 export async function simulate(projectRoot: string, changes: readonly Change[]): Promise<SimulateResult> {
   projectRoot = realpathSync(projectRoot);
-  const config = await loadConfig(join(projectRoot, "archstrict.config.ts"));
+  const configPath = canonicalChangePath(projectRoot, "archstrict.config.ts");
+  const beforeConfig = await loadConfig(configPath);
+  let proposedSource: string | undefined;
   const contents = new Map<string, string | null>();
   for (const change of changes) {
     if (typeof change?.path !== "string" || change.path.length === 0 ||
@@ -83,12 +85,18 @@ export async function simulate(projectRoot: string, changes: readonly Change[]):
     }
     const path = canonicalChangePath(projectRoot, change.path);
     if (contents.has(path)) throw new Error(`duplicate change path: ${change.path}`);
+    if (path === configPath) {
+      if (change.content === null) throw new Error("cannot delete archstrict.config.ts");
+      proposedSource = change.content;
+    }
     contents.set(path, change.content);
   }
-  const options = { projectRoot, declaredModules: config.declaredModules, exclude: config.exclude };
+  // The baseline must reflect disk, while every after-side rule uses the proposed config.
+  const afterConfig = proposedSource === undefined ? beforeConfig : await loadConfig(configPath, proposedSource);
+  const options = { projectRoot, declaredModules: beforeConfig.declaredModules, exclude: beforeConfig.exclude };
   const prepared = prepareGraph(options);
   const baseline = buildPreparedGraph(prepared);
-  const before = applyTodo(baseline, config, runRules(baseline, config));
+  const before = applyTodo(baseline, beforeConfig, runRules(baseline, beforeConfig));
   const roots = new Set(prepared.rootNames);
   const added = new Set<string>();
   const deleted = new Set<string>();
@@ -103,11 +111,11 @@ export async function simulate(projectRoot: string, changes: readonly Change[]):
   // files as roots. Adjust the input list and let preparation derive the
   // metadata again, without changes to the baseline's module objects.
   const simulatedPrepared = prepareGraph({
-    ...options,
+    projectRoot, declaredModules: afterConfig.declaredModules, exclude: afterConfig.exclude,
     fileListOverride: realFiles => [...new Set([
       ...realFiles.filter(file => !deleted.has(file)),
-      ...[...added].filter(file => isEligibleSourceFile(file, projectRoot, config.exclude ?? [],
-        config.declaredModules!, prepared.surface)),
+      ...[...added].filter(file => isEligibleSourceFile(file, projectRoot, afterConfig.exclude ?? [],
+        afterConfig.declaredModules!, prepared.surface)),
     ])],
   });
   const graph = buildPreparedGraph(simulatedPrepared, {
@@ -130,7 +138,7 @@ export async function simulate(projectRoot: string, changes: readonly Change[]):
       throw new Error(`internal simulation error: overlay mismatch for ${file}`);
     }
   }
-  const after = applyTodo(graph, config, runRules(graph, config));
+  const after = applyTodo(graph, afterConfig, runRules(graph, afterConfig));
   const beforeFingerprints = new Set(before.violations.map(fingerprintOf));
   const afterFingerprints = new Set(after.violations.map(fingerprintOf));
   return {

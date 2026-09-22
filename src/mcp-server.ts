@@ -19,7 +19,7 @@ const tools: Tool[] = [
     inputSchema: { type: "object", properties: { path: { type: "string" } }, required: ["path"], additionalProperties: false } },
   { name: "search", description: "Search public exports by name.",
     inputSchema: { type: "object", properties: { query: { type: "string" } }, required: ["query"], additionalProperties: false } },
-  { name: "simulate", description: "Check a proposed change set in memory.",
+  { name: "simulate", description: "Check a proposed change set in memory. A change to the project's archstrict.config.ts previews a proposed config.",
     inputSchema: { type: "object", properties: { changes: { type: "array", items: {
       type: "object", properties: { path: { type: "string" }, content: { type: ["string", "null"] } },
       required: ["path", "content"], additionalProperties: false,

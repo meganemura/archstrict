@@ -435,3 +435,16 @@ test("a non-object config default export gives the exact load error", () => with
   writeFileSync(configPath, "export default 5;\n");
   await expect(check(root)).rejects.toEqual(new Error(`${configPath} has no default export`));
 }));
+
+test("loadConfig accepts source overrides without reading or changing the disk config", () => withTempProject(async root => {
+  const path = join(root, "archstrict.config.ts");
+  const original = { declaredModules: [{ name: "disk", glob: "src/disk/**" }], because: "Use the saved boundary." };
+  const proposed = { declaredModules: [{ name: "proposal", glob: "src/proposal/**" }], because: "Preview the proposed boundary." };
+  writeFileSync(path, `export default ${JSON.stringify(original)};`);
+  expect(await loadConfig(path)).toEqual({ ...original, configPath: path });
+  expect(await loadConfig(path, `export default ${JSON.stringify(proposed)};`)).toEqual({ ...proposed, configPath: path });
+  expect(await loadConfig(path)).toEqual({ ...original, configPath: path });
+  const missingPath = join(root, "missing.config.ts");
+  expect(await loadConfig(missingPath, `export default ${JSON.stringify(proposed)};`)).toEqual({ ...proposed, configPath: missingPath });
+  await expect(loadConfig(path, "")).rejects.toThrow("has no default export");
+}));

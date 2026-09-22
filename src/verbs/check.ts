@@ -142,8 +142,9 @@ const REQUIRED_FIELDS = ["declaredModules", "because"] as const;
 // survives into the output and fails to resolve against a data: URL, which
 // has no directory of its own. Checked for below, with a clear error
 // instead of that opaque resolution failure.
-export async function loadConfig(configPath: string): Promise<Config> {
-  const source = readFileSync(configPath, "utf8");
+// Proposed source uses the same content-keyed URL, so a changed proposal cannot reuse a stale config module.
+export async function loadConfig(configPath: string, sourceOverride?: string): Promise<Config> {
+  const source = sourceOverride ?? readFileSync(configPath, "utf8");
   const { outputText } = ts.transpileModule(source, {
     compilerOptions: {
       module: ts.ModuleKind.ESNext,

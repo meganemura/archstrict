@@ -302,3 +302,107 @@ test("duplicate canonical change paths give the exact error", () => project(asyn
     { path, content: null },
   ])).rejects.toEqual(new Error(`duplicate change path: ${path}`));
 }));
+
+test("identical proposed configs preserve the baseline violation set", async () => {
+  await hegel.testAsync(async tc => {
+    const value = tc.draw(gen.integers({ minValue: 0, maxValue: 1000 }));
+    const excludeConfig = tc.draw(gen.booleans());
+    const bypass = tc.draw(gen.booleans());
+    await project(async root => {
+      configure(root, { exclude: excludeConfig ? ["*.ts"] : [] });
+      put(root, "src/b/private.ts", `export const value = ${value};`);
+      if (bypass) put(root, "src/a/index.ts", 'import { value } from "../b/private.js";');
+      const config = readFileSync(join(root, "archstrict.config.ts"), "utf8");
+      const baseline = await check(root);
+      const before = snapshot(root);
+      expect(await simulate(root, [{ path: "archstrict.config.ts", content: config }])).toEqual({
+        added: [], resolved: [], unchangedCount: baseline.violations.length,
+      });
+      expect(snapshot(root)).toEqual(before);
+    });
+  }, { testCases: 20 });
+});
+
+function realCheck(root: string): AnyViolation[] {
+  const output = spawnSync(process.execPath, [cliPath, "check", "--json"], { cwd: root, encoding: "utf8" });
+  expect([0, 1]).toContain(output.status);
+  const result = JSON.parse(output.stdout);
+  expect(result.error).toBeUndefined();
+  expect(Array.isArray(result.violations)).toBe(true);
+  return result.violations;
+}
+
+test("a proposed module surface matches two real CLI checks on the same root", () => project(async root => {
+  configure(root, { exclude: [] });
+  put(root, "src/b/private.ts", "export const value = 1;");
+  put(root, "src/a/index.ts", 'import { value } from "../b/private.js";');
+  const configPath = join(root, "archstrict.config.ts");
+  const original = readFileSync(configPath, "utf8");
+  const proposed = `export default ${JSON.stringify({
+    declaredModules: [{ name: "a", glob: "src/a/**" }, { name: "b", glob: "src/b/**", surface: ["index.ts", "private.ts"] }],
+    because: "Publish the value as a supported entry point.",
+  })};`;
+  const before = realCheck(root);
+  expect(before.some(v => v.rule === "public-surface-bypass")).toBe(true);
+  expect(before.some(v => v.rule === "uncovered-module" && v.path === configPath)).toBe(true);
+  let after: AnyViolation[];
+  try {
+    writeFileSync(configPath, proposed);
+    after = realCheck(root);
+  } finally { writeFileSync(configPath, original); }
+  const disk = snapshot(root);
+  const result = await simulate(root, [{ path: "./archstrict.config.ts", content: proposed }]);
+  const expected = delta(before, after);
+  expect(result.resolved.some(v => v.rule === "public-surface-bypass")).toBe(true);
+  const fingerprints = (values: AnyViolation[]) => [...new Set(values.map(fingerprintOf))].sort();
+  expect(fingerprints(result.added)).toEqual(fingerprints(expected.added));
+  expect(fingerprints(result.resolved)).toEqual(fingerprints(expected.resolved));
+  expect(result.unchangedCount).toBe(expected.unchangedCount);
+  expect(snapshot(root)).toEqual(disk);
+  expect(realCheck(root)).toEqual(before);
+}));
+
+test.each([false, true])("a proposed exclude change changes config root eligibility: initially excluded=%s", excluded => project(async root => {
+  configure(root, { exclude: excluded ? ["*.ts"] : [] });
+  const configPath = join(root, "archstrict.config.ts");
+  const original = readFileSync(configPath, "utf8");
+  const proposed = `export default ${JSON.stringify({
+    declaredModules: ["a", "b"].map(name => ({ name, glob: `src/${name}/**` })),
+    exclude: excluded ? [] : ["*.ts"], because: "Choose which files the graph includes.",
+  })};`;
+  const before = realCheck(root);
+  let after: AnyViolation[];
+  try {
+    writeFileSync(configPath, proposed);
+    after = realCheck(root);
+  } finally { writeFileSync(configPath, original); }
+  const result = await simulate(root, [{ path: "archstrict.config.ts", content: proposed }]);
+  expect(result).toEqual(delta(before, after));
+  const changed = excluded ? result.added : result.resolved;
+  expect(changed).toHaveLength(1);
+  expect(changed[0]).toMatchObject({ rule: "uncovered-module", path: configPath });
+  expect(excluded ? result.resolved : result.added).toEqual([]);
+}));
+
+test("a proposed module rename resolves the old fingerprint and adds the new one", () => project(async root => {
+  put(root, "src/b/private.ts", "export const value = 1;");
+  put(root, "src/a/index.ts", 'import { value } from "../b/private.js";');
+  const proposed = `export default ${JSON.stringify({
+    declaredModules: [{ name: "a", glob: "src/a/**" }, { name: "renamed", glob: "src/b/**" }],
+    exclude: ["*.ts"], because: "Give the module its new public name.",
+  })};`;
+  const result = await simulate(root, [{ path: "archstrict.config.ts", content: proposed }]);
+  expect(result.added).toHaveLength(1);
+  expect(result.resolved).toHaveLength(1);
+  expect(result.added[0]!.rule).toBe("public-surface-bypass");
+  expect(result.resolved[0]!.rule).toBe("public-surface-bypass");
+  expect(result.added[0]!.evidence).toContain("renamed");
+  expect(result.resolved[0]!.evidence).not.toContain("renamed");
+  expect(fingerprintOf(result.added[0]!)).not.toBe(fingerprintOf(result.resolved[0]!));
+  expect(result.unchangedCount).toBe(0);
+}));
+
+test("the project config cannot be deleted by a simulation", () => project(async root => {
+  await expect(simulate(root, [{ path: "archstrict.config.ts", content: null }]))
+    .rejects.toThrow("cannot delete archstrict.config.ts");
+}));
