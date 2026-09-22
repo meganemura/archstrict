@@ -114,6 +114,9 @@ async function runSearch(args: string[]): Promise<number> {
   return 0;
 }
 
+// The connected transport's stdin listener keeps Node alive after this function returns.
+// A real subprocess stayed alive with stdin open and exited when stdin closed;
+// the host can also terminate it. A separate server-closed promise is unnecessary.
 async function runMcp(): Promise<number> {
   const server = createArchstrictMcpServer(process.cwd());
   await server.connect(new StdioServerTransport());

@@ -1,5 +1,8 @@
 // Responsibility: expose architecture queries through the MCP protocol.
 // Boundary: delegates rule evaluation to verbs and retains one warm graph per server.
+// McpServer's registration helpers typically expect zod input schemas. These inputs
+// are simple enough for manual validation, so Server uses raw JSON Schema instead.
+// This avoids a second direct dependency: zod remains an SDK dependency, not a project import.
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { CallToolRequestSchema, ListToolsRequestSchema, type Tool } from "@modelcontextprotocol/sdk/types.js";
 import { createWarmGraph } from "./warm-graph.js";
@@ -22,6 +25,9 @@ const tools: Tool[] = [
     } } }, required: ["changes"], additionalProperties: false } },
 ];
 
+// The declared inputSchema supports client discovery; the low-level SDK does not
+// enforce it before this handler runs. A client can skip validation, so these
+// simple fields need manual checks without another schema library.
 function stringField(args: Record<string, unknown>, field: string): string {
   const value = args[field];
   if (typeof value !== "string") throw new TypeError(`${field} must be a string`);
@@ -29,12 +35,19 @@ function stringField(args: Record<string, unknown>, field: string): string {
 }
 
 export function createArchstrictMcpServer(projectRoot: string): Server {
+  // One server spans many calls in the same process, unlike a one-shot CLI invocation.
+  // Retain parsed SourceFiles across refresh calls; a new holder per call would lose that reuse.
   const warm = createWarmGraph();
   const server = new Server({ name: "archstrict", version: "0.0.0" }, { capabilities: { tools: {} } });
   server.setRequestHandler(ListToolsRequestSchema, () => ({ tools }));
   server.setRequestHandler(CallToolRequestSchema, async request => {
+    // A failed call must leave the session available for later calls. Convert bad input,
+    // config-load failures, and invalid paths into tool errors the agent can read as data.
+    // Keep rejected promises inside this handler rather than letting them escape through the transport.
     try {
       const args = request.params.arguments ?? {};
+      // Discovery lists allowed tools and keys, but clients can send others.
+      // Reject them here rather than trusting the advertised schema.
       const tool = tools.find(tool => tool.name === request.params.name);
       if (tool === undefined) throw new TypeError(`Unknown tool: ${request.params.name}`);
       for (const key of Object.keys(args)) {
@@ -43,6 +56,9 @@ export function createArchstrictMcpServer(projectRoot: string): Server {
       let result: unknown;
       switch (request.params.name) {
         case "check":
+          // Agents can check after every edit, as the PostToolUse hook does, so parsed-source reuse matters here.
+          // Rules already uses a lighter graph builder without a type checker.
+          // Search and simulate retain their separate cold, one-shot designs.
           result = await check(projectRoot, args.file === undefined ? undefined : stringField(args, "file"), { buildGraph: warm.refresh });
           break;
         case "rules":
@@ -52,6 +68,8 @@ export function createArchstrictMcpServer(projectRoot: string): Server {
           result = await search(projectRoot, stringField(args, "query"));
           break;
         case "simulate": {
+          // Clients can also bypass the nested change schema. Check each entry by hand
+          // so malformed paths or content cannot reach the simulation as trusted values.
           if (!Array.isArray(args.changes)) throw new TypeError("changes must be an array");
           const changes: Change[] = args.changes.map((change: unknown) => {
             if (typeof change !== "object" || change === null || Array.isArray(change)) {
