@@ -71,12 +71,13 @@ function runAgents(args: string[]): number {
   return 0;
 }
 
-function runRecommend(args: string[]): number {
+async function runRecommend(args: string[]): Promise<number> {
   const paths = args.filter(arg => arg !== "--json");
   if (paths.length > 1 || paths.some(arg => arg.startsWith("-"))) {
     throw new Error("usage: archstrict recommend [modulesGlob] [--json]");
   }
-  const result = recommend(process.cwd(), paths[0]);
+  // The glob controls initial discovery; a declared config supplies its own scope.
+  const result = await recommend(process.cwd(), paths[0]);
   process.stdout.write(args.includes("--json") ? JSON.stringify(result, null, 2) + "\n" : formatRecommendText(result));
   return 0;
 }
@@ -132,7 +133,7 @@ async function main(argv: string[]): Promise<number> {
     if (verb === "search") return await runSearch(rest);
     if (verb === "simulate") return await runSimulate(rest);
     if (verb === "fix") return await runFix(rest);
-    if (verb === "recommend") return runRecommend(rest);
+    if (verb === "recommend") return await runRecommend(rest);
     if (verb === "init") return runInit(rest);
     if (verb === "check") return await runCheck(rest);
     if (verb === "todo") return await runTodo(rest);
