@@ -26,7 +26,7 @@ A module-level cycle: two or more modules import each other, directly or through
 
 - because: "modules that import each other cannot be reasoned about, tested, or replaced independently"
 - evidence: the shortest simple cycle within the component, e.g. `a -> b -> c -> a`
-- next: `break the cycle at <m1> -> <m2>, or merge the modules involved`
+- next: `break the cycle at <from file> -> <to file> (module <m1> -> <m2>), or merge the modules involved - real import chain: <chain>`, e.g. `break the cycle at src/a/index.ts -> src/b/index.ts (module a -> b), or merge the modules involved - real import chain: src/a/index.ts -> src/b/index.ts, src/b/index.ts -> src/a/index.ts`
 - `todoModule`: the name-first module among the ones in the component
 
 A known cycle can be exempted by naming any two of its modules in config's `ignoredCycles` (order doesn't matter): `ignoredCycles: [["a", "b"]]` suppresses the whole component both belong to, not just that one edge - a cycle is one finding regardless of how many modules or edges it spans. An `ignoredCycles` pair that no longer matches any real cycle is itself a violation (`stale-cycle-exception`, below) - an exception that hides nothing real must be visible, not silently kept.
