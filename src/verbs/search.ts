@@ -15,6 +15,9 @@ export type SearchMatch = {
 };
 export type SearchResult = { query: string; total: number; shown: number; matches: SearchMatch[] };
 
+// Punctuation alone leaves JSONConfig as one token. These transitions separate
+// lowercase from uppercase and an acronym from the next word without splitting its letters.
+// Thus parseJSONConfig becomes ["parse", "json", "config"], not separate acronym letters.
 export function tokenize(text: string): string[] {
   return text.replace(/([a-z])([A-Z])/g, "$1 $2")
     .replace(/([A-Z])([A-Z][a-z])/g, "$1 $2")
@@ -32,6 +35,12 @@ function kindOf(symbol: ts.Symbol): SearchMatch["kind"] {
   return "other";
 }
 
+// Interfaces and type aliases have no value type; they need getDeclaredTypeOfSymbol.
+// Enums also use their declared type here, rather than their runtime value type.
+// Functions, classes, variables, and namespaces backed by source files need
+// getTypeOfSymbolAtLocation to describe the exported value.
+// A namespace Foo {} block has neither supported shape cheaply available here.
+// An empty signature avoids a guess about that block's type.
 function signatureOf(checker: ts.TypeChecker, target: ts.Symbol, kind: SearchMatch["kind"]): string {
   const declaration = target.declarations?.[0];
   if (declaration === undefined) return "";
@@ -66,17 +75,29 @@ export async function search(projectRoot: string, query: string): Promise<Search
         const score = queryTokens.filter(queryToken => tokens.some(token =>
           token.includes(queryToken) || queryToken.includes(token))).length / queryTokens.length;
         if (score === 0) continue;
+        // Public surfaces commonly re-export names from internal files. getExportsOfModule
+        // returns Alias symbols for those names; their flags would give a generic kind.
+        // Resolve the underlying symbol first so the kind describes the actual export.
         let target = exportSymbol;
         if (target.flags & ts.SymbolFlags.Alias) target = checker.getAliasedSymbol(target);
         const kind = target.flags & ts.SymbolFlags.Alias ? "other" : kindOf(target);
+        // typeToString can expose an internal declaring path through typeof import("...")
+        // for export * as ns or a const that holds an imported module.
+        // Output must identify the module and its public surface, not that internal file.
+        // enclosingDeclaration was rejected: it makes the path relative but retains the reference.
+        // Apply replacement to every kind: a function's return object can contain the same type.
         const signature = signatureOf(checker, target, kind)
           .replace(/import\("[^"]*"(?:\s*,\s*\{[^)]*\})?\)/g, 'import("<module>")');
+        // The surface path gives an agent a legal import destination. The internal
+        // declaring path would invite the public-surface bypass that rule 1 rejects.
         matches.push({ module: module.name, surface: toProjectRelativePosix(surfacePath, prepared.projectRoot),
           name, kind, signature, score });
       }
     }
   }
   matches.sort((a, b) => b.score - a.score || a.module.localeCompare(b.module) || a.name.localeCompare(b.name));
+  // Search presents the best ranked matches with a visible total count.
+  // A top-K limit serves that query; recommend instead reports its whole candidate set.
   const shown = matches.slice(0, 20);
   return { query, total: matches.length, shown: shown.length, matches: shown };
 }
