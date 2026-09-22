@@ -88,7 +88,7 @@ test("an empty consumer connects successfully with zero tools", () => fixture(as
 test("the fallback ignores malformed lines and notifications and reports unknown methods", () => fixture(async root => {
   const messages = [
     "not JSON", "null", "[]",
-    JSON.stringify({ jsonrpc: "2.0", id: 0, method: "initialize", params: { protocolVersion: "2025-11-25" } }),
+    JSON.stringify({ jsonrpc: "2.0", id: 0, method: "initialize", params: { protocolVersion: "1999-01-01" } }),
     JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
     JSON.stringify({ jsonrpc: "2.0", method: "other-notification" }),
     JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),

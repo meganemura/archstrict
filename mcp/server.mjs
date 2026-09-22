@@ -7,6 +7,10 @@ import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { join } from "node:path";
 
+// Match LATEST_PROTOCOL_VERSION in the pinned SDK 1.30.0. This dependency-free
+// wrapper cannot import the SDK to compute the value dynamically.
+const PROTOCOL_VERSION = "2025-11-25";
+
 // Observations across many live Claude Code MCP processes consistently found both cwd
 // and CLAUDE_PROJECT_DIR set to the session's project root. Prefer the explicit
 // environment signal over a potentially inherited cwd; retain cwd as the fallback.
@@ -53,7 +57,7 @@ if (typeof imported?.startArchstrictMcpServer === "function") {
       let result;
       switch (method) {
         case "initialize":
-          result = { protocolVersion: message.params?.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "archstrict", version: "0.0.0" } };
+          result = { protocolVersion: PROTOCOL_VERSION, capabilities: { tools: {} }, serverInfo: { name: "archstrict", version: "0.0.0" } };
           break;
         case "tools/list": result = { tools: [] }; break;
         case "ping": result = {}; break;
