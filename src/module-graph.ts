@@ -133,6 +133,7 @@ export type ModuleGraph = {
   edges: Edge[];
   crossModuleEdges: Edge[];
   outsideFiles: string[]; // .ts files under the project root that match no module
+  nonTsSourceFileCount: number; // files outside TypeScript analysis; a visibility count, not a violation
   unsupportedSyntaxCount: number; // require(), import x = require(...): out of scope for v0
   unresolvedSpecifierCount: number;
   // The raw specifier text of every unresolved import, in encounter order -
@@ -464,6 +465,13 @@ function listAllSourceFiles(
     .filter((file) => isEligibleSourceFile(file, projectRoot, excludeGlobs, declaredModules, globalDefaultSurface));
 }
 
+function countNonTsSourceFiles(rootDir: string, excludeGlobs: readonly string[]): number {
+  return ts.sys
+    .readDirectory(rootDir, [".js", ".mjs", ".cjs"], ["**/node_modules/**", "**/dist/**"])
+    .filter((file) => !excludeGlobs.some((glob) => compileGlob(glob).test(toProjectRelativePosix(file, rootDir))))
+    .length;
+}
+
 // A proposed new path has never passed through ts.sys.readDirectory.
 // Export the eligibility predicate so callers can ask whether that path
 // would qualify, using the same rules as the real scan. Keeping these
@@ -644,7 +652,8 @@ export function prepareGraph(options: BuildOptions) {
     resolveModuleForFile = (filePath) => moduleForFile(filePath, projectRoot, modulesGlob);
   }
 
-  return { projectRoot, surface, rootDir, rootNames, modules, resolveModuleForFile, compilerOptions, compilerOptionsForFile };
+  const nonTsSourceFileCount = countNonTsSourceFiles(rootDir, exclude);
+  return { projectRoot, surface, rootDir, rootNames, modules, resolveModuleForFile, compilerOptions, compilerOptionsForFile, nonTsSourceFileCount };
 }
 
 export function buildModuleGraph(options: BuildOptions): ModuleGraph {
@@ -780,6 +789,7 @@ export function buildPreparedGraph(prepared: ReturnType<typeof prepareGraph>, ov
     edges,
     crossModuleEdges,
     outsideFiles,
+    nonTsSourceFileCount: prepared.nonTsSourceFileCount,
     unsupportedSyntaxCount,
     unresolvedSpecifierCount,
     unresolvedSpecifiers,
@@ -844,6 +854,7 @@ export function buildModuleGraphForRules(options: BuildOptions): ModuleGraph {
     let fullGraph: ModuleGraph | undefined;
     const full = () => fullGraph ??= buildModuleGraph(options);
     return { modules, edges, outsideFiles,
+      nonTsSourceFileCount: prepared.nonTsSourceFileCount,
       crossModuleEdges: edges.filter((e) => e.toModule !== undefined && e.toModule !== e.fromModule),
       unsupportedSyntaxCount: cached.unsupportedSyntaxCount,
       unresolvedSpecifierCount: cached.unresolvedSpecifiers.length,

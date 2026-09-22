@@ -223,6 +223,7 @@ describe("check", () => {
         modulesWithoutSurface: 2,
         edges: 1,
         outsideFiles: 0,
+        nonTsSourceFiles: 0,
         unresolvedSpecifiers: 0,
         unresolvedSpecifierBreakdown: [],
         unsupportedSyntax: 0,

@@ -83,6 +83,7 @@ export type CheckResult = {
   modulesWithoutSurface: number; // how many modules have no public surface present — the same fact rule 1's violations imply, restated as one count
   edges: number;
   outsideFiles: number;
+  nonTsSourceFiles: number; // visibility count only; these files do not produce violations
   unresolvedSpecifiers: number;
   // The top distinct unresolved-specifier prefixes and their counts, most
   // frequent first - a bare count alone couldn't tell "one specifier, many
@@ -228,6 +229,7 @@ export function runRules(graph: ModuleGraph, config: Config): CheckResult {
     modulesWithoutSurface,
     edges: graph.crossModuleEdges.length,
     outsideFiles: graph.outsideFiles.length,
+    nonTsSourceFiles: graph.nonTsSourceFileCount,
     unresolvedSpecifiers: graph.unresolvedSpecifierCount,
     unresolvedSpecifierBreakdown: unresolvedSpecifierBreakdown(graph.unresolvedSpecifiers),
     unsupportedSyntax: graph.unsupportedSyntaxCount,
@@ -409,6 +411,9 @@ export function formatText(result: CheckResult): string {
   lines.push(`modules without a public surface: ${result.modulesWithoutSurface}`);
   lines.push(`edges: ${result.edges}`);
   lines.push(`not covered by any declared module: ${result.outsideFiles}`);
+  if (result.nonTsSourceFiles > 0) {
+    lines.push(`non-.ts source files present, not analyzed: ${result.nonTsSourceFiles}`);
+  }
   lines.push(`unresolved specifiers: ${result.unresolvedSpecifiers}`);
   if (result.unresolvedSpecifierBreakdown.length > 0) {
     const breakdown = result.unresolvedSpecifierBreakdown.map((b) => `${b.prefix} (${b.count})`).join(", ");
