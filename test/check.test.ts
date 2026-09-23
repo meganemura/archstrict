@@ -74,8 +74,8 @@ describe("loadConfig", () => {
       }
       expect(thrown).toBeInstanceOf(ReportError);
       expect((thrown as ReportError).message).toContain("schemaVersion");
-      expect((thrown as ReportError).next).toContain("schemaVersion to 1");
-      expect((thrown as ReportError).next).toContain("archstrict check");
+      expect((thrown as ReportError).do).toContain("schemaVersion to 1");
+      expect((thrown as ReportError).do).toContain("archstrict check");
     });
   });
 
@@ -235,13 +235,13 @@ describe("check", () => {
       const text = formatText(result);
       expect(text).toContain("[public-surface-bypass]");
       expect(text).toContain("because:");
-      expect(text.trim().split("\n").at(-1)).toBe("next: archstrict todo");
+      expect(text.trim().split("\n").at(-1)).toBe("do: archstrict todo");
 
       // The JSON shape is the contract: pinned against a
       // hand-written expected object, not a snapshot, so a shape change
       // here is a deliberate edit to this test, not an accepted diff.
       expect(Object.keys(violation).sort()).toEqual(
-        ["because", "column", "evidence", "line", "next", "path", "rule", "todoModule"].sort(),
+        ["because", "column", "evidence", "line", "do", "path", "rule", "todoModule"].sort(),
       );
       expect(JSON.parse(JSON.stringify(result))).toEqual({
         modules: 2,
@@ -264,7 +264,7 @@ describe("check", () => {
             column: violation.column,
             evidence: violation.evidence,
             because: violation.because,
-            next: violation.next,
+            do: violation.do,
             todoModule: violation.todoModule,
           },
         ],
@@ -272,7 +272,7 @@ describe("check", () => {
     });
   });
 
-  test("a project with no violations prints no next: line at all - nothing to re-run, unlike every other next:", async () => {
+  test("a project with no violations prints no do: line at all - nothing to re-run, unlike every other do:", async () => {
     await withTempProject(async (root) => {
       mkdirSync(join(root, "src", "app"), { recursive: true });
       writeFileSync(join(root, "src", "app", "module.ts"), "export const app = 1;\n");
@@ -281,7 +281,7 @@ describe("check", () => {
       const result = await check(root);
       expect(result.violations).toHaveLength(0);
       const text = formatText(result);
-      expect(text).not.toContain("next:");
+      expect(text).not.toMatch(/(?:^|\n)\s*do:/);
       expect(text.trim().split("\n").at(-1)).toBe("todo: 0");
     });
   });

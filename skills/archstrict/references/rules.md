@@ -1,13 +1,13 @@
 # The rules
 
-Every rule's violation carries `rule`, `path`, `line`, `column`, `evidence`, `because`, `next`. Rules 1, 2, 6, and 7 (the constraint engine) also carry `todoModule` - the module a violation belongs to, and the only rules `archstrict todo` can freeze (a violation with no `todoModule` names a module directory, a module pair, or the config file, none of which `todo` has anywhere to freeze it into).
+Every rule's violation carries `rule`, `path`, `line`, `column`, `evidence`, `because`, `do`. Rules 1, 2, 6, and 7 (the constraint engine) also carry `todoModule` - the module a violation belongs to, and the only rules `archstrict todo` can freeze (a violation with no `todoModule` names a module directory, a module pair, or the config file, none of which `todo` has anywhere to freeze it into).
 
 ## 1. public-surface-bypass
 
 An import from outside a module reaches a file other than that module's surface file (or the module has no surface file at all - every external import into it violates). Counts a type-only (`import type`) edge the same as a value edge: reaching an internal file for its types alone still reaches past the public surface. A `declaredModules` entry's own `friends` (see below) is checked before a bypass is reported: an importer matching a `friends` entry's `from` glob, reaching that entry's own `file` glob, is exempt - every other importer of that file still violates.
 
 - because: "a module's public surface is its only public surface; everything else is private"
-- next: `add a <surface> to <module>/ naming what it exports`, or `import from <module>/<surface> instead, or add the needed export there`
+- do: `add a <surface> to <module>/ naming what it exports`, or `import from <module>/<surface> instead, or add the needed export there`
 - `todoModule`: the module whose surface was bypassed (the import's target, not its source)
 
 ### `friends` - a per-consumer exception (ArchUnit's "friend" idea)
@@ -26,7 +26,7 @@ A module-level cycle: two or more modules import each other, directly or through
 
 - because: "modules that import each other cannot be reasoned about, tested, or replaced independently"
 - evidence: the shortest simple cycle within the component, e.g. `a -> b -> c -> a`
-- next: `break the cycle at <from file> -> <to file> (module <m1> -> <m2>), or merge the modules involved - real import chain: <chain>`, e.g. `break the cycle at src/a/index.ts -> src/b/index.ts (module a -> b), or merge the modules involved - real import chain: src/a/index.ts -> src/b/index.ts, src/b/index.ts -> src/a/index.ts`
+- do: `break the cycle at <from file> -> <to file> (module <m1> -> <m2>), or merge the modules involved - real import chain: <chain>`, e.g. `break the cycle at src/a/index.ts -> src/b/index.ts (module a -> b), or merge the modules involved - real import chain: src/a/index.ts -> src/b/index.ts, src/b/index.ts -> src/a/index.ts`
 - `todoModule`: the name-first module among the ones in the component
 
 A known cycle can be exempted by naming any two of its modules in config's `ignoredCycles` (order doesn't matter): `ignoredCycles: [["a", "b"]]` suppresses the whole component both belong to, not just that one edge - a cycle is one finding regardless of how many modules or edges it spans. An `ignoredCycles` pair that no longer matches any real cycle is itself a violation (`stale-cycle-exception`, below) - an exception that hides nothing real must be visible, not silently kept.
@@ -37,7 +37,7 @@ A real file (not excluded) matches no `declaredModules` entry - the same fact `g
 
 - because: "a file matching no declared module is unchecked, not passing (deptrac's --fail-on-uncovered)"
 - `path`: the file itself
-- next: `add a declaredModules entry covering '<file>' in archstrict.config.ts, or add it to exclude if it isn't module content`
+- do: `add a declaredModules entry covering '<file>' in archstrict.config.ts, or add it to exclude if it isn't module content`
 
 ## 4. empty-rule-set
 
@@ -47,7 +47,7 @@ A configured rule that structurally cannot match anything: zero `declaredModules
 
 - because: "a rule that checks nothing must not look like a pass (ArchUnitTS's Empty Test Protection)"
 - `path`: the config file, not a module
-- `next` (one of four, depending on which case fired):
+- `do` (one of four, depending on which case fired):
   - zero `declaredModules` entries: `add at least one declaredModules entry in archstrict.config.ts`
   - a `classify` glob matching no file: `remove this classify entry from archstrict.config.ts, or point its glob at real files`
   - a `deprecated` entry whose actual edge count fell to 0: `remove the '<from> -> <to>' entry from deprecated in archstrict.config.ts`
@@ -57,8 +57,8 @@ A configured rule that structurally cannot match anything: zero `declaredModules
 
 A `deprecated` entry in the config names an edge between two modules and a `count` it must not exceed - tach's own deprecated-dependency idea (warn, don't forbid), with "must not grow" added on top. The actual edge count exceeding the declared `count` is a violation (`rule: "deprecated-edge-increased"`); the actual count falling strictly between 0 and the declared count is a `suggestion` under a different rule id (`rule: "deprecated-edge-decreased"`, informational, never affects the exit code - the edge shrank, which is progress, not a failure). `because` is mandatory in the config; deprecating an edge without a reason is a decision no future reader can judge.
 
-- violation (`deprecated-edge-increased`) next: `reduce <from> -> <to> back to <count> edges, or raise count in archstrict.config.ts and record why the increase was accepted`
-- suggestion (`deprecated-edge-decreased`) next: `update count to <actual> for <from> -> <to> in archstrict.config.ts`
+- violation (`deprecated-edge-increased`) do: `reduce <from> -> <to> back to <count> edges, or raise count in archstrict.config.ts and record why the increase was accepted`
+- suggestion (`deprecated-edge-decreased`) do: `update count to <actual> for <from> -> <to> in archstrict.config.ts`
 - Does not suppress rule 1: a deprecated edge that also bypasses its target's surface is still a rule-1 violation.
 
 ## 6. type-leak
@@ -73,7 +73,7 @@ A module can have more than one surface file. A type declared in one surface fil
 
 - because: "a consumer needs a name for every type it receives from a public surface, not just the type doing the exposing"
 - evidence: `'<InternalType>', declared in '<relative path>', is never exported by name from module '<module>' - referenced by '<Exported1>', '<Exported2>', ...`
-- next: `export '<InternalType>' by name from <surface absolute path> (it's declared in <relative path>), change the referencing exports to not expose it, or add <relative path> to this module's own surface` - `<surface absolute path>` is the surface file's full absolute path (e.g. `/project/src/m/index.ts`), unlike rule 1's own `<surface>` placeholder above, which is the bare file name
+- do: `export '<InternalType>' by name from <surface absolute path> (it's declared in <relative path>), change the referencing exports to not expose it, or add <relative path> to this module's own surface` - `<surface absolute path>` is the surface file's full absolute path (e.g. `/project/src/m/index.ts`), unlike rule 1's own `<surface>` placeholder above, which is the bare file name
 - `todoModule`: the module owning the leaking surface (a leak is a self-violation, not a cross-module edge)
 
 ## 7. tag-boundary / tag-order / point-rule (the constraint engine)
@@ -90,21 +90,21 @@ A node builtin also carries a second, shared `pkg:node` tag alongside its own ba
 
 - because: whatever the `allowDeny` entry's own `because` gives (mandatory)
 - evidence: `'<specifier>' (from '<source tag>') reaches '<violating tag>'`
-- next: `remove this edge, or add '<value>' to '<source>'s allow list in archstrict.config.ts and record why`
+- do: `remove this edge, or add '<value>' to '<source>'s allow list in archstrict.config.ts and record why`
 - `todoModule`: the edge's own source module
 
 **`order`** (`rule: "tag-order"`): a `tagNamespace`'s values must appear in `sequence`, in declared order, `direction: "downward-only"` meaning a source may depend on its own layer or an earlier one, never a later one (dependency-cruiser's own layer generator). `within` scopes the rule to edges sharing the same value in a second namespace (e.g. one `sequence` per `domain`) - a `within` value with no `sequence` entry at all is silently out of scope for that rule, not an error (a domain legitimately needing no internal layering); a `within` value that DOES have a `sequence` but doesn't list one of the two layer values classify actually assigned is a thrown config error (a real omission, not a design choice).
 
 - because: whatever the `order` entry's own `because` gives (mandatory)
 - evidence: `'<specifier>' reaches '<target layer>' from '<source layer>' (<namespace> sequence: <a> -> <b> -> ...)`
-- next: `move this edge to depend only on '<namespace>' values at or before '<source layer>' in archstrict.config.ts's sequence, or restructure the code so it does`
+- do: `move this edge to depend only on '<namespace>' values at or before '<source layer>' in archstrict.config.ts's sequence, or restructure the code so it does`
 - `todoModule`: the edge's own source module
 
 **`point`** (`rule: "point-rule"`): an explicit forbidden `from -> to` edge, each side either a glob (matched against the real project-relative path; never matches an external target) or a tag predicate - `from` may be `{ tags, exclude? }` (every listed tag must be present, and if `exclude` is given, none of its tags may all be present at once), but `to` is `{ tags }` only, with no `exclude` of its own. The narrowest, most explicit of the three shapes - a specific pair a broader `allowDeny`/`order` rule doesn't already cover.
 
 - because: whatever the `point` entry's own `because` gives (mandatory)
 - evidence: `'<specifier>' matches a forbidden edge`
-- next: `remove this edge, or narrow the point rule '<from> -> <to>' in archstrict.config.ts if it's too broad`. Glob values appear unchanged; tag predicates use `JSON.stringify` for `<from>` and `<to>`.
+- do: `remove this edge, or narrow the point rule '<from> -> <to>' in archstrict.config.ts if it's too broad`. Glob values appear unchanged; tag predicates use `JSON.stringify` for `<from>` and `<to>`.
 - `todoModule`: the edge's own source module
 
 ## must-be-empty
@@ -113,7 +113,7 @@ A directory a team decided must hold no code at all - archspec's own "empty comp
 
 - because: whatever `mustBeEmpty`'s own entry gives (mandatory, same as every other root-level rule with a reason to record)
 - `path`: the matching file itself; `line`/`column` are always `1`/`1` (no single line is "the" violation - the file's existence is)
-- next: `move '<file>' out of '<glob>', or drop this mustBeEmpty entry in archstrict.config.ts if the restriction no longer applies`
+- do: `move '<file>' out of '<glob>', or drop this mustBeEmpty entry in archstrict.config.ts if the restriction no longer applies`
 - Not freezable: a file that shouldn't exist at all isn't debt to track, it's a file to move or a rule to remove.
 
 ## Not a rule of its own: stale-todo, clean-module-has-todo, and stale-cycle-exception

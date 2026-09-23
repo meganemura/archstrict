@@ -186,7 +186,7 @@ export function formatRulesText(result: RulesResult): string {
   for (const violation of [result.mustBeEmptyViolation, result.uncoveredViolation]) {
     if (violation === undefined) continue;
     lines.push(`[${violation.rule}] ${violation.path}:${violation.line}:${violation.column}`,
-      `  evidence: ${violation.evidence}`, `  because: ${violation.because}`, `  next: ${violation.next}`);
+      `  evidence: ${violation.evidence}`, `  because: ${violation.because}`, `  do: ${violation.do}`);
   }
   lines.push(`importable from:${result.importableFrom.length === 0 ? " (none)" : ""}`);
   for (const entry of result.importableFrom) {

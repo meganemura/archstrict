@@ -117,7 +117,7 @@ describe("rules", () => {
         const text = formatRulesText(result);
         expect(text).toContain(`evidence: ${violation.evidence}`);
         expect(text).toContain(`because: ${violation.because}`);
-        expect(text).toContain(`next: ${violation.next}`);
+        expect(text).toContain(`do: ${violation.do}`);
       }
     }
     const actual = await check(root);
@@ -170,7 +170,7 @@ test("uncovered extraction preserves the original serialized report", () => {
   const expected = [{ rule: "uncovered-module", path: file, line: 1, column: 1,
     evidence: "'/project/loose.ts' is in scope but matches no declared module",
     because: "a file matching no declared module is unchecked, not passing (deptrac's --fail-on-uncovered)",
-    next: "add a declaredModules entry covering 'loose.ts' in archstrict.config.ts, or add it to exclude if it isn't module content" }];
+    do: "add a declaredModules entry covering 'loose.ts' in archstrict.config.ts, or add it to exclude if it isn't module content" }];
   expect(JSON.stringify(checkUncoveredModules(graph))).toBe(JSON.stringify(expected));
 });
 
@@ -254,7 +254,7 @@ describe("constraint projections", () => {
       const rule = cfg.edges!.point![i]!;
       expect(projection.identifier).toBe(`${formatPredicate(rule.from)} -> ${formatPredicate(rule.to)}`);
       expect(projection.identifier).toBe(coverage[i]!.identifier);
-      expect(violations[i]!.next).toContain(`'${projection.identifier}'`);
+      expect(violations[i]!.do).toContain(`'${projection.identifier}'`);
       expect(projection.forbiddenTo).toBe(formatPredicate(rule.to));
     }
     expect(result.pointConstraints[0]).toMatchObject({ edgeType: "both", importForm: "both" });

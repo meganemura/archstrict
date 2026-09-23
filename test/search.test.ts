@@ -146,7 +146,7 @@ test("empty queries fail through the API and normal CLI error formats", () => pr
     await expect(search(root, query)).rejects.toThrow("query must contain at least one word");
     const json = cli(root, query, "--json");
     expect(json.status).toBe(1);
-    expect(JSON.parse(json.stdout)).toEqual({ error: "archstrict search: query must contain at least one word", next: "archstrict search" });
+    expect(JSON.parse(json.stdout)).toEqual({ error: "archstrict search: query must contain at least one word", do: "archstrict search" });
   }
   const text = cli(root);
   expect(text.status).toBe(1);

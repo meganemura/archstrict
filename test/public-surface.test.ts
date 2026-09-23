@@ -29,14 +29,14 @@ describe("checkPublicSurfaceBypass", () => {
     );
     expect(secretViolation).toBeDefined();
     expect(secretViolation?.todoModule).toBe("a");
-    expect(secretViolation?.next).toContain("a/public.ts");
+    expect(secretViolation?.do).toContain("a/public.ts");
 
     const gadgetViolation = [...bySpecifier.values()].find((v) =>
       v.evidence.includes("'../b/module.ts'"),
     );
     expect(gadgetViolation).toBeDefined();
     expect(gadgetViolation?.todoModule).toBe("b");
-    expect(gadgetViolation?.next).toContain("add a public.ts");
+    expect(gadgetViolation?.do).toContain("add a public.ts");
 
     // The import that reaches a's public.ts itself is not a violation.
     expect(

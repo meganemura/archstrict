@@ -39,21 +39,21 @@ function replaceRule(config: Config, patch: Partial<NonNullable<Config["edges"]>
   return { ...config, edges: { ...config.edges, allowDeny: [{ ...config.edges!.allowDeny![0]!, ...patch }] } };
 }
 
-test("real violations retain their fingerprint and next text after ranked decoration", () => project((_root, config, graph) => {
+test("real violations retain their fingerprint and do text after ranked decoration", () => project((_root, config, graph) => {
   const raw = computeAllowDeny(graph, config).violations[0]!;
   const decorated = checkAllowDeny(graph, config)[0]!;
   expect(decorated.moves!.map(move => move.kind)).toEqual(["reroute", "exception", "widen-allow"]);
   expect(fingerprintOf(decorated)).toBe(fingerprintOf(raw));
   const { moves, ...unchanged } = decorated;
   expect(unchanged).toEqual(raw);
-  expect(decorated.next).toBe("remove this edge, or add 'forbidden' to 'role:app's allow list in archstrict.config.ts and record why");
-  expect(moves![0]).toEqual({ kind: "reroute", verified: false, next: 'consider importing from these public surfaces: ["src/allowed/index.ts"]; confirm the needed symbol is available' });
+  expect(decorated.do).toBe("remove this edge, or add 'forbidden' to 'role:app's allow list in archstrict.config.ts and record why");
+  expect(moves![0]).toEqual({ kind: "reroute", verified: false, do: 'consider importing from these public surfaces: ["src/allowed/index.ts"]; confirm the needed symbol is available' });
 }));
 
 test("arbitrary moves cannot change a real violation fingerprint", () => project((_root, config, graph) => {
   const violation = computeAllowDeny(graph, config).violations[0]!;
   hegel.test(tc => {
-    const moves: Move[] = tc.draw(gen.arrays(gen.record({ kind: gen.sampledFrom(["reroute", "exception", "widen-allow", "widen-deny"] as const), next: gen.text(), verified: gen.booleans() })));
+    const moves: Move[] = tc.draw(gen.arrays(gen.record({ kind: gen.sampledFrom(["reroute", "exception", "widen-allow", "widen-deny"] as const), do: gen.text(), verified: gen.booleans() })));
     const decorated = { ...violation, moves };
     expect(fingerprintOf(decorated)).toBe(fingerprintOf(violation));
   });
@@ -63,7 +63,7 @@ test("the exact exception proposal exempts its pair without changing a passing e
   const move = checkAllowDeny(graph, config)[0]!.moves!.find(move => move.kind === "exception")!;
   const entry = { from: "src/app/index.ts", to: "src/forbidden/index.ts", because: "<author must state a real reason>" };
   expect(move).toEqual({ kind: "exception", verified: true, widens: true,
-    next: `add ${JSON.stringify(entry)} to exceptions for allowDeny entry 0; this exempts only this one edge pair` });
+    do: `add ${JSON.stringify(entry)} to exceptions for allowDeny entry 0; this exempts only this one edge pair` });
   expect(checkAllowDeny(graph, replaceRule(config, { exceptions: [entry] }))).toEqual([]);
   expect(computeAllowDeny(graph, config).violations).toHaveLength(1);
 }));
@@ -91,7 +91,7 @@ test("an exhaustive widening remains present and names its new finding", () => p
 test("deny widening removes the value and uses whole-graph reroute candidates", () => project((_root, config, graph) => {
   const deny = replaceRule(config, { allow: undefined, deny: ["forbidden"] });
   const moves = checkAllowDeny(graph, deny)[0]!.moves!;
-  expect(moves[0]!.next).toContain("src/future/index.ts");
+  expect(moves[0]!.do).toContain("src/future/index.ts");
   expect(moves.at(-1)).toMatchObject({ kind: "widen-deny", verified: true, widens: true });
   expect(moves.at(-1)).not.toHaveProperty("creates");
   expect(computeAllowDeny(graph, replaceRule(deny, { deny: [] })).violations).toEqual([]);
@@ -126,7 +126,7 @@ test.each(["source", "target"])("a literal star in the real %s path omits except
 
 test("ambient directory tags select real surfaces", () => project((_root, config, graph) => {
   const cfg = { ...config, classify: undefined, classifyByDirectoryName: { tagNamespace: "role", names: ["app", "allowed", "forbidden", "future"] } };
-  expect(checkAllowDeny(graph, cfg)[0]!.moves![0]!.next).toContain("src/allowed/index.ts");
+  expect(checkAllowDeny(graph, cfg)[0]!.moves![0]!.do).toContain("src/allowed/index.ts");
 }));
 
 test("widening never adds a newly denied real edge", () => project((_root, config, graph) => {
@@ -140,7 +140,7 @@ test("widening never adds a newly denied real edge", () => project((_root, confi
   });
 }));
 
-test("text moves follow next and leave all previous text intact", () => project(async (root, config) => {
+test("text moves follow do and leave all previous text intact", () => project(async (root, config) => {
   writeFileSync(config.configPath, `export default ${JSON.stringify(config)};`);
   const result = await check(root);
   const without = { ...result, violations: result.violations.map(v => {
@@ -152,7 +152,7 @@ test("text moves follow next and leave all previous text intact", () => project(
   expect(text).toContain("\n  moves:\n    reroute:");
   expect(text.split("\n").filter(line => line !== "  moves:" && !/^    (reroute|exception|widen-allow|widen-deny):/.test(line)).join("\n")).toBe(formatText(without));
   const violation = result.violations.find(v => v.rule === "tag-boundary")!;
-  expect(text).toContain(`  next: ${violation.next}\n  moves:`);
+  expect(text).toContain(`  do: ${violation.do}\n  moves:`);
 }));
 
 test("matching rules retain their own move identity and pre-existing findings are not new", () => project((_root, config, graph) => {
@@ -163,7 +163,7 @@ test("matching rules retain their own move identity and pre-existing findings ar
   const violation = checkAllowDeny(graph, cfg)[0]!;
   expect(violation.because).toBe("Second rule owns this violation.");
   const move = violation.moves!.find(move => move.kind === "widen-allow")!;
-  expect(move.next).toContain("entry 1");
+  expect(move.do).toContain("entry 1");
   expect(move).not.toHaveProperty("creates");
   expect(checkExhaustiveAllow(graph, cfg)).toHaveLength(1);
 }));

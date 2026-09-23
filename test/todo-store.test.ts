@@ -86,8 +86,8 @@ test("a real legacy cycle stays frozen across diagnostic changes and file rename
       const after = evaluate();
       expect(after.result.violations).toHaveLength(1);
       const renamedCycle = after.result.violations[0]!;
-      expect(renamedCycle.next).toContain(`src/a/${renamed}`);
-      expect(renamedCycle.next).not.toBe(cycle.next);
+      expect(renamedCycle.do).toContain(`src/a/${renamed}`);
+      expect(renamedCycle.do).not.toBe(cycle.do);
       expect(fingerprintOf(renamedCycle)).toBe(fingerprint);
       const stillFrozen = applyTodo(after.graph, config, after.result);
       expect(stillFrozen.todo).toBe(1);

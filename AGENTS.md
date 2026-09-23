@@ -17,7 +17,7 @@ A file can also carry tags (`classify`/`classifyByDirectoryName`, glob or ambien
 Shape (scope, exclude, classify, declaredModules, edges, the surface file name) lives in one root file, `archstrict.config.ts`, written as a plain TypeScript value; it is never scattered per module.
 A known cycle can be named as an exception (`ignoredCycles`), and a directory a project decided must hold no code at all can be declared with `mustBeEmpty` - see [skills/archstrict/references/rules.md](skills/archstrict/references/rules.md) for both.
 Known violations freeze into a per-module todo file that can only shrink; a module marked `strict` in config can never accumulate a todo entry, existing or new — any entry there is itself a violation.
-A violation report always carries a rule id, `path:line:col`, the evidence, the `because` reason, and a `next:` command — enough for an agent to fix its own mistake without asking.
+A violation report always carries a rule id, `path:line:col`, the evidence, the `because` reason, and a `do:` command — enough for an agent to fix its own mistake without asking.
 
 ## Layout
 

@@ -19,14 +19,14 @@ export type Violation = {
   column: number;
   evidence: string;
   because: string;
-  next: string;
+  do: string;
 };
 
 const BECAUSE = "a file matching no declared module is unchecked, not passing (deptrac's --fail-on-uncovered)";
 
 export function uncoveredViolationFor(file: string, rootDir: string): Violation {
   // `path` stays absolute (a location every other rule's own `path`
-  // points at) - only the glob suggested in `next` needs to be
+  // points at) - only the glob suggested in `do` needs to be
   // project-relative, since that's a value meant to be pasted directly
   // into declaredModules[].glob or exclude, both of which are always
   // project-relative (config.md).
@@ -38,7 +38,7 @@ export function uncoveredViolationFor(file: string, rootDir: string): Violation 
     column: 1,
     evidence: `'${file}' is in scope but matches no declared module`,
     because: BECAUSE,
-    next: `add a declaredModules entry covering '${rel}' in archstrict.config.ts, or add it to exclude if it isn't module content`,
+    do: `add a declaredModules entry covering '${rel}' in archstrict.config.ts, or add it to exclude if it isn't module content`,
   };
 }
 

@@ -53,7 +53,7 @@ test("one batch preserves each complete rule and its reason", async () => {
     expect(v).not.toHaveProperty("todoModule");
     expect(v).not.toHaveProperty("skipped");
   }
-  expect(result[0]!.next).toContain("role:app");
+  expect(result[0]!.do).toContain("role:app");
   expect(result[1]!.evidence).toContain("src/infra/**");
 });
 
@@ -62,7 +62,7 @@ test("missing credentials produce one explicit skip", async () => {
   expect(result).toHaveLength(1);
   expect(result[0]).toMatchObject({ skipped: true, tier: "calibrated", because: "a rule that checks nothing must not look like a pass" });
   expect(result[0]!.evidence).toContain("TYPESAFE_API_KEY is not set");
-  expect(result[0]!.next).toContain("--prove");
+  expect(result[0]!.do).toContain("--prove");
   expect(result[0]).not.toHaveProperty("confidence");
 });
 
@@ -118,7 +118,7 @@ test("low confidence contradictions are undecided assessments, not failures", as
   expect(result[0]).not.toHaveProperty("todoModule");
   expect(result[0]!.evidence).toContain(String(confidence));
   expect(result[0]!.evidence).toContain(JSON.stringify(answer("contradicts", confidence).probabilities));
-  expect(result[0]!.next).toContain("human review");
+  expect(result[0]!.do).toContain("human review");
 });
 
 test("choices preserve confidence and partition contradictions at the inclusive threshold", async () => {
@@ -164,7 +164,7 @@ test.each([1, 0.6])("check keeps assessments advisory in strict modules and appl
   expect((await check(root, join(root, "archstrict.config.ts"), { prove: true, prover })).violations).toHaveLength(1);
   expect((await check(root)).violations).toEqual([]);
   const blocking = { ...result, violations: [...result.violations, { rule: "empty-rule-set" as const,
-    path: root, line: 1, column: 1, evidence: "no edges", because: "test", next: "fix the rule" }] };
+    path: root, line: 1, column: 1, evidence: "no edges", because: "test", do: "fix the rule" }] };
   expect(hasBlockingViolations(blocking)).toBe(true);
 }));
 
@@ -192,7 +192,7 @@ test("an invalid answers container produces the exact skip", async () => {
     tier: "calibrated", skipped: true,
     evidence: "the Jev API request failed: invalid answers",
     because: "a rule that checks nothing must not look like a pass",
-    next: "retry archstrict check --prove after checking the service response",
+    do: "retry archstrict check --prove after checking the service response",
   }]);
 });
 

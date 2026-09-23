@@ -35,7 +35,7 @@ export type ConstraintViolation = {
   column: number;
   evidence: string;
   because: string;
-  next: string;
+  do: string;
   todoModule: string;
   moves?: Move[];
 };
@@ -208,7 +208,7 @@ export function computeAllowDeny(
         column: edge.fromPosition.column,
         evidence: `'${edge.specifier}' (from '${rule.source}') reaches '${violatingTag}'`,
         because: rule.because,
-        next: `remove this edge, or add '${violatingTag.slice(namespacePrefix.length)}' to '${rule.source}'s allow list in archstrict.config.ts and record why`,
+        do: `remove this edge, or add '${violatingTag.slice(namespacePrefix.length)}' to '${rule.source}'s allow list in archstrict.config.ts and record why`,
         todoModule: edge.fromModule,
       };
       violations.push(violation);
@@ -349,7 +349,7 @@ function computeOrder(
         column: edge.fromPosition.column,
         evidence: `'${edge.specifier}' reaches '${targetLayer}' from '${sourceLayer}' (${rule.tagNamespace} sequence: ${sequence.join(" -> ")})`,
         because: rule.because,
-        next: `move this edge to depend only on '${rule.tagNamespace}' values at or before '${sourceLayer.slice(namespacePrefix.length)}' in archstrict.config.ts's sequence, or restructure the code so it does`,
+        do: `move this edge to depend only on '${rule.tagNamespace}' values at or before '${sourceLayer.slice(namespacePrefix.length)}' in archstrict.config.ts's sequence, or restructure the code so it does`,
         todoModule: edge.fromModule,
       });
     });
@@ -408,7 +408,7 @@ function computePoint(
         column: edge.fromPosition.column,
         evidence: `'${edge.specifier}' matches a forbidden edge`,
         because: rule.because,
-        next: `remove this edge, or narrow the point rule '${identifiers[i]}' in archstrict.config.ts if it's too broad`,
+        do: `remove this edge, or narrow the point rule '${identifiers[i]}' in archstrict.config.ts if it's too broad`,
         todoModule: edge.fromModule,
       });
     });

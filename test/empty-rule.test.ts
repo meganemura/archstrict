@@ -159,9 +159,9 @@ describe("checkEmptyRuleSet", () => {
     expect(findings[0]).not.toHaveProperty("todoModule");
     expect(findings[0]!.evidence).toContain("kind:c -> kind");
     expect(findings[0]!.evidence).toContain('["a","b"]');
-    expect(findings[0]!.next).toContain("kind:c -> kind");
-    expect(findings[0]!.next).toContain("narrow the allow list");
-    expect(findings[0]!.next).toContain("remove the rule");
+    expect(findings[0]!.do).toContain("kind:c -> kind");
+    expect(findings[0]!.do).toContain("narrow the allow list");
+    expect(findings[0]!.do).toContain("remove the rule");
   });
 });
 

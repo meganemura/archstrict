@@ -48,7 +48,7 @@ export type StaleTodoViolation = {
   column: number;
   evidence: string;
   because: string;
-  next: string;
+  do: string;
 };
 
 // Reported when a module configured to stay clean (config's `strict` list)
@@ -62,7 +62,7 @@ export type CleanModuleHasTodoViolation = {
   column: number;
   evidence: string;
   because: string;
-  next: string;
+  do: string;
 };
 
 export type AnyViolation =
@@ -344,7 +344,7 @@ export function applyTodo(graph: ModuleGraph, config: Config, result: CheckResul
         column: 1,
         evidence: `module '${name}' is configured to stay clean, but has ${entries.length} todo entrie(s)`,
         because: "a module configured to stay clean must have no todo entries, not entries frozen from before",
-        next: `fix the ${entries.length} violation(s), then run archstrict todo to prune`,
+        do: `fix the ${entries.length} violation(s), then run archstrict todo to prune`,
       });
       continue; // this module's entries are never "stale" — they're a standing violation instead
     }
@@ -359,7 +359,7 @@ export function applyTodo(graph: ModuleGraph, config: Config, result: CheckResul
         column: 1,
         evidence: `todo entry ${entry.fingerprint} (${entry.rule}) no longer matches any violation`,
         because: "an unmatched todo entry hides nothing real; it must be pruned, not left behind",
-        next: "archstrict todo",
+        do: "archstrict todo",
       });
     }
   }
@@ -392,9 +392,9 @@ export async function check(projectRoot: string, focusFile?: string, options: Ch
 }
 
 // The output must always carry: rule id, path:line:col, evidence, because,
-// and a next: line last. "Inference" (pks's shape) is the evidence + next
+// and a do: line last. "Inference" (pks's shape) is the evidence + do
 // pair together, not a separate field: evidence says what was found
-// ("resolved to module Y's X"), next says what to do about it.
+// ("resolved to module Y's X"), do says what to do about it.
 export function formatText(result: CheckResult): string {
   const lines: string[] = [];
   for (const v of result.violations) {
@@ -407,16 +407,16 @@ export function formatText(result: CheckResult): string {
       else lines.push(`  confidence: ${v.confidence}`);
     }
     lines.push(`  because: ${v.because}`);
-    lines.push(`  next: ${v.next}`);
+    lines.push(`  do: ${v.do}`);
     if (v.rule === "tag-boundary" && v.moves?.length) {
       lines.push("  moves:");
-      for (const move of v.moves) lines.push(`    ${move.kind}: ${move.next}`);
+      for (const move of v.moves) lines.push(`    ${move.kind}: ${move.do}`);
     }
   }
   for (const s of result.suggestions) {
     lines.push(`[${s.rule}] ${s.path}:${s.line}:${s.column}`);
     lines.push(`  ${s.evidence}`);
-    lines.push(`  next: ${s.next}`);
+    lines.push(`  do: ${s.do}`);
   }
   // One fact per line, not a comma-joined blob: an agent reading text
   // output (not JSON) reads lines, and each of these is a count where a
@@ -437,13 +437,13 @@ export function formatText(result: CheckResult): string {
   lines.push(`unsupported syntax: ${result.unsupportedSyntax}`);
   lines.push(`type leaks: ${result.typeLeaks}`);
   lines.push(`todo: ${result.todo}`);
-  // A next: line only when there is a concrete next action - a clean
+  // A do: line only when there is a concrete next action - a clean
   // check has none, and telling the reader to re-run the command that
   // just produced this clean result is circular, unlike every other
-  // next: this tool ever prints (each names the one thing to actually
+  // do: this tool ever prints (each names the one thing to actually
   // do about a real finding).
   if (result.violations.some((v) => v.rule !== "config-meaning")) {
-    lines.push(`next: archstrict todo`);
+    lines.push(`do: archstrict todo`);
   }
   return lines.join("\n") + "\n";
 }

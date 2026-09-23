@@ -67,7 +67,7 @@ The built-in assessment instead checks whether the configured shape contradicts 
 
 ## 3. Violation shape
 
-Each calibrated result carries the five required fields `rule`, `path`, `evidence`, `because`, and `next`.
+Each calibrated result carries the five required fields `rule`, `path`, `evidence`, `because`, and `do`.
 It also carries two fields that deterministic violations do not carry:
 
 | Field | Value |

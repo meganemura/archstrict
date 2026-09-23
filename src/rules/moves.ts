@@ -10,7 +10,7 @@ import { computeAllowDeny, checkExhaustiveAllow, isExemptedByGlobPair, targetTag
 
 export type Move = {
   kind: "reroute" | "exception" | "widen-allow" | "widen-deny";
-  next: string;
+  do: string;
   verified: boolean;
   widens?: true;
   creates?: string[];
@@ -40,7 +40,7 @@ export function computeMoves(violation: ConstraintViolation, graph: ModuleGraph,
   }
   const moves: Move[] = [];
   if (surfaces.size > 0) moves.push({ kind: "reroute", verified: false,
-    next: `consider importing from these public surfaces: ${JSON.stringify([...surfaces].sort())}; confirm the needed symbol is available` });
+    do: `consider importing from these public surfaces: ${JSON.stringify([...surfaces].sort())}; confirm the needed symbol is available` });
 
   const from = toProjectRelativePosix(edge.fromFile, graph.rootDir);
   const to = edge.externalPackage === undefined ? toProjectRelativePosix(edge.resolvedFile, graph.rootDir) : undefined;
@@ -50,7 +50,7 @@ export function computeMoves(violation: ConstraintViolation, graph: ModuleGraph,
     const entry = { from, to, because: "<author must state a real reason>" };
     moves.push({ kind: "exception", widens: true,
       verified: isExemptedByGlobPair(edge, [...rule.exceptions ?? [], entry], graph.rootDir),
-      next: `add ${JSON.stringify(entry)} to exceptions for allowDeny entry ${ruleIndex}; this exempts only this one edge pair` });
+      do: `add ${JSON.stringify(entry)} to exceptions for allowDeny entry ${ruleIndex}; this exempts only this one edge pair` });
   }
 
   const value = violatingTag.slice(prefix.length);
@@ -76,7 +76,7 @@ export function computeMoves(violation: ConstraintViolation, graph: ModuleGraph,
     // One import can carry several tags in the same namespace, such as synthesized pkg: tags.
     // Admitting one value can leave another forbidden, so a proposed widening does not automatically verify the edge.
     verified: !after.some(match => match.edge === edge && match.ruleIndex === ruleIndex),
-    next: rule.allow !== undefined ? `add ${JSON.stringify(value)} to allow for allowDeny entry ${ruleIndex}` :
+    do: rule.allow !== undefined ? `add ${JSON.stringify(value)} to allow for allowDeny entry ${ruleIndex}` :
       `remove ${JSON.stringify(value)} from deny for allowDeny entry ${ruleIndex}`,
   };
   if (creates.size > 0) move.creates = [...creates].sort();

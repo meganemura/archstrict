@@ -43,7 +43,7 @@ describe("checkDeprecatedEdges", () => {
     expect(violations).toHaveLength(0);
     expect(suggestions).toHaveLength(1);
     expect(suggestions[0]!.rule).toBe("deprecated-edge-decreased");
-    expect(suggestions[0]!.next).toContain("update count to 2");
+    expect(suggestions[0]!.do).toContain("update count to 2");
   });
 
   test("a count fallen to zero is reported by rule 4, not rule 5", () => {

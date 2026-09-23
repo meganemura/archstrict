@@ -342,7 +342,7 @@ describe("checkPoint", () => {
       to: { tags: ["kind:app"] },
       identifier: '{"tags":["kind:app"],"exclude":{"tags":["role:adapter"]}} -> {"tags":["kind:app"]}',
     },
-  ])("next identifies the matching point rule: $identifier", ({ from, to, identifier }) => {
+  ])("do identifies the matching point rule: $identifier", ({ from, to, identifier }) => {
     const cfg: Config = {
       configPath: "<test>",
       declaredModules: [],
@@ -355,7 +355,7 @@ describe("checkPoint", () => {
     };
     const violations = checkPoint(fakeGraph([edge({})]), cfg);
     expect(violations).toHaveLength(1);
-    expect(violations[0]!.next).toBe(
+    expect(violations[0]!.do).toBe(
       `remove this edge, or narrow the point rule '${identifier}' in archstrict.config.ts if it's too broad`,
     );
     expect(violations[0]!.evidence).toBe("'./b.js' matches a forbidden edge");

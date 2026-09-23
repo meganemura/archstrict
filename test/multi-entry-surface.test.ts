@@ -54,7 +54,7 @@ describe("declaredModules[].surface as an array of globs", () => {
       expect(violations[0]!.evidence).toContain("'../server/internal.js'");
       // Plural display names both real entry points, not one arbitrarily.
       expect(violations[0]!.evidence).toContain("index.ts, http.ts");
-      expect(violations[0]!.next).toContain("server/index.ts, server/http.ts");
+      expect(violations[0]!.do).toContain("server/index.ts, server/http.ts");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -81,7 +81,7 @@ describe("declaredModules[].surface as an array of globs", () => {
 
       const violations = checkPublicSurfaceBypass(graph);
       expect(violations).toHaveLength(1);
-      expect(violations[0]!.next).toBe("add a index.ts to app/ naming what it exports");
+      expect(violations[0]!.do).toBe("add a index.ts to app/ naming what it exports");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

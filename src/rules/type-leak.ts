@@ -301,7 +301,7 @@ export type Violation = {
   column: number;
   evidence: string;
   because: string;
-  next: string;
+  do: string;
   todoModule: string;
   leak?: { internalType: string; internalFile: string; exportedAs: string[] };
 };
@@ -417,7 +417,7 @@ export function checkTypeLeaks(graph: {
         column: group.column,
         evidence: `'${group.type}', declared in '${relativeInternalFile}', is never exported by name from module '${name}'${REFERENCED_BY_MARKER}${shown}${more}`,
         because: BECAUSE,
-        next: `export '${group.type}' by name from ${group.path} (it's declared in ${relativeInternalFile}), change the referencing exports to not expose it, or add ${relativeInternalFile} to this module's own surface`,
+        do: `export '${group.type}' by name from ${group.path} (it's declared in ${relativeInternalFile}), change the referencing exports to not expose it, or add ${relativeInternalFile} to this module's own surface`,
         todoModule: name,
         leak: { internalType: group.type, internalFile: group.file, exportedAs: names },
       });

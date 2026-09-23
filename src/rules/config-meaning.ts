@@ -23,7 +23,7 @@ type BaseFinding = {
   column: number;
   evidence: string;
   because: string;
-  next: string;
+  do: string;
   tier: "calibrated";
 };
 type ContradictionFinding = BaseFinding & { confidence: number; skipped?: never; undecided?: never };
@@ -76,10 +76,10 @@ export const realProver: Prover = async (request) => {
 // HTTP errors can echo request details, including credentials; proving otherwise for every failure path is costly.
 // Fixed, authored reasons prevent caught request details from leaking TYPESAFE_API_KEY into evidence without repeated sanitization.
 // Error categories can select a reason, but evidence must never copy error.message or error.name.
-function skipped(config: Config, reason: string, next: string): Violation[] {
+function skipped(config: Config, reason: string, doText: string): Violation[] {
   return [{ rule: "config-meaning", path: config.configPath, line: 1, column: 1,
     tier: "calibrated", skipped: true, evidence: reason,
-    because: "a rule that checks nothing must not look like a pass", next }];
+    because: "a rule that checks nothing must not look like a pass", do: doText }];
 }
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -140,13 +140,13 @@ export async function checkConfigMeaning(config: Config, prove: boolean, prover:
         return [{ rule: "config-meaning", path: config.configPath, line: 1, column: 1,
           evidence: `${label}: Jev returned contradicts but could not decide with sufficient confidence (confidence ${confidence}; probabilities ${JSON.stringify(probabilities)})`,
           because: rule.because,
-          next: `request a human review of the ${label} in archstrict.config.ts: the automated check could not decide`,
+          do: `request a human review of the ${label} in archstrict.config.ts: the automated check could not decide`,
           undecided: true, tier: "calibrated" }];
       }
       return [{ rule: "config-meaning", path: config.configPath, line: 1, column: 1,
         evidence: `${label}: Jev assessed that its configured shape contradicts its 'because' text (confidence ${confidence})`,
         because: rule.because,
-        next: `review the ${label} in archstrict.config.ts: correct its configured shape or its because text so they describe the same restriction`,
+        do: `review the ${label} in archstrict.config.ts: correct its configured shape or its because text so they describe the same restriction`,
         confidence, tier: "calibrated" }];
     });
   } catch (error) {

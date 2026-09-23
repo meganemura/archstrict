@@ -127,5 +127,5 @@ test("a non-surface declaration still leaks beside a public sibling type", () =>
     const leak = leaks[0]!;
     expect(leak.leak?.internalType).toBe("Hidden");
     const internalFile = join("src", "m", "internal.ts");
-    expect(leak.next).toBe(`export 'Hidden' by name from ${leak.path} (it's declared in ${internalFile}), change the referencing exports to not expose it, or add ${internalFile} to this module's own surface`);
+    expect(leak.do).toBe(`export 'Hidden' by name from ${leak.path} (it's declared in ${internalFile}), change the referencing exports to not expose it, or add ${internalFile} to this module's own surface`);
   }));

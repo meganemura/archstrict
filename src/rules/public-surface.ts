@@ -30,7 +30,7 @@ export type Violation = {
   // a human or an agent to see what was reached without re-resolving it.
   evidence: string;
   because: string;
-  next: string;
+  do: string;
   // Where a todo for this violation is filed: the exposed module, not the
   // importer.
   todoModule: string;
@@ -82,7 +82,7 @@ function violationFor(
     surfaceFiles.length === 0
       ? `'${edge.specifier}' resolved to module '${targetModuleName}', which has no ${surfaceDisplay}`
       : `'${edge.specifier}' resolved to a file inside module '${targetModuleName}' other than its ${surfaceDisplay}`;
-  const next =
+  const doText =
     surfaceFiles.length === 0
       ? `add ${addArticle} ${surfaceDisplay} to ${targetModuleName}/ naming what it exports`
       : `import from ${importTargets} instead, or add the needed export there`;
@@ -94,7 +94,7 @@ function violationFor(
     column: edge.fromPosition.column,
     evidence,
     because: BECAUSE,
-    next,
+    do: doText,
     todoModule: targetModuleName,
   };
 }

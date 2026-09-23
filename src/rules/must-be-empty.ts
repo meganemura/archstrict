@@ -19,7 +19,7 @@ export type Violation = {
   column: number;
   evidence: string;
   because: string;
-  next: string;
+  do: string;
 };
 
 // `files`: every real, project-root-relative (forward-slash) path this
@@ -42,7 +42,7 @@ export function checkMustBeEmpty(files: readonly string[], config: Pick<Config, 
         column: 1,
         evidence: `'${file}' matches '${entry.glob}', which must stay empty`,
         because: entry.because,
-        next: `move '${file}' out of '${entry.glob}', or drop this mustBeEmpty entry in archstrict.config.ts if the restriction no longer applies`,
+        do: `move '${file}' out of '${entry.glob}', or drop this mustBeEmpty entry in archstrict.config.ts if the restriction no longer applies`,
       });
     }
   }

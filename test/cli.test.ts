@@ -22,14 +22,14 @@ describe("cli", () => {
     expect(() => execFileSync("node", [CLI_PATH], { encoding: "utf8" })).toThrow();
   });
 
-  test("init writes the two files and prints a next: line", () => {
+  test("init writes the two files and prints a do: line", () => {
     const root = mkdtempSync(join(tmpdir(), "archstrict-cli-init-"));
     try {
       mkdirSync(join(root, "src", "app"), { recursive: true });
       writeFileSync(join(root, "src", "app", "module.ts"), "export const app = 1;\n");
 
       const out = execFileSync("node", [CLI_PATH, "init"], { cwd: root, encoding: "utf8" });
-      expect(out).toContain("next: archstrict check");
+      expect(out).toContain("do: archstrict check");
       expect(readFileSync(join(root, "archstrict.types.ts"), "utf8")).toContain('"app"');
       expect(readFileSync(join(root, "archstrict.config.ts"), "utf8")).toContain("satisfies Config");
     } finally {
@@ -48,7 +48,7 @@ describe("cli", () => {
       // throw exactly the "does not exist" config error cli.test.ts's own
       // "init on a project with no src/" test already covers.
       const out = execFileSync("node", [CLI_PATH, "init", "packages/*"], { cwd: root, encoding: "utf8" });
-      expect(out).toContain("next: archstrict check");
+      expect(out).toContain("do: archstrict check");
       expect(readFileSync(join(root, "archstrict.types.ts"), "utf8")).toContain('"core"');
       expect(readFileSync(join(root, "archstrict.config.ts"), "utf8")).toContain("packages/core/**");
     } finally {
@@ -56,7 +56,7 @@ describe("cli", () => {
     }
   });
 
-  test("init then check: exit 1 and a next: todo line when a violation exists", () => {
+  test("init then check: exit 1 and a do: todo line when a violation exists", () => {
     const root = mkdtempSync(join(tmpdir(), "archstrict-cli-check-"));
     try {
       mkdirSync(join(root, "src", "app"), { recursive: true });
@@ -79,7 +79,7 @@ describe("cli", () => {
       }
       expect(exitCode).toBe(1);
       expect(out).toContain("[public-surface-bypass]");
-      expect(out.trim().split("\n").at(-1)).toBe("next: archstrict todo");
+      expect(out.trim().split("\n").at(-1)).toBe("do: archstrict todo");
 
       let jsonOut = "";
       try {
@@ -117,7 +117,7 @@ describe("cli", () => {
       expect(errOut).not.toMatch(/^\s+at /m);
       const lines = errOut.trim().split("\n");
       expect(lines).toHaveLength(2);
-      expect(lines[1]).toMatch(/^next: .*archstrict check$/);
+      expect(lines[1]).toMatch(/^do: .*archstrict check$/);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -141,7 +141,7 @@ describe("cli", () => {
       expect(errOut).not.toMatch(/^\s+at /m);
       const lines = errOut.trim().split("\n");
       expect(lines).toHaveLength(2);
-      expect(lines[1]).toBe("next: create src (with at least one .ts file) and run archstrict init src/*");
+      expect(lines[1]).toBe("do: create src (with at least one .ts file) and run archstrict init src/*");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -165,7 +165,7 @@ describe("cli", () => {
       expect(exitCode).toBe(1);
       const json = JSON.parse(out);
       expect(json.error).toContain("missing required field");
-      expect(json.next).toContain("archstrict check");
+      expect(json.do).toContain("archstrict check");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -185,14 +185,14 @@ describe("cli", () => {
         errOut = err.stderr;
       }
       expect(exitCode).toBe(1);
-      expect(errOut.trim().split("\n").at(-1)).toBe("next: archstrict init");
+      expect(errOut.trim().split("\n").at(-1)).toBe("do: archstrict init");
 
       try {
         jsonOut = execFileSync("node", [CLI_PATH, "check", "--json"], { cwd: root, encoding: "utf8" });
       } catch (e) {
         jsonOut = (e as { stdout: string }).stdout;
       }
-      expect(JSON.parse(jsonOut)).toMatchObject({ next: "archstrict init" });
+      expect(JSON.parse(jsonOut)).toMatchObject({ do: "archstrict init" });
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -218,7 +218,7 @@ describe("cli", () => {
       expect(exitCode).toBe(1);
       expect(errOut).toContain("no such file");
       expect(errOut).not.toMatch(/^\s+at /m);
-      expect(errOut.trim().split("\n").at(-1)).toBe("next: archstrict check");
+      expect(errOut.trim().split("\n").at(-1)).toBe("do: archstrict check");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -308,7 +308,7 @@ describe("cli", () => {
     }
   });
 
-  test("todo --json on a broken config prints a structured error object, not the text next: line", () => {
+  test("todo --json on a broken config prints a structured error object, not the text do: line", () => {
     const root = mkdtempSync(join(tmpdir(), "archstrict-cli-todo-json-error-"));
     try {
       writeFileSync(join(root, "archstrict.config.ts"), "export default { modules: 'src/*' };\n");
@@ -326,7 +326,7 @@ describe("cli", () => {
       expect(exitCode).toBe(1);
       const json = JSON.parse(out);
       expect(json.error).toContain("missing required field");
-      expect(json.next).toContain("archstrict check");
+      expect(json.do).toContain("archstrict check");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

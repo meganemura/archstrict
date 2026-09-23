@@ -22,11 +22,11 @@ describe("checkUncoveredModules", () => {
     expect(violations[0]!.rule).toBe("uncovered-module");
     expect(violations[0]!.path.endsWith("src/c/module.ts")).toBe(true);
     expect(violations[0]!.evidence).toContain("matches no declared module");
-    // `next` embeds a value meant to be pasted directly into a
+    // `do` embeds a value meant to be pasted directly into a
     // declaredModules entry's own glob, which is always project-relative
     // (config.md) - unlike `path` above, which stays absolute.
-    expect(violations[0]!.next).toContain("'src/c/module.ts'");
-    expect(violations[0]!.next).not.toContain(FIXTURE);
+    expect(violations[0]!.do).toContain("'src/c/module.ts'");
+    expect(violations[0]!.do).not.toContain(FIXTURE);
   });
 
   test("declaring every real directory leaves nothing uncovered", () => {

@@ -81,16 +81,16 @@ function main() {
 
   const result = JSON.parse(stdout);
   // A config or missing-file error (a required field absent, an
-  // unsupported edges shape) reports as { error, next } instead of a
+  // unsupported edges shape) reports as { error, do } instead of a
   // real CheckResult, exit 1, no stdout-less failure - so the branch
   // above never catches it. Surfaced, not silently ignored: the project
   // has archstrict installed but something about its own setup is broken,
   // which the agent editing it needs to know, the same as a real
-  // violation would. `next` is the command to run; older binaries that
+  // violation would. `do` is the command to run; older binaries that
   // omit it still surface the error text.
   if (typeof result.error === "string") {
-    const next = typeof result.next === "string" && result.next.length > 0 ? `\nnext: ${result.next}` : "";
-    emit(`archstrict: check did not run (${result.error}).${next}`);
+    const doText = typeof result.do === "string" && result.do.length > 0 ? `\ndo: ${result.do}` : "";
+    emit(`archstrict: check did not run (${result.error}).${doText}`);
     return;
   }
   if (result.violations.length === 0) {
@@ -99,7 +99,7 @@ function main() {
   }
 
   const lines = result.violations.map(
-    (v) => `[${v.rule}] ${v.path}:${v.line}:${v.column}\n  ${v.evidence}\n  because: ${v.because}\n  next: ${v.next}`,
+    (v) => `[${v.rule}] ${v.path}:${v.line}:${v.column}\n  ${v.evidence}\n  because: ${v.because}\n  do: ${v.do}`,
   );
   emit(`archstrict found ${result.violations.length} violation(s) in ${filePath}:\n${lines.join("\n")}`);
 }

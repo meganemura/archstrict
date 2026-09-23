@@ -48,10 +48,10 @@ describe("checkCycles", () => {
 });
 
 
-test("next names every real import in the fixture cycle", () => {
+test("do names every real import in the fixture cycle", () => {
   const graph = buildModuleGraph({ projectRoot: FIXTURE, modulesGlob: "src/*" });
   const [violation] = checkCycles(graph);
-  expect(violation!.next).toBe("break the cycle at a/module.ts -> b/module.ts (module a -> b), or merge the modules involved - real import chain: a/module.ts -> b/module.ts, b/module.ts -> c/module.ts, c/module.ts -> a/module.ts");
+  expect(violation!.do).toBe("break the cycle at a/module.ts -> b/module.ts (module a -> b), or merge the modules involved - real import chain: a/module.ts -> b/module.ts, b/module.ts -> c/module.ts, c/module.ts -> a/module.ts");
   expect(violation!.path).toBe(join(graph.rootDir, "a/module.ts"));
   expect(violation!.line).toBe(1);
 });
@@ -74,7 +74,7 @@ test("coarse module buckets name the actual importing files", () => {
     const violations = checkCycles(graph);
     expect(violations).toHaveLength(1);
     expect(violations[0]!.evidence).toBe("root -> rules -> root");
-    expect(violations[0]!.next).toBe("break the cycle at src/todo-store.ts -> src/rules/type-leak.ts (module root -> rules), or merge the modules involved - real import chain: src/todo-store.ts -> src/rules/type-leak.ts, src/rules/type-leak.ts -> src/config.ts");
+    expect(violations[0]!.do).toBe("break the cycle at src/todo-store.ts -> src/rules/type-leak.ts (module root -> rules), or merge the modules involved - real import chain: src/todo-store.ts -> src/rules/type-leak.ts, src/rules/type-leak.ts -> src/config.ts");
     expect(violations[0]!.path).toBe(join(root, "src/todo-store.ts"));
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

@@ -178,7 +178,7 @@ test("CLI reads one JSON body and renders full violations with the correct exit 
   expect(text.stdout).toBe(formatSimulateText(result));
   expect(text.stdout).toContain("[uncovered-module]");
   expect(text.stdout).toContain("because:");
-  expect(text.stdout).toContain("next:");
+  expect(text.stdout).toContain("do:");
   const clean = cli(root, '{"changes":[]}');
   expect(clean.status).toBe(0);
   expect(JSON.parse(clean.stdout)).toEqual({ added: [], resolved: [], unchangedCount: 0 });

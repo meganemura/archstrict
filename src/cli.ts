@@ -14,15 +14,15 @@ import { rules, formatRulesText } from "./verbs/rules.js";
 import { ReportError } from "./report-error.js";
 
 // Text and JSON share one shape: the message, then the one command to run.
-// A violation already carries `next`; a thrown config or missing-file
+// A violation already carries `do`; a thrown config or missing-file
 // failure goes through here so it does too.
 function reportFailure(error: unknown, verb: string, asJson: boolean): void {
   const message = error instanceof Error ? error.message : String(error);
-  const next = error instanceof ReportError ? error.next : `archstrict ${verb}`;
+  const doText = error instanceof ReportError ? error.do : `archstrict ${verb}`;
   if (asJson) {
-    process.stdout.write(`${JSON.stringify({ error: message, next })}\n`);
+    process.stdout.write(`${JSON.stringify({ error: message, do: doText })}\n`);
   } else {
-    process.stderr.write(`archstrict: ${message}\nnext: ${next}\n`);
+    process.stderr.write(`archstrict: ${message}\ndo: ${doText}\n`);
   }
 }
 
@@ -35,7 +35,7 @@ function runInit(args: string[]): number {
   } else {
     process.stdout.write(`${result.configPath} already exists, left untouched\n`);
   }
-  process.stdout.write(`next: archstrict check\n`);
+  process.stdout.write(`do: archstrict check\n`);
   return 0;
 }
 
@@ -63,7 +63,7 @@ async function runTodo(args: string[]): Promise<number> {
   } else {
     process.stdout.write(`pruned ${result.pruned} stale entrie(s)\n`);
   }
-  process.stdout.write(`next: archstrict check\n`);
+  process.stdout.write(`do: archstrict check\n`);
   return 0;
 }
 
@@ -153,11 +153,11 @@ async function main(argv: string[]): Promise<number> {
     if (verb === "todo") return await runTodo(rest);
     if (verb === "rules") return await runRules(rest);
     if (verb === "agents") return runAgents(rest);
-    process.stderr.write(`archstrict: '${verb}' is not implemented yet\nnext: archstrict init\n`);
+    process.stderr.write(`archstrict: '${verb}' is not implemented yet\ndo: archstrict init\n`);
     return 1;
   } catch (error) {
     // A config or missing-file error throws before any real output.
-    // reportFailure prints the message and a next: line — the same pair
+    // reportFailure prints the message and a do: line — the same pair
     // a violation carries — instead of a bare message or stack trace.
     reportFailure(error, verb, rest.includes("--json"));
     return 1;

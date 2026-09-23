@@ -19,13 +19,13 @@ export type Violation = {
   column: number;
   evidence: string;
   because: string;
-  next: string;
+  do: string;
 };
 
 const BECAUSE =
   "a rule that checks nothing must not look like a pass (ArchUnitTS's Empty Test Protection)";
 
-function violation(config: Config, evidence: string, next: string): Violation {
+function violation(config: Config, evidence: string, doText: string): Violation {
   return {
     rule: "empty-rule-set",
     path: config.configPath,
@@ -33,7 +33,7 @@ function violation(config: Config, evidence: string, next: string): Violation {
     column: 1,
     evidence,
     because: BECAUSE,
-    next,
+    do: doText,
   };
 }
 
@@ -128,7 +128,7 @@ export function checkEmptyRuleSet(graph: ModuleGraph, config: Config): Violation
       rule: "exhaustive-allow-list", path: config.configPath, line: 1, column: 1,
       evidence: `allowDeny rule '${identifier}' allows every real target value with allow ${JSON.stringify(rule.allow)}`,
       because: rule.because,
-      next: `narrow the allow list for '${identifier}' in archstrict.config.ts to a genuine subset of real target values, or remove the rule if it should forbid nothing today`,
+      do: `narrow the allow list for '${identifier}' in archstrict.config.ts to a genuine subset of real target values, or remove the rule if it should forbid nothing today`,
     });
   }
 

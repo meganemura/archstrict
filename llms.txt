@@ -14,4 +14,4 @@ Installed package: `node_modules/archstrict/skills/archstrict/SKILL.md` (this fi
 - `archstrict check [file] [--json]` — report violations for the whole project; a file argument only scopes the report
 - `archstrict todo [--json]` — freeze current freezable violations on the first run, then only prune
 
-A config or missing-file failure prints a `next:` line naming the command to run. With `--json` that failure is `{ "error": "<message>", "next": "<command>" }`.
+A config or missing-file failure prints a `do:` line naming the command to run. With `--json` that failure is `{ "error": "<message>", "do": "<command>" }`.

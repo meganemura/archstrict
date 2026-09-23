@@ -30,7 +30,7 @@ export type Violation = {
   column: number;
   evidence: string;
   because: string;
-  next: string;
+  do: string;
   todoModule: string;
 };
 
@@ -45,7 +45,7 @@ export type StaleExceptionViolation = {
   column: number;
   evidence: string;
   because: string;
-  next: string;
+  do: string;
 };
 
 const BECAUSE = "modules that import each other cannot be reasoned about, tested, or replaced independently";
@@ -177,7 +177,7 @@ export function checkCycles(
       column: firstEdge.fromPosition.column,
       evidence: modules.join(" -> "),
       because: BECAUSE,
-      next: `break the cycle at ${toProjectRelativePosix(firstEdge.fromFile, graph.rootDir)} -> ${toProjectRelativePosix(firstEdge.resolvedFile, graph.rootDir)} (module ${modules[0]} -> ${modules[1]}), or merge the modules involved - real import chain: ${fileChain}`,
+      do: `break the cycle at ${toProjectRelativePosix(firstEdge.fromFile, graph.rootDir)} -> ${toProjectRelativePosix(firstEdge.resolvedFile, graph.rootDir)} (module ${modules[0]} -> ${modules[1]}), or merge the modules involved - real import chain: ${fileChain}`,
       todoModule: anchor,
     });
   }
@@ -209,7 +209,7 @@ export function checkStaleCycleExceptions(
       column: 1,
       evidence: `ignoredCycles entry ['${a}', '${b}'] names no real cycle`,
       because: STALE_BECAUSE,
-      next: `remove ['${a}', '${b}'] from ignoredCycles in archstrict.config.ts`,
+      do: `remove ['${a}', '${b}'] from ignoredCycles in archstrict.config.ts`,
     });
   }
   return violations;

@@ -18,7 +18,7 @@ export type Violation = {
   column: number;
   evidence: string;
   because: string;
-  next: string;
+  do: string;
 };
 
 // Not a Violation: informational, does not fail `check`. Kept as its own
@@ -31,7 +31,7 @@ export type Suggestion = {
   column: number;
   evidence: string;
   because: string;
-  next: string;
+  do: string;
 };
 
 // A deprecated edge's own count is the number of import/export/dynamic-
@@ -66,7 +66,7 @@ export function checkDeprecatedEdges(
         column: 1,
         evidence: `${entry.from} -> ${entry.to}: declared count ${entry.count}, actual ${actual}`,
         because: entry.because,
-        next: `reduce ${entry.from} -> ${entry.to} back to ${entry.count} edges, or raise count in archstrict.config.ts and record why the increase was accepted`,
+        do: `reduce ${entry.from} -> ${entry.to} back to ${entry.count} edges, or raise count in archstrict.config.ts and record why the increase was accepted`,
       });
     } else if (actual > 0 && actual < entry.count) {
       // actual === 0 is not reported here at all: the edge is gone
@@ -80,7 +80,7 @@ export function checkDeprecatedEdges(
         column: 1,
         evidence: `${entry.from} -> ${entry.to}: declared count ${entry.count}, actual ${actual}`,
         because: entry.because,
-        next: `update count to ${actual} for ${entry.from} -> ${entry.to} in archstrict.config.ts`,
+        do: `update count to ${actual} for ${entry.from} -> ${entry.to} in archstrict.config.ts`,
       });
     }
   }
