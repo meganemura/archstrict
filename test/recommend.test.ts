@@ -171,5 +171,6 @@ test("CLI reports a config without declaredModules instead of using discovery", 
   expect(output.status).toBe(1);
   expect(JSON.parse(output.stdout)).toEqual({
     error: `${join(realpathSync(root), "archstrict.config.ts")} is missing required field 'declaredModules'`,
+    next: `add 'declaredModules' to the default export in ${join(realpathSync(root), "archstrict.config.ts")}, then run archstrict check`,
   });
 }));

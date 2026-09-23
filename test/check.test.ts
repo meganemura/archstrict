@@ -458,7 +458,7 @@ describe("check", () => {
 test("a non-object config default export gives the exact load error", () => withTempProject(async root => {
   const configPath = join(root, "archstrict.config.ts");
   writeFileSync(configPath, "export default 5;\n");
-  await expect(check(root)).rejects.toEqual(new Error(`${configPath} has no default export`));
+  await expect(check(root)).rejects.toEqual(new ReportError(`${configPath} has no default export`, `add a default export satisfying Config to ${configPath}, then run archstrict check`));
 }));
 
 test("loadConfig accepts source overrides without reading or changing the disk config", () => withTempProject(async root => {
