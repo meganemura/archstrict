@@ -5,8 +5,8 @@ import ts from "typescript";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
-import { cpSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { execFileSync, spawnSync } from "node:child_process";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -106,9 +106,14 @@ test("the fallback ignores malformed lines and notifications and reports unknown
   ]);
 }));
 
+const olderMcpServerSource = readFileSync(
+  join(repo, "test/fixtures/vendored/mcp-server-without-startup-export.ts"),
+  "utf8",
+);
+
 test("an installed older server without the startup export connects with zero tools", () => fixture(async root => {
   installArchstrictPackage(root);
-  const source = execFileSync("git", ["show", "836b39bc6e3c500d572fac873ea31ff799176e72:src/mcp-server.ts"], { cwd: repo, encoding: "utf8" });
+  const source = olderMcpServerSource;
   const compiled = ts.transpileModule(source, {
     compilerOptions: { target: ts.ScriptTarget.ESNext, module: ts.ModuleKind.ESNext },
   }).outputText;
