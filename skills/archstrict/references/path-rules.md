@@ -51,7 +51,7 @@ archstrict rules src/feature/new-thing.ts
 archstrict rules src/feature/new-thing.ts --json
 ```
 
-Text output uses `key: value` lines and includes each violation's original evidence, reason, and next action.
+Text output uses `key: value` lines and includes each violation's original `evidence`, `because`, and `do` fields.
 The must-be-empty violation uses a project-relative path, as `check` does; the uncovered violation uses an absolute path.
 A successful query exits with code 0, including when it reports a potential violation.
 Argument, configuration, and outside-root errors exit with code 1; `--json` errors use `{ "error": "<message>" }`.
