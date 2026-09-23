@@ -117,6 +117,8 @@ describe("post-tool-use hook", () => {
       const output = runHook({ tool_name: "Edit", tool_input: { file_path: file }, cwd: root });
       expect(output.hookSpecificOutput?.additionalContext).toContain("archstrict: check did not run");
       expect(output.hookSpecificOutput?.additionalContext).toContain("missing required field");
+      expect(output.hookSpecificOutput?.additionalContext).toContain("\nnext: ");
+      expect(output.hookSpecificOutput?.additionalContext).toContain("archstrict check");
     });
   });
 

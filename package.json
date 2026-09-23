@@ -12,7 +12,8 @@
     "README.md",
     "LICENSE",
     "dist",
-    "skills"
+    "skills",
+    "llms.txt"
   ],
   "scripts": {
     "test": "vitest run",

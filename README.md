@@ -22,4 +22,4 @@ npm link archstrict
 
 This puts a real `archstrict` binary at `node_modules/.bin/archstrict` in that project - the exact path the PostToolUse hook (see [hook.md](skills/archstrict/references/hook.md)) checks for before running `check` on your behalf after an edit. `npm unlink archstrict` in the target project removes it again.
 
-Without a global link: `npm pack` in this checkout produces a tarball (`archstrict-0.0.0.tgz`), then `npm install /path/to/that/tarball` in the target project does the same thing.
+Without a global link: `npm pack` in this checkout produces a tarball (`archstrict-0.0.0.tgz`), then `npm install /path/to/that/tarball` in the target project does the same thing. The tarball includes the agent skill (`skills/archstrict/SKILL.md` and `skills/archstrict/references/`) and `llms.txt`. After install those paths sit under `node_modules/archstrict/`, the same layout as this repository, so an agent can read the workflow without a git checkout.

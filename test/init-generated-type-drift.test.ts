@@ -3,7 +3,8 @@
 // of Config - the type a real `archstrict init` actually ships in
 // archstrict.types.ts, kept in sync by hand since a runtime
 // derivation from src/config.ts isn't possible (types are erased at
-// runtime, and the published package ships dist/ only). That fix patched
+// runtime, so the copy init writes is the type a project actually
+// typechecks against). That fix patched
 // the known instance; nothing stopped the NEXT top-level field from
 // drifting the same way. A second drift (edges.order gaining edgeType/
 // importForm without init.ts's copy) happened around the same time, but
@@ -37,6 +38,7 @@ import { init } from "../src/verbs/init.js";
 import type { Config } from "../src/config.js";
 
 const EXPECTED_GENERATED_FIELDS = [
+  "schemaVersion",
   "surface",
   "deprecated",
   "strict",

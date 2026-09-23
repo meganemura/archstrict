@@ -1,4 +1,11 @@
 import type { ModuleGraph } from "./module-graph.js";
+import { ReportError } from "./report-error.js";
+
+// The only schema loadConfig accepts. init writes this value into a new
+// archstrict.config.ts. A config that omits the field is this same schema
+// (the field arrived after the first configs); any other value is a config
+// error, not a silent misread of a future shape.
+export const SCHEMA_VERSION = 1 as const;
 
 // Responsibility: the shape of archstrict.config.ts.
 // Boundary: `Config` itself is a plain data type, no behavior. Reading a
@@ -17,6 +24,9 @@ export type Config = {
   // check) need somewhere to point a violation at. A test config that has
   // no real file uses a placeholder like "<test>".
   configPath: string;
+  // See SCHEMA_VERSION. Optional so a config written before the field
+  // existed still typechecks; loadConfig rejects any value other than 1.
+  schemaVersion?: typeof SCHEMA_VERSION;
   // The public-surface file name (module-graph.ts's own `surface` option).
   // Not fixed by the tool: a project names its own, and `init` writes the
   // default ("index.ts") explicitly rather than detecting an existing
@@ -160,6 +170,18 @@ export type Config = {
   };
 };
 
+// Checked before required-field validation: a future schema may rename
+// those fields, and the version mismatch is the fact to report first.
+export function assertSchemaVersion(configPath: string, raw: object): void {
+  if (!("schemaVersion" in raw)) return;
+  const version = (raw as { schemaVersion?: unknown }).schemaVersion;
+  if (version === SCHEMA_VERSION) return;
+  throw new ReportError(
+    `${configPath} schemaVersion ${JSON.stringify(version)} is not supported; this archstrict reads schemaVersion ${SCHEMA_VERSION}`,
+    `set schemaVersion to ${SCHEMA_VERSION} in ${configPath}, then run archstrict check`,
+  );
+}
+
 // Throws if any `deprecated` entry names a module that doesn't exist.
 // Shared by rule 4 and rule 5: without a single shared check, the two
 // rules can disagree about the same config. Measured: rule 4's own
@@ -173,8 +195,9 @@ export function assertDeprecatedModulesExist(graph: ModuleGraph, config: Config)
   for (const entry of config.deprecated ?? []) {
     for (const moduleName of [entry.from, entry.to]) {
       if (!graph.modules.has(moduleName)) {
-        throw new Error(
+        throw new ReportError(
           `deprecated entry '${entry.from} -> ${entry.to}' names module '${moduleName}', which does not exist`,
+          `declare '${moduleName}' in ${config.configPath}, or remove that deprecated entry, then run archstrict check`,
         );
       }
     }
@@ -209,7 +232,10 @@ function describeShape(value: unknown): string {
 function assertKnownKeys(value: Record<string, unknown>, known: readonly string[], context: string): void {
   for (const key of Object.keys(value)) {
     if (!known.includes(key)) {
-      throw new Error(`${context} has an unknown field '${key}' - supported fields are ${known.join(", ")}`);
+      throw new ReportError(
+        `${context} has an unknown field '${key}' - supported fields are ${known.join(", ")}`,
+        `remove '${key}' from ${context} in archstrict.config.ts, then run archstrict check`,
+      );
     }
   }
 }
@@ -217,11 +243,17 @@ function assertKnownKeys(value: Record<string, unknown>, known: readonly string[
 function assertEntries(value: unknown, keys: readonly string[], context: string): readonly Record<string, unknown>[] {
   if (value === undefined) return [];
   if (!Array.isArray(value)) {
-    throw new Error(`config.edges.${context} must be an array of entries, not ${describeShape(value)}`);
+    throw new ReportError(
+      `config.edges.${context} must be an array of entries, not ${describeShape(value)}`,
+      `set config.edges.${context} to an array of entries in archstrict.config.ts, then run archstrict check`,
+    );
   }
   return value.map((entry, i) => {
     if (!isPlainObject(entry)) {
-      throw new Error(`config.edges.${context}[${i}] must be an object, not ${describeShape(entry)}`);
+      throw new ReportError(
+        `config.edges.${context}[${i}] must be an object, not ${describeShape(entry)}`,
+        `make config.edges.${context}[${i}] an object in archstrict.config.ts, then run archstrict check`,
+      );
     }
     assertKnownKeys(entry, keys, `config.edges.${context}[${i}]`);
     return entry;
@@ -245,8 +277,9 @@ export function assertEdgesShapeValid(config: Config): void {
   const edges: unknown = config.edges;
   if (edges === undefined) return;
   if (!isPlainObject(edges)) {
-    throw new Error(
+    throw new ReportError(
       `config.edges must be an object with allowDeny/order/point fields (e.g. { allowDeny: [...] }), not ${describeShape(edges)}`,
+      "set config.edges to an object with allowDeny, order, and point in archstrict.config.ts, then run archstrict check",
     );
   }
   assertKnownKeys(edges, ["allowDeny", "order", "point"], "config.edges");
@@ -266,8 +299,9 @@ export function assertEdgesShapeValid(config: Config): void {
   for (const entry of assertEntries(edges.order, ORDER_KEYS, "order")) {
     const sequence: unknown = entry.sequence;
     if (sequence !== undefined && !isPlainObject(sequence)) {
-      throw new Error(
+      throw new ReportError(
         `an edges.order entry's sequence must be an object keyed by the 'within' scope (e.g. { "": ["a", "b"] }), not ${describeShape(sequence)}`,
+        "set that sequence to an object keyed by the within scope in archstrict.config.ts, then run archstrict check",
       );
     }
   }

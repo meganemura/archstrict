@@ -28,6 +28,7 @@
 import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { buildModuleGraph } from "../module-graph.js";
+import { SCHEMA_VERSION } from "../config.js";
 
 export type InitResult = {
   configPath: string;
@@ -59,6 +60,10 @@ export type ModuleName = ${union};
 // configPath is added by the loader, not written here - a config file
 // cannot know its own path.
 export type Config = {
+  // The schema this config was written for. ${SCHEMA_VERSION} is the only
+  // value archstrict reads. Omit it and the loader treats the file as
+  // schema ${SCHEMA_VERSION}.
+  schemaVersion?: ${SCHEMA_VERSION};
   surface?: string;
   deprecated?: readonly {
     from: ModuleName;
@@ -171,6 +176,7 @@ function configFileContents(modulesGlob: string, surface: string, moduleNames: s
 // that reaches any other file inside a module is a violation. A module
 // with no ${surface} is entirely private - every import into it violates.
 export default {
+  schemaVersion: ${SCHEMA_VERSION},
   surface: ${JSON.stringify(surface)},
   // Root-level files (this config, the generated union type) are never
   // module content - kept out of analysis entirely, not just uncounted.

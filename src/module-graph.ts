@@ -27,6 +27,7 @@ import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "n
 import { dirname, join, relative, sep } from "node:path";
 import { builtinModules } from "node:module";
 import { compileGlob, mostSpecificMatch } from "./classify.js";
+import { ReportError } from "./report-error.js";
 
 // A node builtin (`fs`, `node:fs`, ...) never has a real resolvedModule:
 // ts.resolveModuleName looks for an actual file, but @types/node's ambient
@@ -187,8 +188,9 @@ export const DEFAULT_SURFACE = "index.ts";
 function parseModulesGlob(modulesGlob: string): { root: string } {
   const parts = modulesGlob.split("/");
   if (parts.length !== 2 || parts[1] !== "*") {
-    throw new Error(
+    throw new ReportError(
       `unsupported modules glob '${modulesGlob}': v0 supports only a single-level glob like 'src/*'`,
+      "archstrict init src/*",
     );
   }
   return { root: parts[0]! };
@@ -202,7 +204,10 @@ function discoverModules(projectRoot: string, glob: string, surface: string): Ma
   // an edge case. A raw ENOENT from readdirSync doesn't name the glob or
   // what was expected there.
   if (!ts.sys.directoryExists(rootDir)) {
-    throw new Error(`modules glob '${glob}' names '${rootDir}', which does not exist`);
+    throw new ReportError(
+      `modules glob '${glob}' names '${rootDir}', which does not exist`,
+      `create ${root} (with at least one .ts file) and run archstrict init ${glob}`,
+    );
   }
   const modules = new Map<string, Module>();
   // ts.sys has no direct "list immediate subdirectories" call; use node:fs.
@@ -643,7 +648,7 @@ export function prepareGraph(options: BuildOptions) {
   } else {
     const modulesGlob = options.modulesGlob;
     if (modulesGlob === undefined) {
-      throw new Error("buildModuleGraph needs either modulesGlob or declaredModules");
+      throw new ReportError("buildModuleGraph needs either modulesGlob or declaredModules", "archstrict init");
     }
     modules = discoverModules(projectRoot, modulesGlob, surface);
     const { root } = parseModulesGlob(modulesGlob);

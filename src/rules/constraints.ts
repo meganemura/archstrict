@@ -26,6 +26,7 @@ import { compileGlob } from "../classify.js";
 import { classifyFile } from "../classify.js";
 import { toProjectRelativePosix, type Edge, type ModuleGraph } from "../module-graph.js";
 import type { Config } from "../config.js";
+import { ReportError } from "../report-error.js";
 
 export type ConstraintViolation = {
   rule: "tag-boundary" | "tag-order" | "point-rule";
@@ -284,8 +285,9 @@ export function assertSequenceListsValue(
 ): void {
   const value = tag.slice(rule.tagNamespace.length + 1);
   if (!sequence.includes(value)) {
-    throw new Error(
+    throw new ReportError(
       `order rule for '${rule.tagNamespace}' (within '${withinValue ?? "(unscoped)"}') does not list '${value}' - every value classify assigns within that scope must appear in its sequence`,
+      `add '${value}' to that order rule's sequence in archstrict.config.ts, then run archstrict check`,
     );
   }
 }

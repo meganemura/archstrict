@@ -11,6 +11,20 @@ import { init } from "./verbs/init.js";
 import { check, formatText, hasBlockingViolations } from "./verbs/check.js";
 import { todo } from "./verbs/todo.js";
 import { rules, formatRulesText } from "./verbs/rules.js";
+import { ReportError } from "./report-error.js";
+
+// Text and JSON share one shape: the message, then the one command to run.
+// A violation already carries `next`; a thrown config or missing-file
+// failure goes through here so it does too.
+function reportFailure(error: unknown, verb: string, asJson: boolean): void {
+  const message = error instanceof Error ? error.message : String(error);
+  const next = error instanceof ReportError ? error.next : `archstrict ${verb}`;
+  if (asJson) {
+    process.stdout.write(`${JSON.stringify({ error: message, next })}\n`);
+  } else {
+    process.stderr.write(`archstrict: ${message}\nnext: ${next}\n`);
+  }
+}
 
 function runInit(args: string[]): number {
   const [modulesGlob] = args;
@@ -139,23 +153,13 @@ async function main(argv: string[]): Promise<number> {
     if (verb === "todo") return await runTodo(rest);
     if (verb === "rules") return await runRules(rest);
     if (verb === "agents") return runAgents(rest);
-    process.stderr.write(`archstrict: '${verb}' is not implemented yet\n`);
+    process.stderr.write(`archstrict: '${verb}' is not implemented yet\nnext: archstrict init\n`);
     return 1;
   } catch (error) {
-    // A config or missing-file error (a required field absent, an
-    // unsupported kinds pattern shape, check <file> naming a file that
-    // doesn't exist, the modules glob's root not existing yet) throws
-    // before any real output - previously an unhandled exception, a raw
-    // stack trace with no rule id, no because, no next:. Every other
-    // error this tool reports carries those; this is the one path that
-    // didn't, and it's the path a first attempt (a hand-written config
-    // with a typo, a mistyped file path) is most likely to hit.
-    const message = error instanceof Error ? error.message : String(error);
-    if (rest.includes("--json")) {
-      process.stdout.write(`${JSON.stringify({ error: message })}\n`);
-    } else {
-      process.stderr.write(`archstrict: ${message}\n`);
-    }
+    // A config or missing-file error throws before any real output.
+    // reportFailure prints the message and a next: line — the same pair
+    // a violation carries — instead of a bare message or stack trace.
+    reportFailure(error, verb, rest.includes("--json"));
     return 1;
   }
 }

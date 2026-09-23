@@ -24,7 +24,7 @@ A violation report always carries a rule id, `path:line:col`, the evidence, the 
 - `src/` is the library and CLI.
 - `test/` is the Vitest suite; `features/` is the nukadoko (Gherkin) dogfood scenario.
 - `.claude-plugin/` and `hooks/` are this repository's own Claude Code plugin (the PostToolUse hook).
-- `skills/archstrict/` is the agent-facing skill (`SKILL.md` plus `references/`).
+- `skills/archstrict/` (and root `llms.txt`) is the agent-facing skill (`SKILL.md` plus `references/`).
 - `scripts/` holds standalone scripts (not part of the shipped library): the typescript 7 probe, two narrow config converters (Prisma's architecture.config.json, VS Code's code-layering table) to archstrict.config.ts's own shape, and the two runners that re-run the Prisma/VS Code oracle comparisons through the real CLI against a real clone (see Commands below). `.github/workflows/` is CI.
 - `.claude-team/` holds the task spec, the report, and their working artifacts. It is gitignored; do not reference it from committed content.
 

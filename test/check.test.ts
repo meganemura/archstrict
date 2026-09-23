@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { init } from "../src/verbs/init.js";
 import { check, formatText, loadConfig } from "../src/verbs/check.js";
+import { ReportError } from "../src/report-error.js";
 
 function withTempProject(fn: (root: string) => void | Promise<void>): Promise<void> {
   const root = mkdtempSync(join(tmpdir(), "archstrict-check-"));
@@ -52,8 +53,29 @@ describe("loadConfig", () => {
 
       const config = await loadConfig(join(root, "archstrict.config.ts"));
       expect(config.declaredModules).toEqual([{ name: "app", glob: "src/app/**", surface: "index.ts" }]);
+      expect(config.schemaVersion).toBe(1);
       expect(config.configPath).toBe(join(root, "archstrict.config.ts"));
       expect(config.because.length).toBeGreaterThan(0);
+    });
+  });
+
+  test("a config whose schemaVersion is not 1 throws and names the command to run", async () => {
+    await withTempProject(async (root) => {
+      const configPath = join(root, "archstrict.config.ts");
+      writeFileSync(
+        configPath,
+        "export default { schemaVersion: 2, declaredModules: [], because: 'test' };\n",
+      );
+      let thrown: unknown;
+      try {
+        await loadConfig(configPath);
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(ReportError);
+      expect((thrown as ReportError).message).toContain("schemaVersion");
+      expect((thrown as ReportError).next).toContain("schemaVersion to 1");
+      expect((thrown as ReportError).next).toContain("archstrict check");
     });
   });
 
@@ -173,6 +195,9 @@ describe("loadConfig", () => {
       const config = await loadConfig(configPath);
       expect(config.edges?.allowDeny).toHaveLength(1);
       expect(config.edges?.order).toHaveLength(1);
+      // Absence is schema 1: a config written before the field existed
+      // still loads, and the loader does not invent a value for it.
+      expect(config.schemaVersion).toBeUndefined();
     });
   });
 });

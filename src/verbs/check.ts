@@ -8,7 +8,8 @@ import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import ts from "typescript";
 import { buildModuleGraph, toProjectRelativePosix, type ModuleGraph, type BuildOptions } from "../module-graph.js";
-import { assertEdgesShapeValid, type Config } from "../config.js";
+import { assertEdgesShapeValid, assertSchemaVersion, type Config } from "../config.js";
+import { ReportError } from "../report-error.js";
 import { checkPublicSurfaceBypass, type Violation as PublicSurfaceViolation } from "../rules/public-surface.js";
 import {
   checkCycles,
@@ -144,6 +145,11 @@ const REQUIRED_FIELDS = ["declaredModules", "because"] as const;
 // instead of that opaque resolution failure.
 // Proposed source uses the same content-keyed URL, so a changed proposal cannot reuse a stale config module.
 export async function loadConfig(configPath: string, sourceOverride?: string): Promise<Config> {
+  // init is what creates this file. A missing one is the first-run path,
+  // and a raw ENOENT doesn't name that command.
+  if (sourceOverride === undefined && !existsSync(configPath)) {
+    throw new ReportError(`${configPath} does not exist`, "archstrict init");
+  }
   const source = sourceOverride ?? readFileSync(configPath, "utf8");
   const { outputText } = ts.transpileModule(source, {
     compilerOptions: {
@@ -153,19 +159,27 @@ export async function loadConfig(configPath: string, sourceOverride?: string): P
     },
   });
   if (/^\s*import\b/m.test(outputText)) {
-    throw new Error(
+    throw new ReportError(
       `${configPath} may only import types from "./archstrict.types.js" - use \`import type\`, not \`import\``,
+      `change the import in ${configPath} to \`import type\`, then run archstrict check`,
     );
   }
   const dataUrl = `data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`;
   const mod: unknown = await import(dataUrl);
   const raw = (mod as { default?: unknown }).default;
   if (raw === undefined || typeof raw !== "object" || raw === null) {
-    throw new Error(`${configPath} has no default export`);
+    throw new ReportError(
+      `${configPath} has no default export`,
+      `add a default export satisfying Config to ${configPath}, then run archstrict check`,
+    );
   }
+  assertSchemaVersion(configPath, raw);
   for (const field of REQUIRED_FIELDS) {
     if (!(field in raw)) {
-      throw new Error(`${configPath} is missing required field '${field}'`);
+      throw new ReportError(
+        `${configPath} is missing required field '${field}'`,
+        `add '${field}' to the default export in ${configPath}, then run archstrict check`,
+      );
     }
   }
   const config = { ...(raw as object), configPath } as Config;
@@ -264,7 +278,7 @@ export function runRules(graph: ModuleGraph, config: Config): CheckResult {
 export function filterToFile(result: CheckResult, file: string): CheckResult {
   const resolved = resolve(file);
   if (!existsSync(resolved)) {
-    throw new Error(`check ${file}: no such file`);
+    throw new ReportError(`check ${file}: no such file`, "archstrict check");
   }
   const target = realpathSync(resolved);
   return { ...result, violations: result.violations.filter((v) => realpathSync(v.path) === target) };

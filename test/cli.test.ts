@@ -115,7 +115,9 @@ describe("cli", () => {
       expect(out).toBe("");
       expect(errOut).toContain("missing required field");
       expect(errOut).not.toMatch(/^\s+at /m);
-      expect(errOut.trim().split("\n")).toHaveLength(1);
+      const lines = errOut.trim().split("\n");
+      expect(lines).toHaveLength(2);
+      expect(lines[1]).toMatch(/^next: .*archstrict check$/);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -137,7 +139,9 @@ describe("cli", () => {
       expect(exitCode).toBe(1);
       expect(errOut).toContain("does not exist");
       expect(errOut).not.toMatch(/^\s+at /m);
-      expect(errOut.trim().split("\n")).toHaveLength(1);
+      const lines = errOut.trim().split("\n");
+      expect(lines).toHaveLength(2);
+      expect(lines[1]).toBe("next: create src (with at least one .ts file) and run archstrict init src/*");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -161,6 +165,34 @@ describe("cli", () => {
       expect(exitCode).toBe(1);
       const json = JSON.parse(out);
       expect(json.error).toContain("missing required field");
+      expect(json.next).toContain("archstrict check");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("check with no archstrict.config.ts names archstrict init", () => {
+    const root = mkdtempSync(join(tmpdir(), "archstrict-cli-no-config-"));
+    try {
+      let errOut = "";
+      let jsonOut = "";
+      let exitCode = 0;
+      try {
+        execFileSync("node", [CLI_PATH, "check"], { cwd: root, encoding: "utf8" });
+      } catch (e) {
+        const err = e as { status: number; stderr: string };
+        exitCode = err.status;
+        errOut = err.stderr;
+      }
+      expect(exitCode).toBe(1);
+      expect(errOut.trim().split("\n").at(-1)).toBe("next: archstrict init");
+
+      try {
+        jsonOut = execFileSync("node", [CLI_PATH, "check", "--json"], { cwd: root, encoding: "utf8" });
+      } catch (e) {
+        jsonOut = (e as { stdout: string }).stdout;
+      }
+      expect(JSON.parse(jsonOut)).toMatchObject({ next: "archstrict init" });
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -186,6 +218,7 @@ describe("cli", () => {
       expect(exitCode).toBe(1);
       expect(errOut).toContain("no such file");
       expect(errOut).not.toMatch(/^\s+at /m);
+      expect(errOut.trim().split("\n").at(-1)).toBe("next: archstrict check");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -293,6 +326,7 @@ describe("cli", () => {
       expect(exitCode).toBe(1);
       const json = JSON.parse(out);
       expect(json.error).toContain("missing required field");
+      expect(json.next).toContain("archstrict check");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

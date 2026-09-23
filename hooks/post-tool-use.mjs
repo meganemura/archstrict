@@ -81,14 +81,16 @@ function main() {
 
   const result = JSON.parse(stdout);
   // A config or missing-file error (a required field absent, an
-  // unsupported kinds pattern shape) reports as { error: string } instead
-  // of a real CheckResult, exit 1, no stdout-less failure - so the branch
+  // unsupported edges shape) reports as { error, next } instead of a
+  // real CheckResult, exit 1, no stdout-less failure - so the branch
   // above never catches it. Surfaced, not silently ignored: the project
   // has archstrict installed but something about its own setup is broken,
   // which the agent editing it needs to know, the same as a real
-  // violation would.
+  // violation would. `next` is the command to run; older binaries that
+  // omit it still surface the error text.
   if (typeof result.error === "string") {
-    emit(`archstrict: check did not run (${result.error}).`);
+    const next = typeof result.next === "string" && result.next.length > 0 ? `\nnext: ${result.next}` : "";
+    emit(`archstrict: check did not run (${result.error}).${next}`);
     return;
   }
   if (result.violations.length === 0) {

@@ -17,6 +17,7 @@
 // directory-name match at once (VS Code's own env:* tags are pure ambient;
 // Prisma's are pure explicit; nothing requires a project pick only one).
 import { sep } from "node:path";
+import { ReportError } from "./report-error.js";
 
 export type ClassifyEntry = { glob: string; tags: readonly string[] };
 export type ClassifyByDirectoryName = { tagNamespace: string; names: readonly string[] };
@@ -72,11 +73,13 @@ function compareSpecificity(
   return b.wildcardCount - a.wildcardCount; // fewer wildcards = more specific
 }
 
-export class AmbiguousClassifyError extends Error {
+export class AmbiguousClassifyError extends ReportError {
   constructor(path: string, glob1: string, glob2: string) {
     super(
       `'${path}' matches two equally-specific entries ('${glob1}' and '${glob2}') with no way to prefer one - narrow one of the globs`,
+      `narrow '${glob1}' or '${glob2}' in archstrict.config.ts, then run archstrict check`,
     );
+    this.name = "AmbiguousClassifyError";
   }
 }
 

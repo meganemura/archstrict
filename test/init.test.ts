@@ -29,8 +29,10 @@ describe("init", () => {
 
       const generated = readFileSync(result.generatedPath, "utf8");
       expect(generated).toContain('"app" | "shared"');
+      expect(generated).toContain("schemaVersion?: 1");
 
       const config = readFileSync(result.configPath, "utf8");
+      expect(config).toContain("schemaVersion: 1");
       expect(config).toContain('name: "app"');
       expect(config).toContain('name: "shared"');
       expect(config).toContain("satisfies Config");
