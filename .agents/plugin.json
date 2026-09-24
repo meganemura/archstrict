@@ -1,0 +1,19 @@
+{
+  "name": "archstrict",
+  "version": "0.0.0",
+  "description": "TypeScript module boundary checking, in the sense of ArchUnit and archspec. A PostToolUse hook runs check right after a file edit and returns violations into the agent's own context, the same moment a human editor's red squiggly would.",
+  "author": {
+    "name": "meganemura"
+  },
+  "homepage": "https://github.com/meganemura/archstrict",
+  "repository": "https://github.com/meganemura/archstrict",
+  "license": "MIT",
+  "mcpServers": {
+    "archstrict": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/mcp/server.mjs"]
+    }
+  },
+  "hooks": ["./hooks/hooks.json"],
+  "keywords": ["claude-code", "claude-code-plugin", "typescript", "architecture", "module-boundaries", "linting"]
+}

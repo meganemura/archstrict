@@ -1,6 +1,6 @@
 # The PostToolUse hook
 
-This plugin's `PostToolUse` hook (`hooks/post-tool-use.mjs`) runs after every Edit/Write/MultiEdit. On a `.ts` file, it shells out to **the edited project's own** `node_modules/.bin/archstrict check <file> --json` - never this repository's own build - and returns any violation into the agent's own context via `hookSpecificOutput.additionalContext`, the same moment a human editor's red squiggly would appear.
+This plugin's `PostToolUse` hook (`.agents/hooks/post-tool-use.mjs`) runs after every Edit/Write/MultiEdit. Claude invokes it as `${CLAUDE_PLUGIN_ROOT}/hooks/post-tool-use.mjs`; repo-root `hooks/` is a symlink to `.agents/hooks`. On a `.ts` file, it shells out to **the edited project's own** `node_modules/.bin/archstrict check <file> --json` - never this repository's own build - and returns any violation into the agent's own context via `hookSpecificOutput.additionalContext`, the same moment a human editor's red squiggly would appear.
 
 ## Why it might say nothing
 

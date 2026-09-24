@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
-const HOOK_PATH = join(REPO_ROOT, "hooks", "post-tool-use.mjs");
+const HOOK_PATH = join(REPO_ROOT, ".agents", "hooks", "post-tool-use.mjs");
 const DIST_CLI_PATH = join(REPO_ROOT, "dist", "cli.js");
 
 // Mirrors cli.test.ts's own reasoning: node's native TypeScript stripping

@@ -13,7 +13,8 @@
     "LICENSE",
     "dist",
     "skills",
-    "llms.txt"
+    "llms.txt",
+    ".agents"
   ],
   "scripts": {
     "test": "vitest run",

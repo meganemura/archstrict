@@ -11,7 +11,7 @@ import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
 const repo = resolve(import.meta.dirname, "..");
-const wrapper = join(repo, "mcp/server.mjs");
+const wrapper = join(repo, ".agents", "mcp", "server.mjs");
 
 function installArchstrictPackage(consumerRoot: string) {
   const installed = join(consumerRoot, "node_modules", "archstrict");
