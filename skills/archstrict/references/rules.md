@@ -7,7 +7,7 @@ Every rule's violation carries `rule`, `path`, `line`, `column`, `evidence`, `be
 An import from outside a module reaches a file other than that module's surface file (or the module has no surface file at all - every external import into it violates). Counts a type-only (`import type`) edge the same as a value edge: reaching an internal file for its types alone still reaches past the public surface. A `declaredModules` entry's own `friends` (see below) is checked before a bypass is reported: an importer matching a `friends` entry's `from` glob, reaching that entry's own `file` glob, is exempt - every other importer of that file still violates.
 
 - because: "a module's public surface is its only public surface; everything else is private"
-- do: `add a <surface> to <module>/ naming what it exports`, or `import from <module>/<surface> instead, or add the needed export there`
+- do: `add a <surface> to <module>/ naming what it exports`, or `import from <module>/<surface> instead, or add the needed export there`. When the module's glob names a single file, there is no directory to add a surface file into: `set surface on '<module>' to match <file>, or stop importing it; this module is that file, not a directory` (or `import from <file> instead, or add the needed export there` when a surface file is already present).
 - `todoModule`: the module whose surface was bypassed (the import's target, not its source)
 
 ### `friends` - a per-consumer exception (ArchUnit's "friend" idea)

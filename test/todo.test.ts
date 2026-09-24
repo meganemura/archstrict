@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { init } from "../src/verbs/init.js";
@@ -239,6 +239,74 @@ describe("todo", () => {
       expect(afterNewLeak.violations.filter((v) => v.rule === "type-leak")).toHaveLength(1);
       expect(afterNewLeak.violations[0]!.evidence).toContain("OtherHidden");
       expect(afterNewLeak.todo).toBe(1); // the original Hidden leak, still suppressed
+    });
+  });
+
+  test("a single-file module whose surface names that file is not a bypass, and todo does not throw", async () => {
+    await withTempProject(async (root) => {
+      mkdirSync(join(root, "src", "app"), { recursive: true });
+      writeFileSync(join(root, "src", "index.ts"), "export const value = 1;\n");
+      writeFileSync(
+        join(root, "src", "app", "index.ts"),
+        "import { value } from \"../index.ts\";\nexport const x = value;\n",
+      );
+      writeFileSync(
+        join(root, "archstrict.config.ts"),
+        `export default { declaredModules: [{ name: "src-index", glob: "src/index.ts", surface: "index.ts" }, { name: "app", glob: "src/app/**", surface: "index.ts" }], exclude: ["*.ts"], because: "test" };\n`,
+      );
+
+      const before = await check(root);
+      expect(before.violations.filter((v) => v.rule === "public-surface-bypass")).toEqual([]);
+      expect(before.modulesWithoutSurface).toBe(0);
+
+      const result = await todo(root);
+      expect(result).toEqual({ firstRun: true, added: 0, pruned: 0 });
+      expect(existsSync(join(root, "src", "index.ts", "archstrict.todo.json"))).toBe(false);
+    });
+  });
+
+  test("a single-file module with no matching surface freezes its todo beside the file", async () => {
+    await withTempProject(async (root) => {
+      mkdirSync(join(root, "src", "app"), { recursive: true });
+      writeFileSync(join(root, "src", "secret.ts"), "export const secret = 1;\n");
+      writeFileSync(join(root, "src", "other.ts"), "export const other = 1;\n");
+      writeFileSync(
+        join(root, "src", "app", "index.ts"),
+        "import { secret } from \"../secret.ts\";\nimport { other } from \"../other.ts\";\nexport const x = [secret, other];\n",
+      );
+      writeFileSync(
+        join(root, "archstrict.config.ts"),
+        `export default { declaredModules: [` +
+          `{ name: "secret", glob: "src/secret.ts", surface: "index.ts" }, ` +
+          `{ name: "other", glob: "src/other.ts", surface: "index.ts" }, ` +
+          `{ name: "app", glob: "src/app/**", surface: "index.ts" }` +
+          `], exclude: ["*.ts"], because: "test" };\n`,
+      );
+
+      const before = await check(root);
+      const bypasses = before.violations.filter((v) => v.rule === "public-surface-bypass");
+      expect(bypasses).toHaveLength(2);
+      for (const violation of bypasses) {
+        expect(violation.do).not.toMatch(/to \S+\//);
+        expect(violation.do).not.toContain("add a index.ts");
+      }
+      const secretDo = bypasses.find((v) => v.todoModule === "secret")!.do;
+      expect(secretDo).toBe(
+        "set surface on 'secret' to match src/secret.ts, or stop importing it; this module is that file, not a directory",
+      );
+
+      const result = await todo(root);
+      expect(result).toEqual({ firstRun: true, added: 2, pruned: 0 });
+
+      for (const file of ["secret.ts", "other.ts"]) {
+        const beside = join(root, "src", `${file}.archstrict.todo.json`);
+        expect(JSON.parse(readFileSync(beside, "utf8")).entries).toHaveLength(1);
+        expect(existsSync(join(root, "src", file, "archstrict.todo.json"))).toBe(false);
+      }
+
+      const after = await check(root);
+      expect(after.violations.filter((v) => v.rule === "public-surface-bypass")).toEqual([]);
+      expect(after.todo).toBe(2);
     });
   });
 

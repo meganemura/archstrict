@@ -80,7 +80,16 @@ export type Edge = {
 
 export type Module = {
   name: string;
+  // The glob's literal prefix. A directory glob's prefix is that
+  // directory. A glob that names one file (`src/index.ts`) keeps the file
+  // here — surface and friends still resolve against the file's parent
+  // (moduleRelativeDir), but widening `dir` to that parent would make a
+  // type-leak boundary cover every sibling, and would make two file
+  // modules in one directory share one root.
   dir: string;
+  // True when `dir` is a file. Rules that phrase a fix as "add a file to
+  // <module>/" must not assume a directory in that case.
+  rootIsFile: boolean;
   files: string[];
   // The module's public surface: the files other modules may import from.
   // Under v0 discovery this is at most one file (the configured `surface`
@@ -221,6 +230,7 @@ function discoverModules(projectRoot: string, glob: string, surface: string): Ma
       files: [],
       surfaceFiles: ts.sys.fileExists(surfacePath) ? [surfacePath] : [],
       surfaceName: surface,
+      rootIsFile: false, // v0 discovery only ever records directories
       friends: [], // v0 discovery has no declaredModules entry to carry a friends list
     });
   }
@@ -248,6 +258,34 @@ function moduleGlobBaseDir(glob: string): string {
   const firstWildcard = glob.search(/\*/);
   const prefix = firstWildcard === -1 ? glob : glob.slice(0, firstWildcard);
   return prefix.replace(/\/+$/, "");
+}
+
+function pathIsFile(path: string): boolean {
+  try {
+    return statSync(path).isFile();
+  } catch {
+    return false;
+  }
+}
+
+// Directory a module-relative path (surface, friends) resolves against.
+// A glob with no wildcard that names an existing file has no directory of
+// its own. Those paths resolve against the file's parent, so
+// `{ glob: "src/index.ts", surface: "index.ts" }` names `src/index.ts`
+// and not `src/index.ts/index.ts`. The parent is computed with string
+// ops, not `path.dirname`: globs are project-relative posix even on
+// Windows, and `path.dirname` would follow the platform separator.
+function moduleRelativeDir(projectRoot: string, glob: string): string {
+  const base = moduleGlobBaseDir(glob);
+  if (!pathIsFile(join(projectRoot, base))) return base;
+  const slash = base.lastIndexOf("/");
+  return slash === -1 ? "" : base.slice(0, slash);
+}
+
+function moduleRelativeGlob(projectRoot: string, glob: string, relativePath: string): string {
+  const base = moduleRelativeDir(projectRoot, glob);
+  const joined = base === "" ? relativePath : `${base}/${relativePath}`;
+  return joined.replace(/\/{2,}/g, "/").replace(/^\//, "");
 }
 
 export function toProjectRelativePosix(filePath: string, projectRoot: string): string {
@@ -302,7 +340,7 @@ export function surfaceGlobsFor(dm: DeclaredModule, projectRoot: string, globalD
   const moduleDir = join(projectRoot, moduleGlobBaseDir(dm.glob));
   const surface = effectiveSurface(dm, moduleDir, globalDefaultSurface);
   const entries = Array.isArray(surface) ? surface : [surface as string];
-  return entries.map((s) => `${moduleGlobBaseDir(dm.glob)}/${s}`.replace(/\/{2,}/g, "/"));
+  return entries.map((s) => moduleRelativeGlob(projectRoot, dm.glob, s));
 }
 
 function surfaceGlobsAllowingDts(
@@ -504,21 +542,25 @@ function buildDeclaredModules(
 ): Map<string, Module> {
   const membership = declaredModules.map((dm) => ({ glob: dm.glob, value: dm.name }));
   const modules = new Map<string, Module>(
-    declaredModules.map((dm) => [
-      dm.name,
-      {
-        name: dm.name,
-        dir: join(projectRoot, moduleGlobBaseDir(dm.glob)),
-        files: [],
-        surfaceFiles: [],
-        surfaceName: effectiveSurface(dm, join(projectRoot, moduleGlobBaseDir(dm.glob)), globalDefaultSurface),
-        friends: (dm.friends ?? []).map((f) => ({
-          fileGlob: `${moduleGlobBaseDir(dm.glob)}/${f.file}`.replace(/\/{2,}/g, "/"),
-          from: f.from,
-          because: f.because,
-        })),
-      },
-    ]),
+    declaredModules.map((dm): [string, Module] => {
+      const dir = join(projectRoot, moduleGlobBaseDir(dm.glob));
+      return [
+        dm.name,
+        {
+          name: dm.name,
+          dir,
+          rootIsFile: pathIsFile(dir),
+          files: [],
+          surfaceFiles: [],
+          surfaceName: effectiveSurface(dm, dir, globalDefaultSurface),
+          friends: (dm.friends ?? []).map((f) => ({
+            fileGlob: moduleRelativeGlob(projectRoot, dm.glob, f.file),
+            from: f.from,
+            because: f.because,
+          })),
+        },
+      ];
+    }),
   );
 
   const surfaceGlobs = new Map(

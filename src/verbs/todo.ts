@@ -1,7 +1,9 @@
 // Responsibility: the `todo` verb (packwerk's shape). Freezes known
 // violations per module into archstrict.todo.json, inside the module's own
 // directory (so a module's owner sees only their own todo, not a
-// project-wide file). First run adds every current freezable violation;
+// project-wide file). A module whose glob names a single file has no
+// directory; its todo sits beside that file (todo-store.ts). First run
+// adds every current freezable violation;
 // every later run only prunes entries whose fingerprint no longer matches
 // a current violation — todo never adds again after the first run, so
 // "run todo" cannot be used to accept a new violation quietly.

@@ -59,7 +59,17 @@ export function checkPublicSurfaceBypass(graph: ModuleGraph): Violation[] {
     if (targetModule.surfaceFiles.includes(edge.resolvedFile)) continue; // reached the public surface itself
     if (isExemptedByFriend(edge, targetModule, graph.rootDir)) continue;
 
-    violations.push(violationFor(edge, targetModule.name, targetModule.surfaceFiles, targetModule.surfaceName));
+    violations.push(
+      violationFor(
+        edge,
+        targetModule.name,
+        targetModule.surfaceFiles,
+        targetModule.surfaceName,
+        // A file module has nowhere to "add a index.ts". The relative path
+        // is the file the glob already names, so the fix can point at it.
+        targetModule.rootIsFile ? toProjectRelativePosix(targetModule.dir, graph.rootDir) : undefined,
+      ),
+    );
   }
   return violations;
 }
@@ -69,6 +79,9 @@ function violationFor(
   targetModuleName: string,
   surfaceFiles: readonly string[],
   surface: string | readonly string[],
+  // Set when the module root is a file. Undefined for a directory module,
+  // whose remediation still names `<module>/<surface>`.
+  fileModuleRel: string | undefined,
 ): Violation {
   const surfaceList = Array.isArray(surface) ? surface : [surface as string];
   // Singular reads exactly as before (existing messages, unchanged);
@@ -82,10 +95,17 @@ function violationFor(
     surfaceFiles.length === 0
       ? `'${edge.specifier}' resolved to module '${targetModuleName}', which has no ${surfaceDisplay}`
       : `'${edge.specifier}' resolved to a file inside module '${targetModuleName}' other than its ${surfaceDisplay}`;
+  // `<module>/` is a directory. A glob that names one file has no such
+  // directory, so the fix names that file instead of telling the reader
+  // to add a surface file inside the module name.
   const doText =
-    surfaceFiles.length === 0
-      ? `add ${addArticle} ${surfaceDisplay} to ${targetModuleName}/ naming what it exports`
-      : `import from ${importTargets} instead, or add the needed export there`;
+    fileModuleRel !== undefined
+      ? surfaceFiles.length === 0
+        ? `set surface on '${targetModuleName}' to match ${fileModuleRel}, or stop importing it; this module is that file, not a directory`
+        : `import from ${fileModuleRel} instead, or add the needed export there`
+      : surfaceFiles.length === 0
+        ? `add ${addArticle} ${surfaceDisplay} to ${targetModuleName}/ naming what it exports`
+        : `import from ${importTargets} instead, or add the needed export there`;
 
   return {
     rule: "public-surface-bypass",

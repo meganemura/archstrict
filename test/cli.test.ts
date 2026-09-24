@@ -308,6 +308,63 @@ describe("cli", () => {
     }
   });
 
+  test("a single-file declaredModules glob does not crash todo or check", () => {
+    const root = mkdtempSync(join(tmpdir(), "archstrict-cli-file-module-"));
+    try {
+      mkdirSync(join(root, "src", "app"), { recursive: true });
+      writeFileSync(join(root, "src", "index.ts"), "export const value = 1;\n");
+      writeFileSync(join(root, "src", "secret.ts"), "export const secret = 1;\n");
+      writeFileSync(
+        join(root, "src", "app", "index.ts"),
+        "import { value } from \"../index.ts\";\nimport { secret } from \"../secret.ts\";\nexport const x = [value, secret];\n",
+      );
+      writeFileSync(
+        join(root, "archstrict.config.ts"),
+        `export default {\n` +
+          `  declaredModules: [\n` +
+          `    { name: "src-index", glob: "src/index.ts", surface: "index.ts" },\n` +
+          `    { name: "secret", glob: "src/secret.ts", surface: "index.ts" },\n` +
+          `    { name: "app", glob: "src/app/**", surface: "index.ts" },\n` +
+          `  ],\n` +
+          `  exclude: ["*.ts"],\n` +
+          `  because: "test",\n` +
+          `};\n`,
+      );
+
+      let jsonOut = "";
+      let exitCode = 0;
+      try {
+        jsonOut = execFileSync("node", [CLI_PATH, "check", "--json"], { cwd: root, encoding: "utf8" });
+      } catch (e) {
+        const err = e as { status: number; stdout: string; stderr: string };
+        exitCode = err.status;
+        jsonOut = err.stdout;
+        expect(err.stderr).not.toContain("ENOTDIR");
+      }
+      const json = JSON.parse(jsonOut);
+      expect(json.error).toBeUndefined();
+      expect(exitCode).toBe(1);
+      const bypasses = json.violations.filter((v: { rule: string }) => v.rule === "public-surface-bypass");
+      expect(bypasses).toHaveLength(1);
+      expect(bypasses[0].todoModule).toBe("secret");
+      expect(bypasses[0].do).toBe(
+        "set surface on 'secret' to match src/secret.ts, or stop importing it; this module is that file, not a directory",
+      );
+      expect(bypasses[0].do).not.toContain("secret/");
+
+      const todoResult = JSON.parse(execFileSync("node", [CLI_PATH, "todo", "--json"], { cwd: root, encoding: "utf8" }));
+      expect(todoResult).toEqual({ firstRun: true, added: 1, pruned: 0 });
+      expect(readFileSync(join(root, "src", "secret.ts.archstrict.todo.json"), "utf8")).toContain("public-surface-bypass");
+      expect(() => readFileSync(join(root, "src", "secret.ts", "archstrict.todo.json"), "utf8")).toThrow();
+
+      const after = JSON.parse(execFileSync("node", [CLI_PATH, "check", "--json"], { cwd: root, encoding: "utf8" }));
+      expect(after.violations.filter((v: { rule: string }) => v.rule === "public-surface-bypass")).toEqual([]);
+      expect(after.todo).toBe(1);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("todo --json on a broken config prints a structured error object, not the text do: line", () => {
     const root = mkdtempSync(join(tmpdir(), "archstrict-cli-todo-json-error-"));
     try {

@@ -9,7 +9,7 @@ It is not tsc, not ESLint, and not a type checker; it is architecture linting, i
 It is designed for a reader that starts from an empty context: a coding agent first, a human second.
 
 The shape, in one paragraph.
-A module is one directory, declared explicitly in config (`declaredModules`) rather than discovered by convention - a barrel `index.ts` is not evidence of an enforced boundary.
+A module is one directory, declared explicitly in config (`declaredModules`) rather than discovered by convention - a barrel `index.ts` is not evidence of an enforced boundary. A glob that names a single file is a module too: `surface` resolves against that file's parent, and the module's todo file sits beside the file (`src/index.ts` writes `src/index.ts.archstrict.todo.json`).
 A module shows the rest of the codebase one file, named by the config's own `surface` field (default `index.ts`); anything a module does not export from that file is private, and an import that reaches past it into the module's internals is a violation.
 A module with no public-surface file present is entirely private: every external import into it is a violation.
 A module's surface file can also leak an internal type it never exported by name - a property, a return type, or a generic constraint that structurally reaches past the surface - which is its own violation, distinct from an import bypassing the surface from outside.
@@ -58,7 +58,7 @@ The CLI itself:
 
 - `archstrict init [modulesGlob]` — write `archstrict.types.ts` (the module-name union type) and, if absent, `archstrict.config.ts` with a default flat preset. Re-run any time modules are added or removed; it regenerates the first file and leaves a hand-edited config alone.
 - `archstrict check [file] [--json]` — analyze the whole project and report violations. With a file argument, analysis still covers the whole project (resolving an edge needs it), but the report is scoped to that file's own violations.
-- `archstrict todo [--json]` — on a project's first run, freeze every current freezable violation into its owning module's todo file; on every later run, only prune entries that no longer match a current violation. Never adds after the first run. `--json` prints `{ firstRun, added, pruned }`, or `{ "error": "<message>" }` on a config error, the same convention `check` follows.
+- `archstrict todo [--json]` — on a project's first run, freeze every current freezable violation into its owning module's todo file (`archstrict.todo.json` inside a directory module; `<filename>.archstrict.todo.json` beside a single-file module); on every later run, only prune entries that no longer match a current violation. Never adds after the first run. `--json` prints `{ firstRun, added, pruned }`, or `{ "error": "<message>" }` on a config error, the same convention `check` follows.
 
 - `archstrict simulate [--json]` — preview proposed source or config changes through the full rule pipeline without writing to disk. Read the JSON change set from stdin; see [simulation](skills/archstrict/references/simulate.md).
 

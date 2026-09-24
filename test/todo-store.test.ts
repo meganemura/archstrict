@@ -1,12 +1,45 @@
 import { describe, expect, test } from "vitest";
-import { fingerprintOf, writeTodo } from "../src/todo-store.js";
+import { fingerprintOf, readTodo, todoPath, writeTodo } from "../src/todo-store.js";
 import * as hegel from "@hegeldev/hegel";
 import * as gen from "@hegeldev/hegel/generators";
-import { mkdtempSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { buildModuleGraph } from "../src/module-graph.js";
 import { runRules, applyTodo } from "../src/verbs/check.js";
+
+describe("todoPath", () => {
+  // A file-shaped module root must never produce `<file>/archstrict.todo.json`:
+  // that path is what makes `todo` throw ENOTDIR. A directory root keeps the
+  // in-directory file so existing modules do not move their todo.
+  test("a file root stores the todo beside the file; a directory root stores it inside", () => {
+    hegel.test(tc => {
+      const name = tc.draw(gen.fromRegex("[a-z]{1,12}"));
+      const asFile = tc.draw(gen.booleans());
+      const root = mkdtempSync(join(tmpdir(), "archstrict-todo-path-"));
+      try {
+        const moduleRoot = join(root, asFile ? `${name}.ts` : name);
+        if (asFile) writeFileSync(moduleRoot, "export const x = 1;\n");
+        else mkdirSync(moduleRoot);
+
+        const path = todoPath(moduleRoot);
+        const entry = { fingerprint: "abc123abc123", rule: "public-surface-bypass", path: moduleRoot, evidence: "e" };
+        writeTodo(moduleRoot, [entry]);
+        expect(readTodo(moduleRoot)).toEqual([entry]);
+        expect(existsSync(path)).toBe(true);
+        if (asFile) {
+          expect(path).toBe(join(root, `${name}.ts.archstrict.todo.json`));
+          expect(path.startsWith(moduleRoot + sep)).toBe(false);
+          expect(existsSync(join(moduleRoot, "archstrict.todo.json"))).toBe(false);
+        } else {
+          expect(path).toBe(join(moduleRoot, "archstrict.todo.json"));
+        }
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    }, { testCases: 20 });
+  });
+});
 
 describe("fingerprintOf", () => {
   test("a cycle violation's fingerprint excludes path, so it survives which file's edge happened to be reported", () => {

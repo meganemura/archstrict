@@ -6,9 +6,9 @@
 // has to depend on the other — both depend on this instead.
 // Boundary: file I/O and the fingerprint's own definition only. No rule
 // logic, no freeze/prune policy (that's todo.ts's job).
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { REFERENCED_BY_MARKER } from "./rules/type-leak.js";
 
 export type TodoEntry = {
@@ -58,7 +58,26 @@ export function fingerprintOf(v: { rule: string; path: string; evidence: string 
   return createHash("sha256").update(key).digest("hex").slice(0, 12);
 }
 
+function pathIsFile(path: string): boolean {
+  try {
+    return statSync(path).isFile();
+  } catch {
+    return false;
+  }
+}
+
 export function todoPath(moduleDir: string): string {
+  // `module.dir` is the glob's literal prefix. A declaredModules entry may
+  // name one file (`glob: "src/index.ts"`), so that prefix is the file.
+  // Joining `archstrict.todo.json` onto a file asks the kernel for a
+  // directory entry inside a file and throws ENOTDIR. The store sits
+  // beside the file, named with that file's own basename, so two file
+  // modules in one directory do not share one todo. Putting a single
+  // `archstrict.todo.json` in the parent was refused for that collision:
+  // the second module's write would replace the first.
+  if (pathIsFile(moduleDir)) {
+    return join(dirname(moduleDir), `${basename(moduleDir)}.archstrict.todo.json`);
+  }
   return join(moduleDir, "archstrict.todo.json");
 }
 

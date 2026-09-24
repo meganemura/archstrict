@@ -1,6 +1,6 @@
 # archstrict
 
-TypeScript module-boundary checker. A module is one directory named in `archstrict.config.ts`. It shows the rest of the codebase one public-surface file; every other file inside it is private. Known violations freeze into a per-module todo that can only shrink.
+TypeScript module-boundary checker. A module is one directory, or one file, named in `archstrict.config.ts`. It shows the rest of the codebase one public-surface file; every other file inside it is private. Known violations freeze into a per-module todo that can only shrink. A single-file module stores that todo beside the file (`src/index.ts.archstrict.todo.json`).
 
 It is not a type checker, not tsc, and not ESLint. It does not compile TypeScript, format code, or lint style.
 
