@@ -205,7 +205,7 @@ function configFileContents(
   const excludeLine = `exclude: ${JSON.stringify(excludeEntries)},`;
   const excludeComment =
     noiseDirs.length > 0
-      ? `\n  // Auto-excluded: found on disk as real top-level directories and treated as\n  // common non-module noise (${noiseDirs.join(", ")}) - remove an entry above if\n  // one of them IS real module content.`
+      ? `\n  // Auto-excluded: found on disk as real top-level directories and treated as\n  // common non-module noise (${noiseDirs.join(", ")}) - remove an entry below if\n  // one of them IS real module content.`
       : "";
 
   return `import type { Config } from "./archstrict.types.js";
