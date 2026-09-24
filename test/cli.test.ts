@@ -37,6 +37,26 @@ describe("cli", () => {
     }
   });
 
+  test("init reports which noise directories it found and excluded", () => {
+    const root = mkdtempSync(join(tmpdir(), "archstrict-cli-init-noise-"));
+    try {
+      mkdirSync(join(root, "src", "app"), { recursive: true });
+      writeFileSync(join(root, "src", "app", "module.ts"), "export const app = 1;\n");
+      mkdirSync(join(root, "test"), { recursive: true });
+      writeFileSync(join(root, "test", "some.test.ts"), "export const t = 1;\n");
+      mkdirSync(join(root, "spike"), { recursive: true });
+      writeFileSync(join(root, "spike", "notes.ts"), "export const s = 1;\n");
+
+      const out = execFileSync("node", [CLI_PATH, "init"], { cwd: root, encoding: "utf8" });
+      expect(out).toContain("excluded 2 noise directories found on disk: test/, spike/");
+      expect(readFileSync(join(root, "archstrict.config.ts"), "utf8")).toContain(
+        'exclude: ["*.ts","test/**","spike/**"]',
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("init <modulesGlob> actually threads the argument through - a real layout other than src/*", () => {
     const root = mkdtempSync(join(tmpdir(), "archstrict-cli-init-glob-"));
     try {

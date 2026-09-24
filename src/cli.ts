@@ -32,6 +32,11 @@ function runInit(args: string[]): number {
   process.stdout.write(`wrote ${result.generatedPath}\n`);
   if (result.configWritten) {
     process.stdout.write(`wrote ${result.configPath}\n`);
+    if (result.seededExcludeDirs.length > 0) {
+      const label = result.seededExcludeDirs.length === 1 ? "directory" : "directories";
+      const names = result.seededExcludeDirs.map((name) => `${name}/`).join(", ");
+      process.stdout.write(`excluded ${result.seededExcludeDirs.length} noise ${label} found on disk: ${names}\n`);
+    }
   } else {
     process.stdout.write(`${result.configPath} already exists, left untouched\n`);
   }

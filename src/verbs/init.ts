@@ -25,7 +25,7 @@
 // SAME discovery walk it always did (buildModuleGraph's own v0 path) to
 // find the directories to declare - discovery survives as init's own
 // one-time suggestion, never as a runtime assumption `check`/`todo` make.
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { buildModuleGraph } from "../module-graph.js";
 import { SCHEMA_VERSION } from "../config.js";
@@ -35,7 +35,34 @@ export type InitResult = {
   generatedPath: string;
   configWritten: boolean; // false when archstrict.config.ts already existed and was left alone
   moduleNames: string[];
+  seededExcludeDirs: string[]; // real top-level noise directories found and excluded (empty when none, or when configWritten is false)
 };
+
+// Deliberately narrow: a name must be near-universally non-source across
+// ordinary TypeScript projects, not merely something one specific project
+// happened to use (e.g. docs/, migrations/, or this project's own
+// plugin/skills directories are real source in some real projects, so they
+// stay out). init only ever excludes a name from this list when it finds a
+// real top-level directory of that name on disk - never blindly.
+const NOISE_DIR_CANDIDATES = [
+  "test",
+  "tests",
+  "example",
+  "examples",
+  "spike",
+  "dist",
+  "build",
+  "coverage",
+  "fixtures",
+  "e2e",
+];
+
+function findNoiseDirs(projectRoot: string): string[] {
+  return NOISE_DIR_CANDIDATES.filter((name) => {
+    const candidate = join(projectRoot, name);
+    return existsSync(candidate) && statSync(candidate).isDirectory();
+  });
+}
 
 // The flat preset, the only one init writes: every module under the glob
 // is the same kind, checked for a public surface and cycles only.
@@ -160,7 +187,12 @@ export type Config = {
 `;
 }
 
-function configFileContents(modulesGlob: string, surface: string, moduleNames: string[]): string {
+function configFileContents(
+  modulesGlob: string,
+  surface: string,
+  moduleNames: string[],
+  noiseDirs: string[],
+): string {
   const modulesRoot = modulesGlob.slice(0, -1); // "src/*" -> "src/"
   const declaredModulesEntries = moduleNames
     .map(
@@ -168,6 +200,13 @@ function configFileContents(modulesGlob: string, surface: string, moduleNames: s
         `    { name: ${JSON.stringify(name)}, glob: ${JSON.stringify(`${modulesRoot}${name}/**`)}, surface: ${JSON.stringify(surface)} },`,
     )
     .join("\n");
+
+  const excludeEntries = ["*.ts", ...noiseDirs.map((name) => `${name}/**`)];
+  const excludeLine = `exclude: ${JSON.stringify(excludeEntries)},`;
+  const excludeComment =
+    noiseDirs.length > 0
+      ? `\n  // Auto-excluded: found on disk as real top-level directories and treated as\n  // common non-module noise (${noiseDirs.join(", ")}) - remove an entry above if\n  // one of them IS real module content.`
+      : "";
 
   return `import type { Config } from "./archstrict.types.js";
 
@@ -179,8 +218,8 @@ export default {
   schemaVersion: ${SCHEMA_VERSION},
   surface: ${JSON.stringify(surface)},
   // Root-level files (this config, the generated union type) are never
-  // module content - kept out of analysis entirely, not just uncounted.
-  exclude: ["*.ts"],
+  // module content - kept out of analysis entirely, not just uncounted.${excludeComment}
+  ${excludeLine}
   classify: [{ glob: ${JSON.stringify(`${modulesRoot}**`)}, tags: ["kind:flat"] }],
   declaredModules: [
 ${declaredModulesEntries}
@@ -199,9 +238,10 @@ export function init(projectRoot: string, modulesGlob = "src/*", surface = DEFAU
 
   const configPath = join(projectRoot, "archstrict.config.ts");
   const configWritten = !existsSync(configPath);
+  const seededExcludeDirs = configWritten ? findNoiseDirs(projectRoot) : [];
   if (configWritten) {
-    writeFileSync(configPath, configFileContents(modulesGlob, surface, moduleNames));
+    writeFileSync(configPath, configFileContents(modulesGlob, surface, moduleNames, seededExcludeDirs));
   }
 
-  return { configPath, generatedPath, configWritten, moduleNames };
+  return { configPath, generatedPath, configWritten, moduleNames, seededExcludeDirs };
 }

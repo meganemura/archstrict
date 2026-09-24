@@ -307,6 +307,76 @@ export default {
     });
   });
 
+  test("seeds exclude with real noise directories found on disk", () => {
+    withTempProject(["app"], (root) => {
+      mkdirSync(join(root, "test"), { recursive: true });
+      writeFileSync(join(root, "test", "some.test.ts"), "export const x = 1;\n");
+      mkdirSync(join(root, "spike"), { recursive: true });
+      writeFileSync(join(root, "spike", "notes.ts"), "export const y = 1;\n");
+
+      const result = init(root);
+      expect(result.configWritten).toBe(true);
+      expect(result.seededExcludeDirs).toEqual(["test", "spike"]);
+
+      const config = readFileSync(result.configPath, "utf8");
+      const match = config.match(/exclude: (\[[^\]]*\])/);
+      expect(match).not.toBeNull();
+      expect(JSON.parse(match![1]!)).toEqual(["*.ts", "test/**", "spike/**"]);
+    });
+  });
+
+  test("leaves exclude at just *.ts when none of the candidate noise directories exist", () => {
+    withTempProject(["app"], (root) => {
+      const result = init(root);
+      expect(result.configWritten).toBe(true);
+      expect(result.seededExcludeDirs).toEqual([]);
+
+      const config = readFileSync(result.configPath, "utf8");
+      const match = config.match(/exclude: (\[[^\]]*\])/);
+      expect(match).not.toBeNull();
+      expect(JSON.parse(match![1]!)).toEqual(["*.ts"]);
+    });
+  });
+
+  test("never touches an already-existing config, even when noise directories exist on disk", () => {
+    withTempProject(["app"], (root) => {
+      init(root);
+      const configPath = join(root, "archstrict.config.ts");
+      const original = "// hand-edited, do not clobber\n" + readFileSync(configPath, "utf8");
+      writeFileSync(configPath, original);
+
+      mkdirSync(join(root, "test"), { recursive: true });
+      writeFileSync(join(root, "test", "some.test.ts"), "export const x = 1;\n");
+
+      const result = init(root);
+      expect(result.configWritten).toBe(false);
+      expect(result.seededExcludeDirs).toEqual([]);
+      expect(readFileSync(configPath, "utf8")).toBe(original);
+    });
+  });
+
+  test("the seeded exclude actually resolves the uncovered-module noise it's meant to prevent", async () => {
+    const root = mkdtempSync(join(tmpdir(), "archstrict-init-noise-"));
+    try {
+      mkdirSync(join(root, "src", "app"), { recursive: true });
+      writeFileSync(join(root, "src", "app", "index.ts"), "export const app = 1;\n");
+      mkdirSync(join(root, "test"), { recursive: true });
+      writeFileSync(join(root, "test", "some.test.ts"), "export const t = 1;\n");
+      writeFileSync(join(root, "tsconfig.json"), "{}");
+
+      init(root);
+
+      const { check } = await import("../src/verbs/check.js");
+      const result = await check(root);
+      const uncoveredUnderTest = result.violations.filter(
+        (v: { rule: string; path: string }) => v.rule === "uncovered-module" && v.path.includes(`${join("test", "")}`),
+      );
+      expect(uncoveredUnderTest).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("init on a project with no src/ at all fails loudly, naming what's missing", () => {
     const root = mkdtempSync(join(tmpdir(), "archstrict-init-"));
     try {
