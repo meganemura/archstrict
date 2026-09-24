@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { init } from "../src/verbs/init.js";
@@ -307,6 +307,51 @@ describe("todo", () => {
       const after = await check(root);
       expect(after.violations.filter((v) => v.rule === "public-surface-bypass")).toEqual([]);
       expect(after.todo).toBe(2);
+    });
+  });
+
+  test("a new freeze writes a project-relative, forward-slashed path, not the live violation's absolute one", async () => {
+    await withTempProject(async (root) => {
+      writeBypassProject(root);
+      init(root);
+      await todo(root);
+
+      const todoFile = join(root, "src", "shared", "archstrict.todo.json");
+      const parsed = JSON.parse(readFileSync(todoFile, "utf8")) as { entries: { path: string }[] };
+      expect(parsed.entries).toHaveLength(1);
+      expect(parsed.entries[0]!.path).toBe("src/app/module.ts");
+    });
+  });
+
+  test("a legacy absolute-path entry that survives pruning is rewritten to relative form (self-healing); one that gets pruned is simply dropped", async () => {
+    await withTempProject(async (root) => {
+      writeBypassProject(root);
+      init(root);
+      await todo(root); // marks the project as past its first run
+
+      // Hand-write a legacy-shaped entry (absolute path) whose fingerprint
+      // still matches the live violation todo(root) above already froze in
+      // relative form - simulating a todo file written before this fix.
+      const todoFile = join(root, "src", "shared", "archstrict.todo.json");
+      const before = JSON.parse(readFileSync(todoFile, "utf8")) as {
+        entries: { fingerprint: string; rule: string; path: string; evidence: string }[];
+      };
+      expect(before.entries).toHaveLength(1);
+      // realpathSync(root), not root itself: an old archstrict wrote a
+      // live violation's already-realpath'd `.path` verbatim (the same
+      // path TypeScript's own program resolved to, e.g. through macOS's
+      // /tmp -> /private/tmp), so a faithful legacy fixture must be
+      // realpath'd too.
+      const legacyPath = join(realpathSync(root), "src", "app", "module.ts");
+      writeFileSync(todoFile, JSON.stringify({ entries: [{ ...before.entries[0]!, path: legacyPath }] }, null, 2));
+
+      const result = await todo(root); // prune pass, not first-run
+      expect(result.firstRun).toBe(false);
+      expect(result.pruned).toBe(0); // the entry still matches - it survives, it isn't dropped
+
+      const after = JSON.parse(readFileSync(todoFile, "utf8")) as { entries: { path: string }[] };
+      expect(after.entries).toHaveLength(1);
+      expect(after.entries[0]!.path).toBe("src/app/module.ts"); // rewritten from the legacy absolute form
     });
   });
 

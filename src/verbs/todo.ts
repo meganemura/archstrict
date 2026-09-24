@@ -12,7 +12,7 @@
 // the same identity for the same violation without depending on each other.
 import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { buildModuleGraph, type ModuleGraph } from "../module-graph.js";
+import { buildModuleGraph, toProjectRelativePosix, type ModuleGraph } from "../module-graph.js";
 import type { Config } from "../config.js";
 import { fingerprintOf, readTodo, writeTodo } from "../todo-store.js";
 import { loadConfig, runRules, type AnyViolation } from "./check.js";
@@ -66,7 +66,28 @@ export function freezeOrPrune(
   let pruned = 0;
 
   for (const [name, module] of graph.modules) {
-    const current = readTodo(module.dir);
+    // graph.rootDir, not the raw projectRoot parameter: rootDir is
+    // realpath'd (module-graph.ts's own prepareGraph does this so every
+    // relative-path computation agrees with the paths TypeScript itself
+    // resolved to), while projectRoot may not be (e.g. macOS's own
+    // /tmp -> /private/tmp). A raw projectRoot here would turn a live
+    // violation's realpath'd `.path` into a "../../private/..." relative
+    // path instead of the module's own file - the same reasoning
+    // check.ts's applyTodo already applies passing graph.rootDir. This
+    // equivalence (graph.rootDir === realpathSync(projectRoot)) holds
+    // because both todo() and check() build their graph from
+    // declaredModules only; it is not true of the (dead, v0) modulesGlob
+    // discovery path, where rootDir names a glob's root subdirectory
+    // instead.
+    //
+    // Beyond keeping a freshly-read entry consistent with a freshly-frozen
+    // one, this also makes pruning self-healing: the prune branch below
+    // writes `current`'s own (now-normalized) entries straight back via
+    // `writeTodo`, so a legacy todo file with an absolute `path` gets its
+    // surviving entries opportunistically rewritten to the relative form
+    // the next time `archstrict todo` prunes it - without a dedicated
+    // migration step.
+    const current = readTodo(module.dir, graph.rootDir);
     const currentViolations = freezable.filter((v) => v.todoModule === name);
     const currentFingerprints = new Set(currentViolations.map(fingerprintOf));
 
@@ -78,7 +99,7 @@ export function freezeOrPrune(
       const entries = toFreeze.map((v) => ({
         fingerprint: fingerprintOf(v),
         rule: v.rule,
-        path: v.path,
+        path: toProjectRelativePosix(v.path, graph.rootDir),
         evidence: v.evidence,
       }));
       if (entries.length > 0) {

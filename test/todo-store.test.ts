@@ -88,6 +88,81 @@ describe("fingerprintOf", () => {
 });
 
 
+describe("readTodo's optional projectRoot normalization", () => {
+  test("normalizes a legacy absolute path when projectRoot is given; leaves it untouched otherwise", () => {
+    const root = mkdtempSync(join(tmpdir(), "archstrict-todo-normalize-"));
+    try {
+      const moduleDir = join(root, "src", "shared");
+      mkdirSync(moduleDir, { recursive: true });
+      const importer = join(root, "src", "app", "module.ts");
+      mkdirSync(join(root, "src", "app"), { recursive: true });
+      writeFileSync(importer, "export const x = 1;\n");
+      const legacyEntry = {
+        fingerprint: "abc123abc123",
+        rule: "public-surface-bypass",
+        path: importer,
+        evidence: "e",
+      };
+      writeTodo(moduleDir, [legacyEntry]);
+
+      // No projectRoot: entry comes back exactly as stored, absolute path
+      // untouched - the parameter is genuinely optional, not a breaking
+      // change for a caller that doesn't pass it.
+      expect(readTodo(moduleDir)).toEqual([legacyEntry]);
+
+      // With projectRoot: the same on-disk absolute path normalizes to
+      // its project-relative POSIX form.
+      const normalized = readTodo(moduleDir, root);
+      expect(normalized).toEqual([{ ...legacyEntry, path: "src/app/module.ts" }]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("matching survives regardless of stored path format", () => {
+  test("both an absolute and a relative stored path still suppress the same live violation", () => {
+    const root = mkdtempSync(join(tmpdir(), "archstrict-todo-path-format-"));
+    try {
+      mkdirSync(join(root, "src", "app"), { recursive: true });
+      mkdirSync(join(root, "src", "shared"), { recursive: true });
+      writeFileSync(join(root, "src", "shared", "module.ts"), "export const shared = 1;\n");
+      writeFileSync(
+        join(root, "src", "app", "module.ts"),
+        "import { shared } from \"../shared/module.ts\";\nexport const x = shared;\n",
+      );
+      const config = {
+        configPath: join(root, "archstrict.config.ts"),
+        declaredModules: [
+          { name: "app", glob: "src/app/**", surface: "index.ts" },
+          { name: "shared", glob: "src/shared/**", surface: "index.ts" },
+        ],
+        because: "test",
+      };
+      const graph = buildModuleGraph({ projectRoot: root, declaredModules: config.declaredModules });
+      const result = runRules(graph, config);
+      expect(result.violations).toHaveLength(1);
+      const violation = result.violations[0]!;
+      const fingerprint = fingerprintOf(violation);
+
+      const sharedDir = graph.modules.get("shared")!.dir;
+      const absoluteEntry = { fingerprint, rule: violation.rule, path: violation.path, evidence: violation.evidence };
+      const relativeEntry = { ...absoluteEntry, path: "src/app/module.ts" };
+      writeTodo(sharedDir, [absoluteEntry]);
+      const withAbsolute = applyTodo(graph, config, result);
+      expect(withAbsolute.todo).toBe(1);
+      expect(withAbsolute.violations).toEqual([]);
+
+      writeTodo(sharedDir, [relativeEntry]);
+      const withRelative = applyTodo(graph, config, result);
+      expect(withRelative.todo).toBe(1);
+      expect(withRelative.violations).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 test("a real legacy cycle stays frozen across diagnostic changes and file renames", () => {
   hegel.test(tc => {
     const renamed = `renamed${tc.draw(gen.fromRegex("[a-z]{1,12}"))}.ts`;

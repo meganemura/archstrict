@@ -317,7 +317,7 @@ export function applyTodo(graph: ModuleGraph, config: Config, result: CheckResul
       continue;
     }
     const targetModule = graph.modules.get(v.todoModule);
-    const entries = targetModule === undefined ? [] : readTodo(targetModule.dir);
+    const entries = targetModule === undefined ? [] : readTodo(targetModule.dir, graph.rootDir);
     const fp = fingerprintOf(v);
     if (entries.some((e) => e.fingerprint === fp)) {
       suppressed++;
@@ -333,7 +333,7 @@ export function applyTodo(graph: ModuleGraph, config: Config, result: CheckResul
   }
 
   for (const [name, module] of graph.modules) {
-    const entries = readTodo(module.dir);
+    const entries = readTodo(module.dir, graph.rootDir);
     if (entries.length === 0) continue;
 
     if (strict.has(name)) {

@@ -8,8 +8,9 @@
 // logic, no freeze/prune policy (that's todo.ts's job).
 import { existsSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, isAbsolute, join } from "node:path";
 import { REFERENCED_BY_MARKER } from "./rules/type-leak.js";
+import { toProjectRelativePosix } from "./module-graph.js";
 
 export type TodoEntry = {
   fingerprint: string;
@@ -81,10 +82,21 @@ export function todoPath(moduleDir: string): string {
   return join(moduleDir, "archstrict.todo.json");
 }
 
-export function readTodo(moduleDir: string): TodoEntry[] {
+// `projectRoot`, when given, normalizes a legacy absolute `entry.path`
+// (written by an older archstrict, before todo entries stored a
+// project-relative path) into the same relative form a new freeze writes
+// today. Guarded by `isAbsolute`: an already-relative path must never pass
+// through `toProjectRelativePosix` (it wraps node:path's `relative()`,
+// which treats a relative input as relative to `process.cwd()`, not
+// `projectRoot`, and would silently produce a wrong result). Omitting
+// `projectRoot` leaves every entry exactly as stored - existing callers
+// that don't pass it keep their current behavior unchanged.
+export function readTodo(moduleDir: string, projectRoot?: string): TodoEntry[] {
   const p = todoPath(moduleDir);
   if (!existsSync(p)) return [];
-  return (JSON.parse(readFileSync(p, "utf8")) as { entries: TodoEntry[] }).entries;
+  const entries = (JSON.parse(readFileSync(p, "utf8")) as { entries: TodoEntry[] }).entries;
+  if (projectRoot === undefined) return entries;
+  return entries.map((e) => (isAbsolute(e.path) ? { ...e, path: toProjectRelativePosix(e.path, projectRoot) } : e));
 }
 
 export function writeTodo(moduleDir: string, entries: TodoEntry[]): void {
