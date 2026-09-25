@@ -273,6 +273,251 @@ describe("loadConfig", () => {
       expect(config.schemaVersion).toBeUndefined();
     });
   });
+
+  // compileGlob (classify.ts) only special-cases `*` and `**` - every
+  // other character a shell or a real glob library treats specially
+  // (brace, extglob, `?`, bracket) falls through its own literal branch
+  // instead, so a glob written with one of those matches nothing and
+  // every file it was meant to cover silently stays uncovered-module.
+  // Caught once, here, for every field a glob can appear in - one entry
+  // below per field, each varying only the field under test, every other
+  // glob-bearing field left a real */** glob so only that one field can
+  // be the cause of the thrown error.
+  describe("unsupported glob syntax", () => {
+    const brace = "src/app/{a,b}/**";
+    const UNSUPPORTED_MESSAGE =
+      "has an unsupported glob 'src/app/{a,b}/**' - only '*' (any characters within one path segment) and " +
+      "'**' (any depth, including zero segments) are supported; '{', '}', '(', ')', '[', ']', '?', and '!' " +
+      "all match nothing, including in an extglob form like '+(...)' or '@(...)'";
+
+    const cases = [
+      {
+        label: "declaredModules[].glob",
+        field: "declaredModules[0].glob",
+        raw: { declaredModules: [{ name: "app", glob: brace, surface: "index.ts" }], because: "test" },
+      },
+      {
+        label: "declaredModules[].surface",
+        field: "declaredModules[0].surface",
+        raw: { declaredModules: [{ name: "app", glob: "src/app/**", surface: brace }], because: "test" },
+      },
+      {
+        label: "declaredModules[].friends[].file",
+        field: "declaredModules[0].friends[0].file",
+        raw: {
+          declaredModules: [
+            {
+              name: "app",
+              glob: "src/app/**",
+              surface: "index.ts",
+              friends: [{ file: brace, from: "src/**", because: "test" }],
+            },
+          ],
+          because: "test",
+        },
+      },
+      {
+        label: "declaredModules[].friends[].from",
+        field: "declaredModules[0].friends[0].from",
+        raw: {
+          declaredModules: [
+            {
+              name: "app",
+              glob: "src/app/**",
+              surface: "index.ts",
+              friends: [{ file: "internal.ts", from: brace, because: "test" }],
+            },
+          ],
+          because: "test",
+        },
+      },
+      {
+        label: "exclude[]",
+        field: "exclude[0]",
+        raw: {
+          declaredModules: [{ name: "app", glob: "src/app/**", surface: "index.ts" }],
+          exclude: [brace],
+          because: "test",
+        },
+      },
+      {
+        label: "classify[].glob",
+        field: "classify[0].glob",
+        raw: {
+          declaredModules: [{ name: "app", glob: "src/app/**", surface: "index.ts" }],
+          classify: [{ glob: brace, tags: ["kind:app"] }],
+          because: "test",
+        },
+      },
+      {
+        label: "mustBeEmpty[].glob",
+        field: "mustBeEmpty[0].glob",
+        raw: {
+          declaredModules: [{ name: "app", glob: "src/app/**", surface: "index.ts" }],
+          mustBeEmpty: [{ glob: brace, because: "test" }],
+          because: "test",
+        },
+      },
+      {
+        label: "edges.allowDeny[].exceptions[].from",
+        field: "edges.allowDeny[0].exceptions[0].from",
+        raw: {
+          declaredModules: [{ name: "app", glob: "src/app/**", surface: "index.ts" }],
+          edges: {
+            allowDeny: [
+              {
+                source: "kind:app",
+                targetNamespace: "kind",
+                deny: ["other"],
+                exceptions: [{ from: brace, to: "src/**", because: "test" }],
+                because: "test",
+              },
+            ],
+          },
+          because: "test",
+        },
+      },
+      {
+        label: "edges.allowDeny[].exceptions[].to",
+        field: "edges.allowDeny[0].exceptions[0].to",
+        raw: {
+          declaredModules: [{ name: "app", glob: "src/app/**", surface: "index.ts" }],
+          edges: {
+            allowDeny: [
+              {
+                source: "kind:app",
+                targetNamespace: "kind",
+                deny: ["other"],
+                exceptions: [{ from: "src/**", to: brace, because: "test" }],
+                because: "test",
+              },
+            ],
+          },
+          because: "test",
+        },
+      },
+      {
+        label: "edges.point[].from",
+        field: "edges.point[0].from",
+        raw: {
+          declaredModules: [{ name: "app", glob: "src/app/**", surface: "index.ts" }],
+          edges: { point: [{ from: brace, to: "src/**", because: "test" }] },
+          because: "test",
+        },
+      },
+      {
+        label: "edges.point[].to",
+        field: "edges.point[0].to",
+        raw: {
+          declaredModules: [{ name: "app", glob: "src/app/**", surface: "index.ts" }],
+          edges: { point: [{ from: "src/**", to: brace, because: "test" }] },
+          because: "test",
+        },
+      },
+    ];
+
+    test.each(cases)(
+      "$label: a brace glob throws naming the field, the glob, and a do: to run archstrict check",
+      async ({ field, raw }) => {
+        await withTempProject(async (root) => {
+          const configPath = join(root, "archstrict.config.ts");
+          writeFileSync(configPath, `export default ${JSON.stringify(raw)};\n`);
+          let thrown: unknown;
+          try {
+            await loadConfig(configPath);
+          } catch (error) {
+            thrown = error;
+          }
+          expect(thrown).toBeInstanceOf(ReportError);
+          expect((thrown as ReportError).message).toBe(`${configPath} field '${field}' ${UNSUPPORTED_MESSAGE}`);
+          expect((thrown as ReportError).do).toBe(
+            `rewrite '${field}' in ${configPath} using only * and **, or split it into one entry per directory, in archstrict.config.ts, then run archstrict check`,
+          );
+        });
+      },
+    );
+
+    test("check re-run against an existing config surfaces the same error", async () => {
+      await withTempProject(async (root) => {
+        const configPath = join(root, "archstrict.config.ts");
+        writeFileSync(
+          configPath,
+          `export default ${JSON.stringify({
+            declaredModules: [{ name: "app", glob: brace, surface: "index.ts" }],
+            because: "test",
+          })};\n`,
+        );
+        await expect(check(root)).rejects.toThrow(/unsupported glob/);
+      });
+    });
+
+    test("init re-run against an existing config surfaces the same error, with a do: to run archstrict init", async () => {
+      await withTempProject(async (root) => {
+        const configPath = join(root, "archstrict.config.ts");
+        writeFileSync(
+          configPath,
+          `export default ${JSON.stringify({
+            declaredModules: [{ name: "app", glob: brace, surface: "index.ts" }],
+            because: "test",
+          })};\n`,
+        );
+        let thrown: unknown;
+        try {
+          await init(root);
+        } catch (error) {
+          thrown = error;
+        }
+        expect(thrown).toBeInstanceOf(ReportError);
+        expect((thrown as ReportError).message).toContain("unsupported glob");
+        expect((thrown as ReportError).do).toContain("archstrict init");
+      });
+    });
+
+    test("an extglob glob (+(...)) throws the same way, because '(' alone already catches it", async () => {
+      await withTempProject(async (root) => {
+        const configPath = join(root, "archstrict.config.ts");
+        writeFileSync(
+          configPath,
+          `export default ${JSON.stringify({
+            declaredModules: [{ name: "app", glob: "src/app/+(a|b)/**", surface: "index.ts" }],
+            because: "test",
+          })};\n`,
+        );
+        await expect(loadConfig(configPath)).rejects.toThrow(
+          "field 'declaredModules[0].glob' has an unsupported glob 'src/app/+(a|b)/**'",
+        );
+      });
+    });
+
+    test("a `?` glob throws", async () => {
+      await withTempProject(async (root) => {
+        const configPath = join(root, "archstrict.config.ts");
+        writeFileSync(
+          configPath,
+          `export default ${JSON.stringify({
+            declaredModules: [{ name: "app", glob: "src/app?/**", surface: "index.ts" }],
+            because: "test",
+          })};\n`,
+        );
+        await expect(loadConfig(configPath)).rejects.toThrow(
+          "field 'declaredModules[0].glob' has an unsupported glob 'src/app?/**'",
+        );
+      });
+    });
+
+    // Control: a config using only the two really-supported wildcards
+    // still loads - this check must reject unsupported syntax, not glob
+    // syntax in general.
+    test("a plain */** glob still loads", async () => {
+      await withTempProject(async (root) => {
+        mkdirSync(join(root, "src", "app"), { recursive: true });
+        writeFileSync(join(root, "src", "app", "module.ts"), "export const app = 1;\n");
+        await init(root);
+        const config = await loadConfig(join(root, "archstrict.config.ts"));
+        expect(config.declaredModules).toEqual([{ name: "app", glob: "src/app/**" }]);
+      });
+    });
+  });
 });
 
 describe("check", () => {

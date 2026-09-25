@@ -309,3 +309,79 @@ export function assertEdgesShapeValid(config: Config): void {
     }
   }
 }
+
+// compileGlob (classify.ts) only ever special-cases `*` and `**`; every
+// other character - including brace (`{a,b}`), extglob (`+(a|b)`,
+// `@(...)`, `!(...)`, `?(...)`), `?`, and bracket (`[...]`) syntax a shell
+// or a real glob library would treat specially - falls through its own
+// literal branch, escaped for RegExp use. A config author who writes one
+// of those, expecting shell/minimatch semantics, gets a glob that matches
+// nothing: every file it was meant to cover instead surfaces as
+// uncovered-module, silently, with no hint the glob itself was the
+// problem. Caught here, once, for every field a glob can appear in,
+// rather than as a downstream "why is this file uncovered" mystery.
+//
+// A bare `+` or `@` is left alone (both appear in ordinary literal paths -
+// a scoped package directory name, a filename with a `+` in it); only the
+// bracket/brace/question-mark/bang characters below are checked, and `(`
+// alone already catches the extglob forms (`+(`, `@(`, `!(`, `?(`) without
+// needing to special-case them.
+const UNSUPPORTED_GLOB_PATTERN = /[{}()[\]?!]/;
+
+function assertGlobSupported(configPath: string, field: string, glob: unknown, verb: string): void {
+  // A non-string value here is a different validator's problem (shape
+  // checks above, or the field's own type in Config) - this check only
+  // ever looks at strings that already made it this far.
+  if (typeof glob !== "string" || !UNSUPPORTED_GLOB_PATTERN.test(glob)) return;
+  throw new ReportError(
+    `${configPath} field '${field}' has an unsupported glob '${glob}' - only '*' (any characters within one path segment) and '**' (any depth, including zero segments) are supported; '{', '}', '(', ')', '[', ']', '?', and '!' all match nothing, including in an extglob form like '+(...)' or '@(...)'`,
+    `rewrite '${field}' in ${configPath} using only * and **, or split it into one entry per directory, in archstrict.config.ts, then run ${verb}`,
+  );
+}
+
+// One entry per glob-bearing field the config schema has (see Config's own
+// fields above). Walked defensively (typeof/Array.isArray guards, not the
+// Config type) because loadConfig calls this on a value ts.transpileModule
+// only stripped types from, never type-checked - a field can hold any
+// runtime shape a hand-written config puts there.
+export function assertGlobsSupported(config: Config, verb: string): void {
+  const configPath = config.configPath;
+
+  for (const [i, glob] of (config.exclude ?? []).entries()) {
+    assertGlobSupported(configPath, `exclude[${i}]`, glob, verb);
+  }
+  for (const [i, entry] of (config.classify ?? []).entries()) {
+    assertGlobSupported(configPath, `classify[${i}].glob`, entry?.glob, verb);
+  }
+  for (const [i, entry] of (config.mustBeEmpty ?? []).entries()) {
+    assertGlobSupported(configPath, `mustBeEmpty[${i}].glob`, entry?.glob, verb);
+  }
+  for (const [i, mod] of (config.declaredModules ?? []).entries()) {
+    assertGlobSupported(configPath, `declaredModules[${i}].glob`, mod?.glob, verb);
+    const surface = mod?.surface;
+    if (Array.isArray(surface)) {
+      for (const [j, s] of surface.entries()) {
+        assertGlobSupported(configPath, `declaredModules[${i}].surface[${j}]`, s, verb);
+      }
+    } else if (surface !== undefined) {
+      assertGlobSupported(configPath, `declaredModules[${i}].surface`, surface, verb);
+    }
+    for (const [j, friend] of (mod?.friends ?? []).entries()) {
+      assertGlobSupported(configPath, `declaredModules[${i}].friends[${j}].file`, friend?.file, verb);
+      assertGlobSupported(configPath, `declaredModules[${i}].friends[${j}].from`, friend?.from, verb);
+    }
+  }
+
+  for (const [i, rule] of (config.edges?.allowDeny ?? []).entries()) {
+    for (const [j, exception] of (rule?.exceptions ?? []).entries()) {
+      assertGlobSupported(configPath, `edges.allowDeny[${i}].exceptions[${j}].from`, exception?.from, verb);
+      assertGlobSupported(configPath, `edges.allowDeny[${i}].exceptions[${j}].to`, exception?.to, verb);
+    }
+  }
+  // point's from/to are each either a glob (string) or a tag predicate
+  // (an object) - only the string form is a glob this check applies to.
+  for (const [i, rule] of (config.edges?.point ?? []).entries()) {
+    assertGlobSupported(configPath, `edges.point[${i}].from`, rule?.from, verb);
+    assertGlobSupported(configPath, `edges.point[${i}].to`, rule?.to, verb);
+  }
+}

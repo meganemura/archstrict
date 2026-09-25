@@ -8,7 +8,7 @@ import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import ts from "typescript";
 import { buildModuleGraph, toProjectRelativePosix, type ModuleGraph, type BuildOptions } from "../module-graph.js";
-import { assertEdgesShapeValid, assertSchemaVersion, describeShape, type Config } from "../config.js";
+import { assertEdgesShapeValid, assertGlobsSupported, assertSchemaVersion, describeShape, type Config } from "../config.js";
 import { ReportError } from "../report-error.js";
 import { checkPublicSurfaceBypass, type Violation as PublicSurfaceViolation } from "../rules/public-surface.js";
 import {
@@ -193,6 +193,7 @@ export async function loadConfig(configPath: string, sourceOverride?: string, ve
   assertDeclaredModulesShapeValid(configPath, raw, verb);
   const config = { ...(raw as object), configPath } as Config;
   assertEdgesShapeValid(config);
+  assertGlobsSupported(config, verb);
   return config;
 }
 
