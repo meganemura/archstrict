@@ -23,7 +23,7 @@
 // exports at once) and a glob whose own base directory is the project
 // root, which - with a real node_modules present - puts node_modules
 // itself inside rule 6's own type-leak boundary.
-import { existsSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DEFAULT_SURFACE, listAnalyzedFiles, toProjectRelativePosix, type DeclaredModule } from "../module-graph.js";
 import { groupAnalyzedFiles, nameCandidates, declaredModuleEntryText, type NamedCandidateGroup } from "../module-candidates.js";
@@ -82,7 +82,16 @@ function findNoiseDirs(projectRoot: string, keptOpen: string): string[] {
   // A container named on the command line is real source the caller
   // asked to open, never treated as noise - `archstrict init test` opens
   // test/ and does not also exclude it.
-  return NOISE_DIR_CANDIDATES.filter((name) => name !== keptOpen && isRealDirectory(join(projectRoot, name)));
+  // Matched against the exact entries readdirSync returns, not
+  // existsSync(join(projectRoot, name)) - existsSync resolves through a
+  // case-insensitive filesystem, so a real `Test/` would otherwise match
+  // the candidate name "test" and init would exclude a directory that
+  // isn't there under that spelling (and declare it a module too, since
+  // the walk itself finds "Test/" by its real name).
+  const onDisk = new Set(readdirSync(projectRoot));
+  return NOISE_DIR_CANDIDATES.filter(
+    (name) => name !== keptOpen && onDisk.has(name) && statSync(join(projectRoot, name)).isDirectory(),
+  );
 }
 
 // The argument table's own syntax rules - stripping a trailing "/*" or
@@ -334,9 +343,20 @@ function freshRun(
   const anchors = opened === "" ? [""] : ["", opened];
   const groups = nameCandidates(groupAnalyzedFiles(files, anchors), new Set());
   if (groups.length === 0) {
+    // Every analyzed .ts file the plain walk (no noise exclude applied)
+    // finds is inside a noise directory, or there is none at all. In the
+    // first case, naming that directory ("archstrict init test") is a
+    // real fix - opening it declares its files as modules instead of
+    // excluding them. In the second, there is nothing on disk to open.
+    const beforeNoiseExclude = listAnalyzedFiles(projectRoot, [...OWN_FILES, ...HIDDEN_EXCLUDE]).map((f) =>
+      toProjectRelativePosix(f, projectRoot),
+    );
+    const openable = noiseDirs.find((n) => beforeNoiseExclude.some((f) => f.startsWith(`${n}/`)));
     fail(
       `found no .ts file to declare as a module in ${projectRoot} (init skips node_modules/, dist/, hidden directories, and noise directories)`,
-      "add a .ts source file outside those directories, then run archstrict init",
+      openable !== undefined
+        ? `archstrict init ${openable}`
+        : "add a .ts source file outside those directories, then run archstrict init",
     );
   }
 

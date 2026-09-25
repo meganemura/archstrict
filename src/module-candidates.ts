@@ -8,12 +8,16 @@
 // later) already decided that and hands this module the resulting file
 // list and anchor set.
 //
-// Naming rule 3 (a group whose own on-disk name still collides with a name
-// a config already uses gets a "./"-prefixed path) is deliberately not
-// implemented here: it is only reachable when suggesting an entry for a
-// file an EXISTING config doesn't cover yet, and nothing in this change
-// calls this module that way yet - a later change that does can extend
-// nameCandidates without reshaping its return value.
+// One naming case stays unimplemented: a project-root group (anchor "")
+// whose on-disk name an existing config's declaredModules already uses
+// (passed in as `taken`) still takes that plain on-disk name today,
+// because root groups never consult `taken` - only a deeper group's own
+// rel-path fallback does. A "./"-prefixed path would be the fix, but
+// nothing calls nameCandidates with a non-empty `taken` yet (init always
+// starts from a fresh config), so there is no real case to verify against.
+// A later caller that suggests an entry for a file an existing config
+// doesn't cover yet can extend nameCandidates without reshaping its return
+// value.
 
 // A file's project-relative path, POSIX-separated - the same shape
 // module-graph.ts's toProjectRelativePosix produces.
@@ -74,8 +78,8 @@ export function groupAnalyzedFiles(files: readonly string[], anchors: readonly s
   return [...groups.values()].sort((a, b) => byteSort(a.rel, b.rel));
 }
 
-// Naming rules 1 and 2 (rule 3 - see this file's own header comment - stays
-// out of scope): (1) a group's name is its on-disk name, unless that name
+// Naming, two cases (a third stays out of scope - see this file's own
+// header comment): (1) a group's name is its on-disk name, unless that name
 // collides with another group's own on-disk name at the SAME anchor depth -
 // one directory cannot hold a file and a directory of the same name, so a
 // top-level `cli.ts` and a `src/cli.ts` never collide with each other
@@ -103,11 +107,12 @@ export function nameCandidates(
 const q = JSON.stringify;
 
 // The literal declaredModules[] entry text init pastes into the generated
-// config, and the same text a later suggestion (rule 3's own `do:`) would
-// paste for an uncovered path - kept as one function so the two can never
-// drift into two different phrasings of the same entry shape. A directory
-// entry carries no `surface` of its own (the top-level default, or the
-// directory's own package.json exports map, applies instead) - a file
+// config, and the same text a later suggestion (for the root-name-collision
+// case above) would paste for an uncovered path - kept as one function so
+// the two can never drift into two different phrasings of the same entry
+// shape. A directory entry carries no `surface` of its own (the top-level
+// default, or the directory's own package.json exports map, applies
+// instead) - a file
 // entry always does, naming the file itself, since a file with no surface
 // of its own would otherwise be entirely private (nothing else could ever
 // export from it).

@@ -225,7 +225,7 @@ describe("init", () => {
     });
   });
 
-  // Item 1: a fixture shaped like a real, unconventional flat package - two
+  // A fixture shaped like a real, unconventional flat package - two
   // real module directories, four loose top-level .ts files under the
   // opened container, three noise directories, and one hidden directory
   // holding real source. Names are invented for this fixture, not taken
@@ -307,7 +307,7 @@ export default {
     }
   });
 
-  // Item 2: a fixture shaped like a flat package with no directories at all
+  // A fixture shaped like a flat package with no directories at all
   // directly under the opened container - every loose file becomes its own
   // module, and init prints the only-files line naming the whole-directory
   // alternative.
@@ -346,7 +346,7 @@ export default {
     }
   });
 
-  // Item 3: no src/ at all - init walks the project root alone.
+  // No src/ at all - init walks the project root alone.
   test("no src/: walks the project root and declares each top-level directory and .ts file, including a *.config.ts", () => {
     const { root, put } = scratchProject("archstrict-init-nosrc-");
     put("core/loader.ts", "export const loader = 1;\n");
@@ -366,7 +366,7 @@ export default {
     }
   });
 
-  // Item 4: src/ exists but holds no .ts at all (only non-source files) -
+  // src/ exists but holds no .ts at all (only non-source files) -
   // the default container is treated as absent, not as an empty module.
   test("src/ holds no .ts file: walks the project root with the other label", () => {
     const { root, put } = scratchProject("archstrict-init-nosrcts-");
@@ -380,8 +380,9 @@ export default {
     }
   });
 
-  // Item 5: naming rules 1 and 2 - the on-disk name, or (on a collision)
-  // the project-relative path.
+  // Naming: a group's on-disk name, unless it collides with another
+  // group's own on-disk name, in which case it takes its own
+  // project-relative path instead.
   test("naming: a root file and a same-named src/ file each take their own project-relative path once they collide", async () => {
     const { root, put } = scratchProject("archstrict-init-naming-");
     put("cli.ts", "export const rootCli = 1;\n");
@@ -422,7 +423,7 @@ export default {
     }
   });
 
-  // Item 6: hidden directories at every depth are excluded, so a directory
+  // Hidden directories at every depth are excluded, so a directory
   // whose only .ts sits in a hidden subdirectory is not declared at all.
   test("hidden directories at any depth give no module and no uncovered file", () => {
     const { root, put } = scratchProject("archstrict-init-hidden-");
@@ -437,12 +438,15 @@ export default {
       expect(config).not.toContain(".hid");
       expect(config).not.toContain(".gen");
       expect(config).toContain('{ name: "normal", glob: "src/normal/**" }');
+
+      const checkOut = execFileSync("node", [CLI_PATH, "check", "--json"], { cwd: root, encoding: "utf8" });
+      expect(JSON.parse(checkOut).violations).toEqual([]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });
 
-  // Item 7: an explicit container name matching a noise candidate is
+  // An explicit container name matching a noise candidate is
   // opened, not excluded; and the generated config never mentions dist/ or
   // classify.
   test("init test opens test/ and writes no test/** exclude entry; the config has no dist/** and no classify", () => {
@@ -462,7 +466,25 @@ export default {
     }
   });
 
-  // Item 8: zero candidates - init writes neither file and exits 1.
+  // A noise-dir candidate name ("test") must match a real on-disk entry
+  // exactly, not through a case-insensitive filesystem lookup: a directory
+  // spelled "Test" is real source (its file is analyzed and declared as a
+  // module below), never the noise candidate "test".
+  test("a Test/ directory is declared as a module, not excluded as the noise candidate 'test'", () => {
+    const { root, put } = scratchProject("archstrict-init-case-");
+    put("Test/x.ts", "export const x = 1;\n");
+    try {
+      const out = execFileSync("node", [CLI_PATH, "init"], { cwd: root, encoding: "utf8" });
+      expect(out).not.toContain("noise director");
+      const config = readFileSync(join(root, "archstrict.config.ts"), "utf8");
+      expect(config).not.toContain("test/**");
+      expect(config).toContain('{ name: "Test", glob: "Test/**" }');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // Zero candidates - init writes neither file and exits 1.
   test("zero candidates: init exits 1, and afterwards neither file exists", () => {
     const { root } = scratchProject("archstrict-init-zero-");
     try {
@@ -487,7 +509,47 @@ export default {
     }
   });
 
-  // Item 9: every argument-table error, with its exact message, and no
+  // Zero candidates, but only because every analyzed .ts file sits inside a
+  // noise directory: the do: names the fix that actually works
+  // ("archstrict init <dir>"), not the generic one above, which is wrong
+  // here (there IS a .ts file, it's just excluded).
+  test("zero candidates with a .ts file under a noise directory: do: names that directory", () => {
+    const { root, put } = scratchProject("archstrict-init-zero-noise-");
+    put("test/a.test.ts", "export const a = 1;\n");
+    try {
+      let errOut = "";
+      try {
+        execFileSync("node", [CLI_PATH, "init"], { cwd: root, encoding: "utf8" });
+      } catch (e) {
+        errOut = (e as { stderr: string }).stderr;
+      }
+      expect(errOut.trim().split("\n").at(-1)).toBe("do: archstrict init test");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // Two noise directories both hold analyzed .ts: the do: names the first
+  // in NOISE_DIR_CANDIDATES list order ("test" before "example"), not
+  // readdir order (this fixture writes "example" first on disk).
+  test("zero candidates with two noise directories holding .ts: do: names the first in list order", () => {
+    const { root, put } = scratchProject("archstrict-init-zero-noise2-");
+    put("example/a.ts", "export const a = 1;\n");
+    put("test/b.ts", "export const b = 1;\n");
+    try {
+      let errOut = "";
+      try {
+        execFileSync("node", [CLI_PATH, "init"], { cwd: root, encoding: "utf8" });
+      } catch (e) {
+        errOut = (e as { stderr: string }).stderr;
+      }
+      expect(errOut.trim().split("\n").at(-1)).toBe("do: archstrict init test");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // Every argument-table error, with its exact message, and no
   // glob character in any do: line this verb ever prints.
   describe("argument errors", () => {
     function withArgProject(fn: (root: string) => void): void {
