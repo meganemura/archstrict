@@ -65,7 +65,7 @@ project-relative path as its name: a root `cli.ts` and a container's own
 at any depth (`.git`, a tool's own state directory) - the same thing
 `tsc`'s own default `include` already skips; and a fixed list of common
 non-source directory names (`test`, `tests`, `example`, `examples`,
-`spike`, `build`, `coverage`, `fixtures`, `e2e`), each added only when a
+`spike`, `build`, `coverage`, `fixtures`, `e2e`, `tmp`), each added only when a
 real directory of that name exists on disk. A container named on the
 command line is never treated as noise, even when its own name is on that
 list. The two hidden-directory patterns are the same on every machine (a

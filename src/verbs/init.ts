@@ -60,7 +60,7 @@ function fail(message: string, doText: string): never {
 // absent: listAnalyzedFiles already drops every path with a dist segment,
 // so a "dist/**" exclude entry would change nothing real, only add a line
 // nobody ever needs to remove.
-const NOISE_DIR_CANDIDATES = ["test", "tests", "example", "examples", "spike", "build", "coverage", "fixtures", "e2e"];
+const NOISE_DIR_CANDIDATES = ["test", "tests", "example", "examples", "spike", "build", "coverage", "fixtures", "e2e", "tmp"];
 
 const OWN_FILES = ["archstrict.config.ts", "archstrict.types.ts"];
 

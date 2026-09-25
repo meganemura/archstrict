@@ -484,6 +484,21 @@ export default {
     }
   });
 
+  test("a top-level tmp/ holding .ts is excluded as noise, not declared as a module", () => {
+    const { root, put } = scratchProject("archstrict-init-tmp-");
+    put("src/app/index.ts", "export const app = 1;\n");
+    put("tmp/scratch.ts", "export const scratch = 1;\n");
+    try {
+      const out = execFileSync("node", [CLI_PATH, "init"], { cwd: root, encoding: "utf8" });
+      expect(out).toContain("excluded 1 noise directory found on disk: tmp/\n");
+      const config = readFileSync(join(root, "archstrict.config.ts"), "utf8");
+      expect(config).toContain('"tmp/**"');
+      expect(config).not.toContain('glob: "tmp/**"');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   // Zero candidates - init writes neither file and exits 1.
   test("zero candidates: init exits 1, and afterwards neither file exists", () => {
     const { root } = scratchProject("archstrict-init-zero-");
