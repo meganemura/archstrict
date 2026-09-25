@@ -24,7 +24,54 @@ function writeBypassProject(root: string): void {
   );
 }
 
+function writeSurfaceProject(unresolvedRoot: string): string {
+  const root = realpathSync(unresolvedRoot);
+  mkdirSync(join(root, "src", "a"), { recursive: true });
+  mkdirSync(join(root, "src", "b"), { recursive: true });
+  writeFileSync(join(root, "src", "b", "main.ts"), "export const value = 1;\n");
+  writeFileSync(join(root, "src", "b", "index.ts"), "export const value = 2;\n");
+  writeFileSync(
+    join(root, "src", "a", "clean.ts"),
+    "import { value } from \"../b/main.ts\";\nexport const x = value;\n",
+  );
+  writeFileSync(
+    join(root, "src", "a", "bad.ts"),
+    "import { value } from \"../b/index.ts\";\nexport const y = value;\n",
+  );
+  writeFileSync(
+    join(root, "archstrict.config.ts"),
+    `export default ${JSON.stringify({
+      declaredModules: [{ name: "a", glob: "src/a/**" }, { name: "b", glob: "src/b/**" }],
+      exclude: ["archstrict.config.ts"],
+      surface: "main.ts",
+      because: "test",
+    })};`,
+  );
+  return root;
+}
+
 describe("todo", () => {
+  test("a config's top-level surface freezes the same bypass check reports", async () => {
+    await withTempProject(async (unresolvedRoot) => {
+      const root = writeSurfaceProject(unresolvedRoot);
+
+      const before = await check(root);
+      expect(before.violations).toHaveLength(1);
+      expect(before.violations[0]!.rule).toBe("public-surface-bypass");
+      expect(before.violations[0]!.path).toBe(join(root, "src", "a", "bad.ts"));
+
+      const result = await todo(root);
+      expect(result.firstRun).toBe(true);
+      expect(result.added).toBe(1);
+      expect(result.pruned).toBe(0);
+
+      const after = await check(root);
+      expect(after.violations).toHaveLength(0);
+      expect(after.todo).toBe(1);
+    });
+  });
+
+
   test("first run freezes the current violation; check on the same input is then green", async () => {
     await withTempProject(async (root) => {
       writeBypassProject(root);

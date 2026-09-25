@@ -3,7 +3,7 @@
 import { existsSync, realpathSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import ts from "typescript";
-import { buildPreparedGraph, isEligibleSourceFile, prepareGraph } from "../module-graph.js";
+import { buildPreparedGraph, DEFAULT_SURFACE, isEligibleSourceFile, prepareGraph } from "../module-graph.js";
 import { fingerprintOf } from "../todo-store.js";
 import { applyTodo, formatText, loadConfig, runRules, type AnyViolation, type CheckResult } from "./check.js";
 
@@ -95,7 +95,7 @@ export async function simulate(projectRoot: string, changes: readonly Change[]):
   const afterConfig = proposedSource === undefined ? beforeConfig : await loadConfig(configPath, proposedSource);
   // loadConfig already guarantees declaredModules is a well-shaped array
   // (assertDeclaredModulesShapeValid) - see check.ts's own comment.
-  const options = { projectRoot, declaredModules: beforeConfig.declaredModules!, exclude: beforeConfig.exclude };
+  const options = { projectRoot, declaredModules: beforeConfig.declaredModules!, exclude: beforeConfig.exclude, surface: beforeConfig.surface };
   const prepared = prepareGraph(options);
   const baseline = buildPreparedGraph(prepared);
   const before = applyTodo(baseline, beforeConfig, runRules(baseline, beforeConfig));
@@ -114,10 +114,11 @@ export async function simulate(projectRoot: string, changes: readonly Change[]):
   // metadata again, without changes to the baseline's module objects.
   const simulatedPrepared = prepareGraph({
     projectRoot, declaredModules: afterConfig.declaredModules!, exclude: afterConfig.exclude,
+    surface: afterConfig.surface,
     fileListOverride: realFiles => [...new Set([
       ...realFiles.filter(file => !deleted.has(file)),
       ...[...added].filter(file => isEligibleSourceFile(file, projectRoot, afterConfig.exclude ?? [],
-        afterConfig.declaredModules!, prepared.surface)),
+        afterConfig.declaredModules!, afterConfig.surface ?? DEFAULT_SURFACE)),
     ])],
   });
   const graph = buildPreparedGraph(simulatedPrepared, {

@@ -590,6 +590,39 @@ describe("check", () => {
     });
   });
 
+  test("a config's top-level surface, not the built-in index.ts default, decides which import bypasses the public surface", async () => {
+    await withTempProject(async (unresolvedRoot) => {
+      const root = realpathSync(unresolvedRoot);
+      mkdirSync(join(root, "src", "a"), { recursive: true });
+      mkdirSync(join(root, "src", "b"), { recursive: true });
+      writeFileSync(join(root, "src", "b", "main.ts"), "export const value = 1;\n");
+      writeFileSync(join(root, "src", "b", "index.ts"), "export const value = 2;\n");
+      writeFileSync(
+        join(root, "src", "a", "clean.ts"),
+        "import { value } from \"../b/main.ts\";\nexport const x = value;\n",
+      );
+      writeFileSync(
+        join(root, "src", "a", "bad.ts"),
+        "import { value } from \"../b/index.ts\";\nexport const y = value;\n",
+      );
+      writeFileSync(
+        join(root, "archstrict.config.ts"),
+        `export default ${JSON.stringify({
+          declaredModules: [{ name: "a", glob: "src/a/**" }, { name: "b", glob: "src/b/**" }],
+          exclude: ["archstrict.config.ts"],
+          surface: "main.ts",
+          because: "test",
+        })};`,
+      );
+
+      const result = await check(root);
+      expect(result.violations).toHaveLength(1);
+      const violation = result.violations[0]!;
+      expect(violation.rule).toBe("public-surface-bypass");
+      expect(violation.path).toBe(join(root, "src", "a", "bad.ts"));
+    });
+  });
+
   test("a project with no violations prints no do: line at all - nothing to re-run, unlike every other do:", async () => {
     await withTempProject(async (root) => {
       mkdirSync(join(root, "src", "app"), { recursive: true });

@@ -103,7 +103,7 @@ export async function rules(projectRoot: string, path: string): Promise<RulesRes
     throw new Error(`rules ${path}: path is outside project root '${root}'`);
   }
   const config = await loadConfig(resolve(root, "archstrict.config.ts"));
-  const graph = buildModuleGraphForRules({ projectRoot: root, declaredModules: config.declaredModules!, exclude: config.exclude });
+  const graph = buildModuleGraphForRules({ projectRoot: root, declaredModules: config.declaredModules!, exclude: config.exclude, surface: config.surface });
   const exists = existsSync(resolvedPath);
   const excluded = (config.exclude ?? []).some((glob) => compileGlob(glob).test(rel));
   let module: string | undefined;

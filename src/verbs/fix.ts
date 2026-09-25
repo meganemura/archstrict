@@ -33,7 +33,7 @@ export async function fix(projectRoot: string, file?: string, dryRun = false): P
   const config = await loadConfig(resolve(projectRoot, "archstrict.config.ts"));
   // loadConfig already guarantees declaredModules is a well-shaped array
   // (assertDeclaredModulesShapeValid) - see check.ts's own comment.
-  const options = { projectRoot, declaredModules: config.declaredModules!, exclude: config.exclude };
+  const options = { projectRoot, declaredModules: config.declaredModules!, exclude: config.exclude, surface: config.surface };
   const warm = createWarmGraph();
   let graph = warm.refresh(options);
   const evaluate = () => applyTodo(graph, config, runRules(graph, config));

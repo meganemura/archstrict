@@ -59,7 +59,7 @@ function facts(graph: graphs.ModuleGraph, root: string) {
 }
 async function cold(root: string) {
   const config = await loadConfig(join(root, "archstrict.config.ts"));
-  const graph = graphs.buildModuleGraph({ projectRoot: root, declaredModules: config.declaredModules!, exclude: config.exclude });
+  const graph = graphs.buildModuleGraph({ projectRoot: root, declaredModules: config.declaredModules!, exclude: config.exclude, surface: config.surface });
   return { graph, result: applyTodo(graph, config, runRules(graph, config)) };
 }
 function delta(before: AnyViolation[], after: AnyViolation[]) {
@@ -110,6 +110,33 @@ test("removing the last deprecated edge resolves its excess and reports its now-
   const { result } = await compareCold(root, parent, [{ path: "src/a/index.ts", content: "export {};" }]);
   expect(result.resolved.some(v => v.rule === "deprecated-edge-increased")).toBe(true);
   expect(result.added.some(v => v.rule === "empty-rule-set" && v.evidence.includes("deprecated edge 'a -> b'"))).toBe(true);
+}));
+
+test("a config's top-level surface makes main.ts, not index.ts, the public surface for an added import", () => project(async (root, parent) => {
+  configure(root, { surface: "main.ts" });
+  put(root, "src/b/main.ts", "export const value = 3;");
+  put(root, "src/a/index.ts", 'import { value } from "../b/main.js"; export const clean = value;');
+  const clean = await check(root);
+  expect(clean.violations.some(v => v.rule === "public-surface-bypass")).toBe(false);
+  const { result } = await compareCold(root, parent, [{
+    path: "src/a/index.ts",
+    content: 'import { value } from "../b/main.js"; import { value as v2 } from "../b/index.js"; export const clean = value; export const bad = v2;',
+  }]);
+  expect(result.added.some(v => v.rule === "public-surface-bypass")).toBe(true);
+}));
+
+test("a proposed change to the top-level surface decides whether a newly added declaration file becomes a root", () => project(async (root, parent) => {
+  const configChange = {
+    path: "archstrict.config.ts",
+    content: `export default ${JSON.stringify({
+      declaredModules: ["a", "b"].map(name => ({ name, glob: `src/${name}/**` })),
+      exclude: ["*.ts", "src/excluded/**"], because: "Keep module boundaries explicit.",
+      surface: "api.d.ts",
+    })};`,
+  };
+  const changes = [configChange, { path: "src/b/api.d.ts", content: "export interface Shape { value: number }" }];
+  const { simulated } = await compareCold(root, parent, changes);
+  expect(simulated.program.getRootFileNames()).toContain(join(root, "src/b/api.d.ts"));
 }));
 
 test("deleting a target removes the real edge and its public-surface violation", () => project(async (root, parent) => {

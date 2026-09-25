@@ -442,6 +442,7 @@ export async function check(projectRoot: string, focusFile?: string, options: Ch
     projectRoot,
     declaredModules: config.declaredModules!,
     exclude: config.exclude,
+    surface: config.surface,
   });
   const evaluated = runRules(graph, config);
   evaluated.violations.push(...await checkConfigMeaning(config, options.prove ?? false, options.prover));

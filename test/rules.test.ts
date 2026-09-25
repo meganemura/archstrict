@@ -168,6 +168,34 @@ describe("rules", () => {
     expect(result.status).toBe(1);
     expect(JSON.parse(result.stdout).error).toContain("missing required field");
   }));
+
+  test("a config's top-level surface makes rules agree with check about which file is the public surface", async () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "archstrict-rules-surface-")));
+    try {
+      for (const file of ["src/a/clean.ts", "src/a/bad.ts", "src/b/main.ts", "src/b/index.ts"]) {
+        mkdirSync(dirname(join(root, file)), { recursive: true });
+      }
+      writeFileSync(join(root, "src/b/main.ts"), "export const value = 1;\n");
+      writeFileSync(join(root, "src/b/index.ts"), "export const value = 2;\n");
+      writeFileSync(join(root, "src/a/clean.ts"), "import { value } from \"../b/main.ts\";\nexport const x = value;\n");
+      writeFileSync(join(root, "src/a/bad.ts"), "import { value } from \"../b/index.ts\";\nexport const y = value;\n");
+      writeFileSync(join(root, "archstrict.config.ts"), `export default ${JSON.stringify({
+        declaredModules: [{ name: "a", glob: "src/a/**" }, { name: "b", glob: "src/b/**" }],
+        exclude: ["archstrict.config.ts"],
+        surface: "main.ts",
+        because: "test",
+      })};`);
+
+      const main = await rules(root, join(root, "src/b/main.ts"));
+      expect(main).toMatchObject({ exists: true, module: "b", isSurfaceFile: true });
+      const indexResult = await rules(root, join(root, "src/b/index.ts"));
+      expect(indexResult).toMatchObject({ exists: true, module: "b", isSurfaceFile: false });
+
+      const checked = await check(root);
+      expect(checked.violations).toHaveLength(1);
+      expect(checked.violations[0]).toMatchObject({ rule: "public-surface-bypass", path: join(root, "src/a/bad.ts") });
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
 });
 
 test("uncovered extraction preserves the original serialized report", () => {

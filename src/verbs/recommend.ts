@@ -38,7 +38,7 @@ export async function recommend(
   const plan = config ? undefined : freshRun(projectRoot, normalizeDirArg(dir, "recommend"), "recommend");
   const declaredModules = config ? config.declaredModules! : plan!.declaredModules;
   const graph = config
-    ? buildModuleGraph({ projectRoot, declaredModules: config.declaredModules!, exclude: config.exclude })
+    ? buildModuleGraph({ projectRoot, declaredModules: config.declaredModules!, exclude: config.exclude, surface: config.surface })
     : buildModuleGraph({ projectRoot, declaredModules: plan!.declaredModules, exclude: plan!.exclude, surface });
   // An empty directory has no files to import or be imported by within this graph.
   // It cannot form a real candidate pair, so reporting it would add noise rather than information.

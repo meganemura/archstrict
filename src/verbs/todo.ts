@@ -157,6 +157,7 @@ export async function todo(projectRoot: string): Promise<TodoResult> {
     projectRoot,
     declaredModules: config.declaredModules!,
     exclude: config.exclude,
+    surface: config.surface,
   });
   const result = runRules(graph, config);
   return freezeOrPrune(projectRoot, graph, config, result.violations);

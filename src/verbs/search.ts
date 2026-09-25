@@ -60,7 +60,7 @@ export async function search(projectRoot: string, query: string): Promise<Search
   const config = await loadConfig(resolve(projectRoot, "archstrict.config.ts"));
   // loadConfig already guarantees declaredModules is a well-shaped array
   // (assertDeclaredModulesShapeValid) - see check.ts's own comment.
-  const options = { projectRoot, declaredModules: config.declaredModules!, exclude: config.exclude };
+  const options = { projectRoot, declaredModules: config.declaredModules!, exclude: config.exclude, surface: config.surface };
   const prepared = prepareGraph(options);
   const graph = buildPreparedGraph(prepared);
   const checker = graph.checker;
