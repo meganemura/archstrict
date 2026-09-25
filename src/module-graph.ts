@@ -254,7 +254,12 @@ function moduleForFile(
 // trailing slash stripped - "packages/x/**" -> "packages/x". `surface` is
 // resolved relative to this, the same way v0's `surface` is relative to a
 // discovered module's own directory.
-function moduleGlobBaseDir(glob: string): string {
+// Exported: init's own fresh-run walk and a re-run's anchor computation
+// both need the same literal-prefix rule a declared module's glob already
+// follows, so a directory group's glob (e.g. "src/extra/**") and a
+// project's own existing declaredModules entries agree on what "the
+// module's own directory" means.
+export function moduleGlobBaseDir(glob: string): string {
   const firstWildcard = glob.search(/\*/);
   const prefix = firstWildcard === -1 ? glob : glob.slice(0, firstWildcard);
   return prefix.replace(/\/+$/, "");
@@ -497,7 +502,12 @@ function isEffectivelyTypeOnlyExport(node: ts.ExportDeclaration): boolean {
   return clause.elements.length > 0 && clause.elements.every((el) => el.isTypeOnly);
 }
 
-function listAllSourceFiles(
+// Exported (not just used internally by prepareGraph) so init's own fresh-
+// run walk sees exactly the file set check will analyze - a second,
+// hand-rolled scan here would drift from isEligibleSourceFile's own rules
+// (node_modules/dist segments, .d.ts, exclude globs) the moment either one
+// changed without the other.
+export function listAnalyzedFiles(
   projectRoot: string,
   excludeGlobs: readonly string[],
   declaredModules: readonly DeclaredModule[] = [],
@@ -683,7 +693,7 @@ export function prepareGraph(options: BuildOptions) {
 
   if (declaredModules !== undefined) {
     rootDir = projectRoot;
-    rootNames = listAllSourceFiles(projectRoot, exclude, declaredModules, surface);
+    rootNames = listAnalyzedFiles(projectRoot, exclude, declaredModules, surface);
     if (options.fileListOverride) rootNames = options.fileListOverride(rootNames);
     modules = buildDeclaredModules(projectRoot, declaredModules, rootNames, surface);
     resolveModuleForFile = (filePath) => moduleForDeclaredFile(filePath, projectRoot, declaredModules);

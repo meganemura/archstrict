@@ -50,24 +50,24 @@ describe("cli", () => {
       const out = execFileSync("node", [CLI_PATH, "init"], { cwd: root, encoding: "utf8" });
       expect(out).toContain("excluded 2 noise directories found on disk: test/, spike/");
       expect(readFileSync(join(root, "archstrict.config.ts"), "utf8")).toContain(
-        'exclude: ["*.ts","test/**","spike/**"]',
+        '"archstrict.config.ts",\n    "archstrict.types.ts",\n    ".*/**",\n    "**/.*/**",\n    "test/**",\n    "spike/**",',
       );
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });
 
-  test("init <modulesGlob> actually threads the argument through - a real layout other than src/*", () => {
+  test("init <dir> actually threads the argument through - a real layout other than src/", () => {
     const root = mkdtempSync(join(tmpdir(), "archstrict-cli-init-glob-"));
     try {
       mkdirSync(join(root, "packages", "core"), { recursive: true });
       writeFileSync(join(root, "packages", "core", "module.ts"), "export const core = 1;\n");
 
-      // The default glob (src/*) doesn't exist here at all - if the CLI
-      // silently dropped the argument and fell back to it, this would
-      // throw exactly the "does not exist" config error cli.test.ts's own
-      // "init on a project with no src/" test already covers.
-      const out = execFileSync("node", [CLI_PATH, "init", "packages/*"], { cwd: root, encoding: "utf8" });
+      // The default container (src/) doesn't exist here at all - if the CLI
+      // silently dropped the argument and fell back to it, this would open
+      // no container and declare "packages" as one top-level directory
+      // module instead of opening it and declaring its own child "core".
+      const out = execFileSync("node", [CLI_PATH, "init", "packages"], { cwd: root, encoding: "utf8" });
       expect(out).toContain("do: archstrict check");
       expect(readFileSync(join(root, "archstrict.types.ts"), "utf8")).toContain('"core"');
       expect(readFileSync(join(root, "archstrict.config.ts"), "utf8")).toContain("packages/core/**");
@@ -143,7 +143,7 @@ describe("cli", () => {
     }
   });
 
-  test("init on a project with no src/ prints a clean message, not a raw stack trace", () => {
+  test("init on a project with no .ts file anywhere prints a clean message, not a raw stack trace", () => {
     const root = mkdtempSync(join(tmpdir(), "archstrict-cli-init-error-"));
     try {
       let errOut = "";
@@ -157,11 +157,11 @@ describe("cli", () => {
       }
 
       expect(exitCode).toBe(1);
-      expect(errOut).toContain("does not exist");
+      expect(errOut).toContain("found no .ts file to declare as a module");
       expect(errOut).not.toMatch(/^\s+at /m);
       const lines = errOut.trim().split("\n");
       expect(lines).toHaveLength(2);
-      expect(lines[1]).toBe("do: create src (with at least one .ts file) and run archstrict init src/*");
+      expect(lines[1]).toBe("do: add a .ts source file outside those directories, then run archstrict init");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

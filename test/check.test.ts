@@ -52,7 +52,10 @@ describe("loadConfig", () => {
       await init(root);
 
       const config = await loadConfig(join(root, "archstrict.config.ts"));
-      expect(config.declaredModules).toEqual([{ name: "app", glob: "src/app/**", surface: "index.ts" }]);
+      // A directory entry carries no per-entry surface of its own - the
+      // top-level default applies (or a real package.json exports map,
+      // when the directory has one).
+      expect(config.declaredModules).toEqual([{ name: "app", glob: "src/app/**" }]);
       expect(config.schemaVersion).toBe(1);
       expect(config.configPath).toBe(join(root, "archstrict.config.ts"));
       expect(config.because.length).toBeGreaterThan(0);
@@ -307,10 +310,10 @@ describe("check", () => {
     await withTempProject(async (root) => {
       mkdirSync(join(root, "lib", "widgets"), { recursive: true });
       writeFileSync(join(root, "lib", "widgets", "module.ts"), "export const widgets = 1;\n");
-      await init(root, "lib/*");
+      await init(root, "lib");
 
       const result = await check(root);
-      expect(result.modules).toBe(1); // found lib/widgets, not src/* (which doesn't exist here)
+      expect(result.modules).toBe(1); // found lib/widgets, not src/ (which doesn't exist here)
     });
   });
 

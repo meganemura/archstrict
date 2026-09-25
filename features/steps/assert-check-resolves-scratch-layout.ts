@@ -29,18 +29,19 @@ export default defineStep({
     unresolvedSpecifiers: [runArchstrictCheck, "unresolvedSpecifiers"],
   },
   rationale:
-    "Compares check's report against counts the setup step took directly off the filesystem, not against hardcoded numbers - this stays correct across a future nukadoko release with a different file count.",
+    "Compares check's report against counts the setup step took directly off the filesystem, not against hardcoded numbers - this stays correct across a future nukadoko release with a different file count. init declares one module per module directory AND one per loose root .ts file, so the module count is moduleDirs.length + rootFileCount, and every one of those files is covered - outsideFiles is 0, not rootFileCount, unlike before init's own walk covered the loose files too.",
   run({}, args) {
-    if (args.modules !== args.moduleDirs.length) {
-      throw new Error(`expected ${args.moduleDirs.length} modules, check reported ${args.modules}`);
+    const expectedModules = args.moduleDirs.length + args.rootFileCount;
+    if (args.modules !== expectedModules) {
+      throw new Error(`expected ${expectedModules} modules (${args.moduleDirs.length} directories + ${args.rootFileCount} loose root files), check reported ${args.modules}`);
     }
     if (args.modulesWithoutSurface !== args.modulesWithoutIndexTs) {
       throw new Error(
         `expected ${args.modulesWithoutIndexTs} modules without a surface (no index.ts), check reported ${args.modulesWithoutSurface}`,
       );
     }
-    if (args.outsideFiles !== args.rootFileCount) {
-      throw new Error(`expected ${args.rootFileCount} files not covered by any declared module, check reported ${args.outsideFiles}`);
+    if (args.outsideFiles !== 0) {
+      throw new Error(`expected 0 files not covered by any declared module (init's own walk covers every analyzed file by construction), check reported ${args.outsideFiles}`);
     }
     if (args.unresolvedSpecifiers !== args.expectedUnresolvedSpecifiers) {
       throw new Error(

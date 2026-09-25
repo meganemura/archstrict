@@ -10,7 +10,7 @@ Installed package: `node_modules/archstrict/skills/archstrict/SKILL.md` (this fi
 
 ## Commands
 
-- `archstrict init [modulesGlob]` — write `archstrict.generated.ts` and, if it is missing, `archstrict.config.ts` (`schemaVersion: 1`)
+- `archstrict init [dir]` — declare one module per top-level directory holding `.ts` and one per loose top-level `.ts` file, so the first `check` covers every file by construction; write `archstrict.types.ts` and, if missing, `archstrict.config.ts` (`schemaVersion: 1`)
 - `archstrict check [file] [--json]` — report violations for the whole project; a file argument only scopes the report
 - `archstrict todo [--json]` — freeze current freezable violations on the first run, then only prune
 

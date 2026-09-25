@@ -26,26 +26,29 @@ function reportFailure(error: unknown, verb: string, asJson: boolean): void {
   }
 }
 
-async function runInit(args: string[]): Promise<number> {
-  const [modulesGlob] = args;
-  const result = await init(process.cwd(), modulesGlob);
-  if (result.configWritten) {
-    process.stdout.write(`wrote ${result.configPath}\n`);
-    process.stdout.write(`wrote ${result.generatedPath}\n`);
-    if (result.seededExcludeDirs.length > 0) {
-      const label = result.seededExcludeDirs.length === 1 ? "directory" : "directories";
-      const names = result.seededExcludeDirs.map((name) => `${name}/`).join(", ");
-      process.stdout.write(`excluded ${result.seededExcludeDirs.length} noise ${label} found on disk: ${names}\n`);
-    }
-  } else {
-    // A re-run never touches the config - the union it just wrote came
-    // from reading that untouched file's own declaredModules, not from a
-    // fresh discovery walk, so this line says where the count came from.
-    process.stdout.write(`${result.configPath} already exists, left untouched\n`);
-    process.stdout.write(
-      `wrote ${result.generatedPath}: ${result.moduleNames.length} module names, read from archstrict.config.ts\n`,
+// `--json` is out of scope for init (a later change adds it): every
+// argument here is a directory, so any flag-looking argument ("-" prefix)
+// is rejected outright rather than silently accepted as a directory name.
+// More than one positional means the shell expanded an unquoted glob
+// (`src/*` with more than one match) - archstrict cannot tell that apart
+// from a person genuinely typing two directory names, so both read the
+// same way: init takes exactly one.
+function parseInitArgv(argv: string[]): string | undefined {
+  for (const arg of argv) {
+    if (arg.startsWith("-")) throw new ReportError(`unknown option '${arg}'`, "archstrict init");
+  }
+  if (argv.length > 1) {
+    throw new ReportError(
+      `init takes one directory; got ${argv.length} arguments (the shell expands an unquoted * or src/*)`,
+      "archstrict init",
     );
   }
+  return argv[0];
+}
+
+async function runInit(args: string[]): Promise<number> {
+  const result = await init(process.cwd(), parseInitArgv(args));
+  for (const line of result.messageLines) process.stdout.write(`${line}\n`);
   process.stdout.write(`do: archstrict check\n`);
   return 0;
 }
