@@ -26,28 +26,59 @@ function reportFailure(error: unknown, verb: string, asJson: boolean): void {
   }
 }
 
-// `--json` is out of scope for init (a later change adds it): every
-// argument here is a directory, so any flag-looking argument ("-" prefix)
-// is rejected outright rather than silently accepted as a directory name.
-// More than one positional means the shell expanded an unquoted glob
-// (`src/*` with more than one match) - archstrict cannot tell that apart
-// from a person genuinely typing two directory names, so both read the
-// same way: init takes exactly one.
+// `--json` is a flag, never read as a directory, so it's stripped before
+// the positional rules apply. Every other argument is a directory, so any
+// other flag-looking argument ("-" prefix) is rejected outright rather
+// than silently accepted as a directory name. More than one positional
+// means the shell expanded an unquoted glob (`src/*` with more than one
+// match) - archstrict cannot tell that apart from a person genuinely
+// typing two directory names, so both read the same way: init takes
+// exactly one.
 function parseInitArgv(argv: string[]): string | undefined {
-  for (const arg of argv) {
+  const positional = argv.filter((arg) => arg !== "--json");
+  for (const arg of positional) {
     if (arg.startsWith("-")) throw new ReportError(`unknown option '${arg}'`, "archstrict init");
   }
-  if (argv.length > 1) {
+  if (positional.length > 1) {
     throw new ReportError(
-      `init takes one directory; got ${argv.length} arguments (the shell expands an unquoted * or src/*)`,
+      `init takes one directory; got ${positional.length} arguments (the shell expands an unquoted * or src/*)`,
       "archstrict init",
     );
   }
-  return argv[0];
+  return positional[0];
 }
 
 async function runInit(args: string[]): Promise<number> {
+  const asJson = args.includes("--json");
   const result = await init(process.cwd(), parseInitArgv(args));
+  if (asJson) {
+    // Field names and shapes follow check's and todo's own --json
+    // convention: one object, keys in the same order this prints them.
+    // `typesPath` (not `generatedPath`, InitResult's own internal name)
+    // matches archstrict.types.ts's own file name, which is what an agent
+    // reading this JSON actually needs to find.
+    process.stdout.write(
+      `${JSON.stringify({
+        configPath: result.configPath,
+        typesPath: result.generatedPath,
+        configWritten: result.configWritten,
+        opened: result.opened === "" ? null : result.opened,
+        moduleNames: result.moduleNames,
+        hiddenDirs: result.hiddenDirs,
+        noiseDirs: result.noiseDirs,
+        uncovered: result.uncovered.map((g) => ({
+          path: g.rel,
+          kind: g.kind,
+          files: g.fileCount,
+          declare: g.entry,
+          exclude: g.excludeGlob,
+        })),
+        notes: result.notes,
+        do: result.doText,
+      })}\n`,
+    );
+    return 0;
+  }
   for (const line of result.messageLines) process.stdout.write(`${line}\n`);
   process.stdout.write(`do: ${result.doText}\n`);
   return 0;
@@ -102,9 +133,10 @@ function runAgents(args: string[]): number {
 async function runRecommend(args: string[]): Promise<number> {
   const paths = args.filter(arg => arg !== "--json");
   if (paths.length > 1 || paths.some(arg => arg.startsWith("-"))) {
-    throw new Error("usage: archstrict recommend [modulesGlob] [--json]");
+    throw new Error("usage: archstrict recommend [dir] [--json]");
   }
-  // The glob controls initial discovery; a declared config supplies its own scope.
+  // Without a config, the directory controls init's own in-memory walk; a
+  // declared config supplies its own scope regardless.
   const result = await recommend(process.cwd(), paths[0]);
   process.stdout.write(args.includes("--json") ? JSON.stringify(result, null, 2) + "\n" : formatRecommendText(result));
   return 0;

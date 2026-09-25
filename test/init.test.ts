@@ -1088,4 +1088,94 @@ export default {
       ).not.toThrow();
     });
   });
+
+  // init --json: the same three shapes check and todo's own --json already
+  // follow (a result, a re-run's own result, or { error, do }), so an agent
+  // parsing one of those three verbs' output already knows this shape.
+  describe("init --json", () => {
+    test("fresh run: one JSON object, keys and values exact", () => {
+      const { root, put } = scratchProject("archstrict-init-json-fresh-");
+      put("src/build/index.ts", "export const build = 1;\n");
+      put("src/runtime/index.ts", "export const runtime = 1;\n");
+      put("src/alpha.ts", "export const alpha = 1;\n");
+      put("src/beta.ts", "export const beta = 1;\n");
+      put("src/gamma.ts", "export const gamma = 1;\n");
+      put("src/delta.ts", "export const delta = 1;\n");
+      put("test/some.test.ts", "export const t = 1;\n");
+      put("example/notes.ts", "export const e = 1;\n");
+      put("spike/notes.ts", "export const s = 1;\n");
+      put(".scratch/x.ts", "export const hidden = 1;\n");
+      try {
+        const out = execFileSync("node", [CLI_PATH, "init", "--json"], { cwd: root, encoding: "utf8" });
+        expect(JSON.parse(out)).toEqual({
+          configPath: join(root, "archstrict.config.ts"),
+          typesPath: join(root, "archstrict.types.ts"),
+          configWritten: true,
+          opened: "src",
+          moduleNames: ["alpha.ts", "beta.ts", "build", "delta.ts", "gamma.ts", "runtime"],
+          hiddenDirs: [".scratch"],
+          noiseDirs: ["test", "example", "spike"],
+          uncovered: [],
+          notes: [],
+          do: "archstrict check",
+        });
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    test("re-run: configWritten false, opened null, hiddenDirs and noiseDirs empty, uncovered lists every group", async () => {
+      await withTempProject(["app"], async (rawRoot) => {
+        const root = realpathSync(rawRoot);
+        await init(root);
+        writeFileSync(join(root, "src", "sqlite.ts"), "export const sqlite = 1;\n");
+        mkdirSync(join(root, "src", "extra"), { recursive: true });
+        writeFileSync(join(root, "src", "extra", "a.ts"), "export const a = 1;\n");
+        mkdirSync(join(root, "tools"), { recursive: true });
+        writeFileSync(join(root, "tools", "gen.ts"), "export const gen = 1;\n");
+
+        const out = execFileSync("node", [CLI_PATH, "init", "--json"], { cwd: root, encoding: "utf8" });
+        expect(JSON.parse(out)).toEqual({
+          configPath: join(root, "archstrict.config.ts"),
+          typesPath: join(root, "archstrict.types.ts"),
+          configWritten: false,
+          opened: null,
+          moduleNames: ["app"],
+          hiddenDirs: [],
+          noiseDirs: [],
+          uncovered: [
+            { path: "src/extra", kind: "dir", files: 1, declare: { name: "extra", glob: "src/extra/**" }, exclude: "src/extra/**" },
+            { path: "src/sqlite.ts", kind: "file", files: 1, declare: { name: "sqlite.ts", glob: "src/sqlite.ts", surface: "sqlite.ts" }, exclude: "src/sqlite.ts" },
+            { path: "tools", kind: "dir", files: 1, declare: { name: "tools", glob: "tools/**" }, exclude: "tools/**" },
+          ],
+          notes: [],
+          do: "add each declare line above to declaredModules in archstrict.config.ts, or its exclude line to exclude if that path is not module content; then run archstrict init",
+        });
+      });
+    });
+
+    test("error: { error, do }, exit 1, nothing written", () => {
+      const { root } = scratchProject("archstrict-init-json-error-");
+      try {
+        let status = 0;
+        let out = "";
+        try {
+          execFileSync("node", [CLI_PATH, "init", "--json"], { cwd: root, encoding: "utf8" });
+        } catch (e) {
+          const err = e as { status: number; stdout: string };
+          status = err.status;
+          out = err.stdout;
+        }
+        expect(status).toBe(1);
+        expect(JSON.parse(out)).toEqual({
+          error: `found no .ts file to declare as a module in ${root} (init skips node_modules/, dist/, hidden directories, and noise directories)`,
+          do: "add a .ts source file outside those directories, then run archstrict init",
+        });
+        expect(() => readFileSync(join(root, "archstrict.config.ts"), "utf8")).toThrow();
+        expect(() => readFileSync(join(root, "archstrict.types.ts"), "utf8")).toThrow();
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+  });
 });

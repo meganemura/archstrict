@@ -13,6 +13,7 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { init } from "../src/verbs/init.js";
+import { recommend } from "../src/verbs/recommend.js";
 import { loadConfig } from "../src/verbs/check.js";
 import {
   listAnalyzedFiles,
@@ -295,6 +296,30 @@ describe("init (property)", () => {
         assert.equal(new Set(pasted.map((e) => e.name)).size, pasted.length, "pasted entries have a duplicate name");
         const pastedFiles = listAnalyzedFiles(root, rerunConfig.exclude ?? [], pasted, rerunConfig.surface ?? "index.ts");
         assert.equal(pastedFiles.filter((f) => moduleForDeclaredFile(f, root, pasted) === undefined).length, 0);
+      });
+    });
+  });
+
+  // recommend's own no-config path runs this same walk in memory - its
+  // proposedClassify must name the exact glob init itself would write for
+  // that module, not a second, independently-shaped guess, on any tree
+  // this generator can draw (including the "none" and "flat" shapes).
+  test("P8 recommend/init glob agreement: recommend's proposedClassify glob for a module equals init's own written glob for it", async () => {
+    await hegel.testAsync(async (tc) => {
+      const tree = tc.draw(treeGenerator);
+      await withTree(tree, async (root) => {
+        const recommended = await recommend(root);
+        await init(root);
+        const config = await loadConfig(join(root, "archstrict.config.ts"));
+        const declaredModules = config.declaredModules!;
+        assert.deepEqual(
+          new Set(recommended.proposedClassify.map((c) => c.tags[0]!.slice("role:".length))),
+          new Set(declaredModules.map((dm) => dm.name)),
+        );
+        for (const dm of declaredModules) {
+          const proposed = recommended.proposedClassify.find((c) => c.tags[0] === `role:${dm.name}`);
+          assert.equal(proposed?.glob, dm.glob, `glob mismatch for module ${dm.name}`);
+        }
       });
     });
   });

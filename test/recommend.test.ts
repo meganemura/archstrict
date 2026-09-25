@@ -91,6 +91,73 @@ test("CLI JSON and text preserve every file and directory, including an existing
   expect(snapshot(root)).toEqual(before);
 }));
 
+// Without a config, recommend now runs init's own walk in memory instead
+// of a v0 single-level "src/*" discovery - these three fixtures are the
+// shapes that walk treats differently from v0 (loose files directly in
+// the container become their own single-file modules, a no-src tree
+// declares from the project root, and a container holding only files
+// declares one module per file, none per container).
+test("no config, a src/ layout with loose files: each loose file is its own module, exact result", async () => fixture(async (root, put) => {
+  put("src/build/index.ts", "export const build = 1;\n");
+  put("src/one.ts", 'import "./build/index.js";\n');
+  put("src/two.ts", "export const two = 1;\n");
+  const result = await recommend(root);
+  expect(result).toEqual({
+    modules: 3, candidates: 2,
+    pairs: [
+      { a: "build", b: "two.ts", filesA: 1, filesB: 1 },
+      { a: "one.ts", b: "two.ts", filesA: 1, filesB: 1 },
+    ],
+    proposedClassify: [
+      { glob: "src/build/**", tags: ["role:build"] },
+      { glob: "src/one.ts", tags: ["role:one.ts"] },
+      { glob: "src/two.ts", tags: ["role:two.ts"] },
+    ],
+    proposedAllowDeny: [
+      { source: "role:build", targetNamespace: "role", deny: ["two.ts"], because },
+      { source: "role:two.ts", targetNamespace: "role", deny: ["build"], because },
+      { source: "role:one.ts", targetNamespace: "role", deny: ["two.ts"], because },
+      { source: "role:two.ts", targetNamespace: "role", deny: ["one.ts"], because },
+    ],
+  });
+}));
+
+test("no config, a no-src layout: modules declare from the project root", async () => fixture(async (root, put) => {
+  put("cli.ts", "export const cli = 1;\n");
+  put("core/index.ts", "export const core = 1;\n");
+  const result = await recommend(root);
+  expect(result).toEqual({
+    modules: 2, candidates: 1,
+    pairs: [{ a: "cli.ts", b: "core", filesA: 1, filesB: 1 }],
+    proposedClassify: [
+      { glob: "cli.ts", tags: ["role:cli.ts"] },
+      { glob: "core/**", tags: ["role:core"] },
+    ],
+    proposedAllowDeny: [
+      { source: "role:cli.ts", targetNamespace: "role", deny: ["core"], because },
+      { source: "role:core", targetNamespace: "role", deny: ["cli.ts"], because },
+    ],
+  });
+}));
+
+test("no config, a flat src/ holding only files: one module per file, none for the container", async () => fixture(async (root, put) => {
+  put("src/one.ts", "export const one = 1;\n");
+  put("src/two.ts", "export const two = 1;\n");
+  const result = await recommend(root);
+  expect(result).toEqual({
+    modules: 2, candidates: 1,
+    pairs: [{ a: "one.ts", b: "two.ts", filesA: 1, filesB: 1 }],
+    proposedClassify: [
+      { glob: "src/one.ts", tags: ["role:one.ts"] },
+      { glob: "src/two.ts", tags: ["role:two.ts"] },
+    ],
+    proposedAllowDeny: [
+      { source: "role:one.ts", targetNamespace: "role", deny: ["two.ts"], because },
+      { source: "role:two.ts", targetNamespace: "role", deny: ["one.ts"], because },
+    ],
+  });
+}));
+
 test("custom glob proposals use the actual directory and zero candidates succeed", async () => fixture(async (root, put) => {
   put("packages/one/index.ts", "export const x = 1;");
   const output = cli(root, "packages/*", "--json");
@@ -107,10 +174,20 @@ test("CLI rejects invalid arguments and discovery errors with exit one", () => f
   }
 }));
 
+test("an empty tree gives no .ts file to declare, same as init", () => fixture((root) => {
+  // mkdirSync(root, "src") in fixture() leaves src/ present but empty, and
+  // no other .ts file exists anywhere - the same zero-candidate case
+  // init itself refuses, since recommend's no-config path now runs
+  // init's own walk in memory.
+  return expect(recommend(root)).rejects.toThrow(/found no \.ts file to declare as a module/);
+}));
+
 test("generated real import graphs partition all unordered pairs into connected or candidate pairs", async () => {
   await hegel.testAsync(tc => fixture(async (root, put) => {
     // Bound the matrix to keep repeated real compiler builds within the test budget.
-    const n = tc.draw(gen.integers({ minValue: 0, maxValue: 8 }));
+    // n starts at 1: n = 0 leaves no .ts file anywhere, the zero-candidate
+    // case covered by its own test above, not this property.
+    const n = tc.draw(gen.integers({ minValue: 1, maxValue: 8 }));
     const connected = Array.from({ length: n }, () => tc.draw(gen.arrays(gen.booleans(), { minSize: n, maxSize: n })));
     for (let i = 0; i < n; i++) {
       put(`src/m${i}/index.ts`, connected[i]!.map((yes, j) => yes ? `import "../m${j}/index.js";` : "").join("\n"));
@@ -132,8 +209,11 @@ test("declared boundaries replace discovery and preserve their exact globs", asy
   put("packages/bar/src/index.ts", "export const bar = 1;");
   put("packages/foo/src/ignored.ts", 'import "../../bar/src/index.js";');
   const discovered = await recommend(root);
-  expect(discovered.modules).toBe(1);
-  expect(discovered.pairs).toEqual([]);
+  // The new no-config walk declares a module per top-level entry, not
+  // just per src/ child: src/flat and the top-level packages/ directory.
+  // ignored.ts's own import stays inside the packages/ group either way.
+  expect(discovered.modules).toBe(2);
+  expect(discovered.pairs).toEqual([{ a: "flat", b: "packages", filesA: 1, filesB: 3 }]);
   put("archstrict.config.ts", `export default {
     declaredModules: [{ name: "foo", glob: "packages/foo/src/**" }, { name: "bar", glob: "packages/bar/src/**" }],
     exclude: ["**/ignored.ts"],

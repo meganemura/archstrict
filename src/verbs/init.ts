@@ -41,7 +41,22 @@ export type InitResult = {
   configPath: string;
   generatedPath: string;
   configWritten: boolean; // false when archstrict.config.ts already existed and was left alone
+  // "" on a re-run (nothing was opened) and on a fresh root-only run (no
+  // src/, or src/ holds no analyzed file) - the same "no container" value
+  // freshRun itself uses; --json turns this into `null` at the cli.ts
+  // boundary, since JSON has no third string it could reuse for that case.
+  opened: string;
   moduleNames: string[];
+  hiddenDirs: string[];
+  noiseDirs: string[];
+  // Only ever non-empty on a re-run: a fresh run's own groups always cover
+  // every analyzed file, by construction (see the module header).
+  uncovered: NamedCandidateGroup[];
+  // The only-files line (fresh run) or the directory-argument-ignored line
+  // (re-run), when one of them applies - the same sentence messageLines
+  // already carries, split out so --json can report it without re-parsing
+  // stdout text.
+  notes: string[];
   // Every stdout line this run produced, in order, except the final
   // "do:" line - callers append `do: ${doText}` themselves, since a
   // re-run's own uncovered-file listing changes what that line says
@@ -131,7 +146,7 @@ function findNoiseDirs(projectRoot: string, keptOpen: string): string[] {
 // section below), but a syntactically invalid one is still an error, not
 // silently ignored. Returns "" for "no container" (the project root
 // alone), and undefined when no argument was given at all.
-function normalizeDirArg(raw: string | undefined): string | undefined {
+export function normalizeDirArg(raw: string | undefined): string | undefined {
   if (raw === undefined) return undefined;
   if (raw === "." || raw === "./" || raw === "*") return "";
   const stripped = raw.replace(/\/\*$/, "").replace(/\/+$/, "");
@@ -332,7 +347,11 @@ export type Config = {
 // group it under the opened container (if any) plus the project root, and
 // name every group - module-candidates.ts owns the grouping/naming rule
 // itself, this only decides which files and anchors it sees.
-function freshRun(
+// Exported so recommend's own no-config path can build a graph from the
+// same groups and globs init would write, without writing any file - the
+// v0 path it replaced (a single-level `modulesGlob` such as "src/*") could
+// disagree with init about which files exist and how they group.
+export function freshRun(
   projectRoot: string,
   dir: string | undefined,
 ): {
@@ -342,6 +361,7 @@ function freshRun(
   exclude: string[];
   containerGroups: NamedCandidateGroup[];
   topGroups: NamedCandidateGroup[];
+  declaredModules: DeclaredModule[];
 } {
   const explicit = dir !== undefined;
   const want = dir ?? "src";
@@ -390,13 +410,16 @@ function freshRun(
     );
   }
 
+  const containerGroups = groups.filter((g) => g.anchor !== "");
+  const topGroups = groups.filter((g) => g.anchor === "");
   return {
     opened,
     rootLabel,
     noiseDirs,
     exclude,
-    containerGroups: groups.filter((g) => g.anchor !== ""),
-    topGroups: groups.filter((g) => g.anchor === ""),
+    containerGroups,
+    topGroups,
+    declaredModules: [...containerGroups, ...topGroups].map((g) => g.entry),
   };
 }
 
@@ -432,8 +455,11 @@ export async function init(projectRoot: string, rawDir?: string): Promise<InitRe
     // nowhere to open a container into anyway, since the config on disk
     // already says what's declared.
     messageLines.push(`${configPath} already exists, left untouched`);
+    const notes: string[] = [];
     if (dir !== undefined) {
-      messageLines.push(`the directory argument applies only when init writes a new archstrict.config.ts`);
+      const note = `the directory argument applies only when init writes a new archstrict.config.ts`;
+      messageLines.push(note);
+      notes.push(note);
     }
     const config = await loadConfig(configPath, undefined, DO_INIT);
     // `?? []` is for the type checker, not runtime defense: loadConfig
@@ -468,7 +494,19 @@ export async function init(projectRoot: string, rawDir?: string): Promise<InitRe
       doText =
         "add each declare line above to declaredModules in archstrict.config.ts, or its exclude line to exclude if that path is not module content; then run archstrict init";
     }
-    return { configPath, generatedPath, configWritten, moduleNames, messageLines, doText };
+    return {
+      configPath,
+      generatedPath,
+      configWritten,
+      opened: "",
+      moduleNames,
+      hiddenDirs: [],
+      noiseDirs: [],
+      uncovered: groups,
+      notes,
+      messageLines,
+      doText,
+    };
   }
 
   const { opened, rootLabel, noiseDirs, exclude, containerGroups, topGroups } = freshRun(projectRoot, dir);
@@ -497,11 +535,24 @@ export async function init(projectRoot: string, rawDir?: string): Promise<InitRe
       `excluded ${plural(noiseDirs.length, "noise directory", "noise directories")} found on disk: ${noiseDirs.map((n) => `${n}/`).join(", ")}`,
     );
   }
+  const notes: string[] = [];
   if (opened !== "" && containerGroups.length > 0 && containerGroups.every((g) => g.kind === "file")) {
-    messageLines.push(
-      `${opened}/ holds only files, so each file is its own module. To check ${opened}/ as one module instead (then no import between two of its files is checked): delete archstrict.config.ts, then run archstrict init .`,
-    );
+    const note = `${opened}/ holds only files, so each file is its own module. To check ${opened}/ as one module instead (then no import between two of its files is checked): delete archstrict.config.ts, then run archstrict init .`;
+    messageLines.push(note);
+    notes.push(note);
   }
 
-  return { configPath, generatedPath, configWritten, moduleNames, messageLines, doText: DO_CHECK };
+  return {
+    configPath,
+    generatedPath,
+    configWritten,
+    opened,
+    moduleNames,
+    hiddenDirs,
+    noiseDirs,
+    uncovered: [], // a fresh run's own groups always cover every analyzed file, by construction
+    notes,
+    messageLines,
+    doText: DO_CHECK,
+  };
 }

@@ -4,6 +4,12 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { loadConfig } from "./check.js";
 import { buildModuleGraph, DEFAULT_SURFACE } from "../module-graph.js";
+// Without a config, recommend previews init's own walk in memory (same
+// argument rules, same groups and globs) instead of running its own
+// single-level "src/*" discovery - the two could disagree about which
+// files exist and how they group, and no user-facing command should take
+// a modules glob once init itself no longer does.
+import { freshRun, normalizeDirArg } from "./init.js";
 
 export type RecommendResult = {
   modules: number;
@@ -16,12 +22,18 @@ export type RecommendResult = {
 // Report every eligible pair, even when the count is large; a hidden cap would conceal choices the reader should make.
 // Beyond empty directories, pruning heuristics would substitute the tool's priorities for the reader's decision about which boundaries matter.
 // This verb proposes observed boundaries without imposing or judging them, so it offers no --apply, --write, or --prove flag.
-export async function recommend(projectRoot: string, modulesGlob = "src/*", surface = DEFAULT_SURFACE): Promise<RecommendResult> {
+export async function recommend(projectRoot: string, dir?: string, surface = DEFAULT_SURFACE): Promise<RecommendResult> {
   const configPath = resolve(projectRoot, "archstrict.config.ts");
   const config = existsSync(configPath) ? await loadConfig(configPath) : undefined;
+  // A config supplies its own scope regardless of `dir` - unchanged from
+  // before. Without one, `dir` means init's own directory argument (its
+  // same normalization and errors), not a glob: recommend walks in memory
+  // exactly what init would write.
+  const plan = config ? undefined : freshRun(projectRoot, normalizeDirArg(dir));
+  const declaredModules = config ? config.declaredModules! : plan!.declaredModules;
   const graph = config
     ? buildModuleGraph({ projectRoot, declaredModules: config.declaredModules, exclude: config.exclude })
-    : buildModuleGraph({ projectRoot, modulesGlob, surface });
+    : buildModuleGraph({ projectRoot, declaredModules: plan!.declaredModules, exclude: plan!.exclude, surface });
   // An empty directory has no files to import or be imported by within this graph.
   // It cannot form a real candidate pair, so reporting it would add noise rather than information.
   const modules = [...graph.modules.values()].filter(module => module.files.length > 0).sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
@@ -46,7 +58,7 @@ export async function recommend(projectRoot: string, modulesGlob = "src/*", surf
     modules: modules.length,
     candidates: pairs.length,
     pairs,
-    proposedClassify: modules.map(module => ({ glob: config ? config.declaredModules!.find(d => d.name === module.name)!.glob : `${modulesGlob.slice(0, -1)}${module.name}/**`, tags: [`role:${module.name}`] })),
+    proposedClassify: modules.map(module => ({ glob: declaredModules.find(d => d.name === module.name)!.glob, tags: [`role:${module.name}`] })),
     // An allow list of everything currently reached has the shape that the exhaustive-allow-list check exists to catch.
     // A deny rule can guard against a future crossing of an observed boundary.
     // Each pair needs two deny entries because a rule guards only its source direction.
