@@ -9,8 +9,13 @@
 // `outsideFiles` already tracks exactly this (a file in scope, matching no
 // declared module) - this rule only reports it as a violation, one per
 // file, instead of silence.
-// Boundary: pure predicate over a ModuleGraph. No I/O, no output formatting.
+// Boundary: pure predicate over a ModuleGraph. No I/O, no output formatting;
+// grouping the uncovered files into one paste-ready declaredModules
+// suggestion per directory (or per loose file) is module-candidates.ts's
+// job, shared with init's re-run and `archstrict rules <path>` so all three
+// print the identical entry text for the same file.
 import { toProjectRelativePosix, type ModuleGraph } from "../module-graph.js";
+import { groupForRelFile, suggestUncovered, suggestionDoText, type NamedCandidateGroup } from "../module-candidates.js";
 
 export type Violation = {
   rule: "uncovered-module";
@@ -24,13 +29,17 @@ export type Violation = {
 
 const BECAUSE = "a file matching no declared module is unchecked, not passing (deptrac's --fail-on-uncovered)";
 
-export function uncoveredViolationFor(file: string, rootDir: string): Violation {
+// `group` is the caller's own suggestion for this file (from
+// `suggestUncovered`/`groupForRelFile`) - a bare declaredModules entry with
+// no `surface` would make a single-file module entirely private (its
+// default surface, index.ts, resolves to a different file), so the do:
+// text always carries the file's own name as `surface` for a file group.
+export function uncoveredViolationFor(file: string, rootDir: string, group: NamedCandidateGroup): Violation {
   // `path` stays absolute (a location every other rule's own `path`
   // points at) - only the glob suggested in `do` needs to be
   // project-relative, since that's a value meant to be pasted directly
   // into declaredModules[].glob or exclude, both of which are always
   // project-relative (config.md).
-  const rel = toProjectRelativePosix(file, rootDir);
   return {
     rule: "uncovered-module",
     path: file,
@@ -38,10 +47,20 @@ export function uncoveredViolationFor(file: string, rootDir: string): Violation 
     column: 1,
     evidence: `'${file}' is in scope but matches no declared module`,
     because: BECAUSE,
-    do: `add a declaredModules entry covering '${rel}' in archstrict.config.ts, or add it to exclude if it isn't module content`,
+    do: suggestionDoText(group),
   };
 }
 
-export function checkUncoveredModules(graph: ModuleGraph): Violation[] {
-  return graph.outsideFiles.map((file) => uncoveredViolationFor(file, graph.rootDir));
+export function checkUncoveredModules(
+  graph: ModuleGraph,
+  config: { declaredModules?: readonly { name: string; glob: string }[] },
+): Violation[] {
+  const relFiles = graph.outsideFiles.map((file) => toProjectRelativePosix(file, graph.rootDir));
+  const groups = suggestUncovered(relFiles, config.declaredModules ?? []);
+  return graph.outsideFiles.map((file, i) => {
+    const group = groupForRelFile(relFiles[i]!, groups);
+    // Every file in `relFiles` was grouped by the same call, so a match
+    // always exists - `suggestUncovered` never drops a file it was given.
+    return uncoveredViolationFor(file, graph.rootDir, group!);
+  });
 }

@@ -277,7 +277,7 @@ export function runRules(graph: ModuleGraph, config: Config): CheckResult {
     ...checkPublicSurfaceBypass(graph),
     ...checkCycles(graph, config),
     ...checkStaleCycleExceptions(graph, config),
-    ...checkUncoveredModules(graph),
+    ...checkUncoveredModules(graph, config),
     ...checkEmptyRuleSet(graph, config),
     ...checkMustBeEmpty(allProjectRelativeFiles(graph), config),
     ...checkAllowDeny(graph, config),
@@ -498,8 +498,15 @@ export function formatText(result: CheckResult): string {
   // check has none, and telling the reader to re-run the command that
   // just produced this clean result is circular, unlike every other
   // do: this tool ever prints (each names the one thing to actually
-  // do about a real finding).
-  if (result.violations.some((v) => v.rule !== "config-meaning")) {
+  // do about a real finding). While any uncovered-module violation
+  // exists, `archstrict todo` would be circular too: todo's first run
+  // freezes every OTHER freezable violation, and a file matching no
+  // declared module can never be frozen into a module's own todo (it
+  // has no module to freeze it into) - so the fix is to cover the file
+  // first, not to run todo.
+  if (result.violations.some((v) => v.rule === "uncovered-module")) {
+    lines.push(`do: add each uncovered-module file to declaredModules or exclude in archstrict.config.ts, then run archstrict check`);
+  } else if (result.violations.some((v) => v.rule !== "config-meaning")) {
     lines.push(`do: archstrict todo`);
   }
   return lines.join("\n") + "\n";

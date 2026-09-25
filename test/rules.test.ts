@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { rules, formatRulesText } from "../src/verbs/rules.js";
 import { checkUncoveredModules, uncoveredViolationFor } from "../src/rules/uncovered.js";
+import { suggestUncovered, groupForRelFile } from "../src/module-candidates.js";
 import { checkMustBeEmpty } from "../src/rules/must-be-empty.js";
 import { check, loadConfig } from "../src/verbs/check.js";
 import { checkEdgesCoverage, checkOrder, checkPoint, formatPredicate } from "../src/rules/constraints.js";
@@ -111,7 +112,12 @@ describe("rules", () => {
     for (const name of ["old.ts", "new.ts"]) {
       const path = join(root, "src/empty", name);
       const result = await rules(root, path);
-      expect(result.uncoveredViolation).toEqual(uncoveredViolationFor(path, root));
+      // "src/empty" is a directory group under this config (its own
+      // src/app, src/shared, src/private, src/future entries all anchor
+      // at "src") - old.ts and new.ts share the one "empty" suggestion.
+      const groups = suggestUncovered(["src/empty/old.ts", "src/empty/new.ts"], config.declaredModules);
+      const group = groupForRelFile(`src/empty/${name}`, groups)!;
+      expect(result.uncoveredViolation).toEqual(uncoveredViolationFor(path, root, group));
       expect(result.mustBeEmptyViolation).toEqual(checkMustBeEmpty([`src/empty/${name}`], config)[0]);
       for (const violation of [result.uncoveredViolation!, result.mustBeEmptyViolation!]) {
         const text = formatRulesText(result);
@@ -170,8 +176,8 @@ test("uncovered extraction preserves the original serialized report", () => {
   const expected = [{ rule: "uncovered-module", path: file, line: 1, column: 1,
     evidence: "'/project/loose.ts' is in scope but matches no declared module",
     because: "a file matching no declared module is unchecked, not passing (deptrac's --fail-on-uncovered)",
-    do: "add a declaredModules entry covering 'loose.ts' in archstrict.config.ts, or add it to exclude if it isn't module content" }];
-  expect(JSON.stringify(checkUncoveredModules(graph))).toBe(JSON.stringify(expected));
+    do: 'add { name: "loose.ts", glob: "loose.ts", surface: "loose.ts" } to declaredModules in archstrict.config.ts, or add "loose.ts" to exclude if it is not module content; then run archstrict init' }];
+  expect(JSON.stringify(checkUncoveredModules(graph, {}))).toBe(JSON.stringify(expected));
 });
 
 describe("constraint projections", () => {

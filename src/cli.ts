@@ -49,7 +49,7 @@ function parseInitArgv(argv: string[]): string | undefined {
 async function runInit(args: string[]): Promise<number> {
   const result = await init(process.cwd(), parseInitArgv(args));
   for (const line of result.messageLines) process.stdout.write(`${line}\n`);
-  process.stdout.write(`do: archstrict check\n`);
+  process.stdout.write(`do: ${result.doText}\n`);
   return 0;
 }
 

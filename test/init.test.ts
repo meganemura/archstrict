@@ -130,6 +130,70 @@ describe("init", () => {
     });
   });
 
+  // Exact stdout for the re-run's own uncovered-file listing: a directory
+  // group (src/extra/, 1 file), a file group (src/sqlite.ts, whose entry
+  // must carry surface so it isn't left entirely private), and a top-level
+  // directory group (tools/) - the same three shapes rule 3's do: and
+  // `archstrict rules <path>` print for the same files.
+  test("a re-run lists every uncovered file, grouped, named, and paste-ready - exact stdout, and points do: back at init", async () => {
+    await withTempProject(["app"], async (root) => {
+      await init(root);
+      writeFileSync(join(root, "src", "sqlite.ts"), "export const sqlite = 1;\n");
+      mkdirSync(join(root, "src", "extra"), { recursive: true });
+      writeFileSync(join(root, "src", "extra", "a.ts"), "export const a = 1;\n");
+      mkdirSync(join(root, "tools"), { recursive: true });
+      writeFileSync(join(root, "tools", "gen.ts"), "export const gen = 1;\n");
+
+      const second = await init(root);
+      expect(second.doText).toBe(
+        "add each declare line above to declaredModules in archstrict.config.ts, or its exclude line to exclude if that path is not module content; then run archstrict init",
+      );
+      expect(second.messageLines).toEqual([
+        `${join(root, "archstrict.config.ts")} already exists, left untouched`,
+        `wrote ${join(root, "archstrict.types.ts")}: 1 module name, read from archstrict.config.ts`,
+        "not covered by any declaredModules entry: 3 paths (check reports each file in them as uncovered-module)",
+        "  src/extra/ (1 file)",
+        '    declare: { name: "extra", glob: "src/extra/**" },',
+        '    or exclude: "src/extra/**",',
+        "  src/sqlite.ts",
+        '    declare: { name: "sqlite.ts", glob: "src/sqlite.ts", surface: "sqlite.ts" },',
+        '    or exclude: "src/sqlite.ts",',
+        "  tools/ (1 file)",
+        '    declare: { name: "tools", glob: "tools/**" },',
+        '    or exclude: "tools/**",',
+      ]);
+    });
+  });
+
+  test("a top-level uncovered directory whose on-disk name an existing entry already uses gets the './' form", async () => {
+    await withTempProject(["app"], async (root) => {
+      await init(root);
+      const configPath = join(root, "archstrict.config.ts");
+      writeFileSync(
+        configPath,
+        readFileSync(configPath, "utf8").replace(
+          "declaredModules: [",
+          'declaredModules: [\n    { name: "tools", glob: "src/app/tools/**" },',
+        ),
+      );
+      mkdirSync(join(root, "tools"), { recursive: true });
+      writeFileSync(join(root, "tools", "gen.ts"), "export const gen = 1;\n");
+
+      const second = await init(root);
+      expect(second.messageLines).toContain('    declare: { name: "./tools", glob: "tools/**" },');
+      expect(second.messageLines).toContain('    or exclude: "tools/**",');
+    });
+  });
+
+  test("no uncovered file: the re-run prints no listing, and do: stays archstrict check", async () => {
+    await withTempProject(["app"], async (root) => {
+      await init(root);
+      const second = await init(root);
+      expect(second.doText).toBe("archstrict check");
+      expect(second.messageLines.some((l) => l.includes("not covered"))).toBe(false);
+    });
+  });
+
   test("a re-run with a broken config rejects and leaves archstrict.types.ts untouched", async () => {
     await withTempProject(["app"], async (root) => {
       await init(root);

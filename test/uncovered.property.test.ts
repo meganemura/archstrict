@@ -27,7 +27,7 @@ describe("checkUncoveredModules (property)", () => {
       }));
 
       const graph = buildModuleGraph({ projectRoot: FIXTURE, declaredModules });
-      const violations = checkUncoveredModules(graph);
+      const violations = checkUncoveredModules(graph, { declaredModules });
 
       const expectedUndeclared = MODULE_NAMES.filter((_, i) => !declared[i]);
       assert.equal(violations.length, expectedUndeclared.length);

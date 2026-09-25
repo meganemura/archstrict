@@ -25,8 +25,14 @@
 // itself inside rule 6's own type-leak boundary.
 import { existsSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { DEFAULT_SURFACE, listAnalyzedFiles, toProjectRelativePosix, type DeclaredModule } from "../module-graph.js";
-import { groupAnalyzedFiles, nameCandidates, declaredModuleEntryText, type NamedCandidateGroup } from "../module-candidates.js";
+import { DEFAULT_SURFACE, listAnalyzedFiles, moduleForDeclaredFile, toProjectRelativePosix, type DeclaredModule } from "../module-graph.js";
+import {
+  groupAnalyzedFiles,
+  nameCandidates,
+  declaredModuleEntryText,
+  suggestUncovered,
+  type NamedCandidateGroup,
+} from "../module-candidates.js";
 import { SCHEMA_VERSION } from "../config.js";
 import { ReportError } from "../report-error.js";
 import { loadConfig } from "./check.js";
@@ -37,15 +43,39 @@ export type InitResult = {
   configWritten: boolean; // false when archstrict.config.ts already existed and was left alone
   moduleNames: string[];
   // Every stdout line this run produced, in order, except the final
-  // "do:" line - every successful run (fresh or re-run) ends with the
-  // same "do: archstrict check" under this change's own scope (a re-run's
-  // own uncovered-file listing, which would sometimes vary that line, is
-  // separate, later work), so the CLI appends it once itself instead of
-  // every caller repeating it.
+  // "do:" line - callers append `do: ${doText}` themselves, since a
+  // re-run's own uncovered-file listing changes what that line says
+  // (see `doText` below), unlike every line before it.
   messageLines: string[];
+  // "archstrict check" on a fresh run, or a re-run with nothing left
+  // uncovered; a re-run that lists an uncovered file instead points back
+  // at `archstrict init` itself, because todo could never freeze a file
+  // matching no declared module (it has no module to freeze it into).
+  doText: string;
 };
 
 const DO_INIT = "archstrict init";
+const DO_CHECK = "archstrict check";
+
+// The re-run's own uncovered-file scan: every analyzed file the config's
+// own exclude and declaredModules leave uncovered, grouped and named the
+// same way rule 3's do: and a fresh init's own groups are - so pasting
+// every line this prints, verbatim, leaves 0 uncovered-module (Hegel P7).
+// `moduleForDeclaredFile` is the exact predicate buildModuleGraph itself
+// uses to decide `outsideFiles` (module-graph.ts's own prepareGraph), so
+// this list agrees with what the next real check would report, without
+// building a whole ts.Program just to ask that question.
+function uncoveredGroups(
+  projectRoot: string,
+  declaredModules: readonly DeclaredModule[],
+  exclude: readonly string[],
+  surface: string,
+): NamedCandidateGroup[] {
+  const files = listAnalyzedFiles(projectRoot, exclude, declaredModules, surface);
+  const uncovered = files.filter((f) => moduleForDeclaredFile(f, projectRoot, declaredModules) === undefined);
+  const rel = uncovered.map((f) => toProjectRelativePosix(f, projectRoot));
+  return suggestUncovered(rel, declaredModules);
+}
 
 function fail(message: string, doText: string): never {
   throw new ReportError(message, doText);
@@ -417,7 +447,28 @@ export async function init(projectRoot: string, rawDir?: string): Promise<InitRe
     messageLines.push(
       `wrote ${generatedPath}: ${plural(moduleNames.length, "module name", "module names")}, read from archstrict.config.ts`,
     );
-    return { configPath, generatedPath, configWritten, moduleNames, messageLines };
+
+    const groups = uncoveredGroups(
+      projectRoot,
+      config.declaredModules ?? [],
+      config.exclude ?? [],
+      config.surface ?? DEFAULT_SURFACE,
+    );
+    let doText = DO_CHECK;
+    if (groups.length > 0) {
+      const totalFiles = groups.reduce((sum, g) => sum + g.fileCount, 0);
+      messageLines.push(
+        `not covered by any declaredModules entry: ${plural(totalFiles, "path", "paths")} (check reports each file in them as uncovered-module)`,
+      );
+      for (const g of groups) {
+        messageLines.push(g.kind === "dir" ? `  ${g.rel}/ (${plural(g.fileCount, "file", "files")})` : `  ${g.rel}`);
+        messageLines.push(`    declare: ${declaredModuleEntryText(g.entry)},`);
+        messageLines.push(`    or exclude: ${JSON.stringify(g.excludeGlob)},`);
+      }
+      doText =
+        "add each declare line above to declaredModules in archstrict.config.ts, or its exclude line to exclude if that path is not module content; then run archstrict init";
+    }
+    return { configPath, generatedPath, configWritten, moduleNames, messageLines, doText };
   }
 
   const { opened, rootLabel, noiseDirs, exclude, containerGroups, topGroups } = freshRun(projectRoot, dir);
@@ -452,5 +503,5 @@ export async function init(projectRoot: string, rawDir?: string): Promise<InitRe
     );
   }
 
-  return { configPath, generatedPath, configWritten, moduleNames, messageLines };
+  return { configPath, generatedPath, configWritten, moduleNames, messageLines, doText: DO_CHECK };
 }

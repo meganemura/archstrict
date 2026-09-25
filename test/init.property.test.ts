@@ -14,8 +14,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { init } from "../src/verbs/init.js";
 import { loadConfig } from "../src/verbs/check.js";
-import { listAnalyzedFiles, moduleForDeclaredFile, moduleGlobBaseDir, toProjectRelativePosix } from "../src/module-graph.js";
+import {
+  listAnalyzedFiles,
+  moduleForDeclaredFile,
+  moduleGlobBaseDir,
+  toProjectRelativePosix,
+  type ModuleGraph,
+} from "../src/module-graph.js";
 import { compileGlob } from "../src/classify.js";
+import { checkUncoveredModules } from "../src/rules/uncovered.js";
 
 // "widgets" is deliberately in both SRC_DIR_NAMES and TOP_DIR_NAMES, and
 // "cli.ts" / "context.ts" are deliberately in both the src and top file
@@ -229,6 +236,65 @@ describe("init (property)", () => {
         const second = await init(root);
         assert.equal(readFileSync(join(root, "archstrict.config.ts"), "utf8"), before);
         assert.deepEqual(second.moduleNames, first.moduleNames);
+      });
+    });
+  });
+
+  // Round-trips a fresh config through a random removal (simulating a
+  // hand-edit that drops some entries) plus a few new, real files no
+  // surviving entry could ever match - then checks the re-run's own
+  // suggestion against an independent computation of the same answer
+  // (checkUncoveredModules, rule 3's own rule), not init re-deriving
+  // itself. avoids buildModuleGraph (a real ts.Program) the same way P1
+  // does - listAnalyzedFiles + moduleForDeclaredFile is the exact
+  // predicate pair a real graph build uses to decide `outsideFiles`.
+  test("P7 suggestion round trip: a re-run's declare lines equal rule 3's own suggestion for the same files, and pasting all of them leaves 0 uncovered with unique names", async () => {
+    await hegel.testAsync(async (tc) => {
+      const tree = tc.draw(treeGenerator);
+      await withTree(tree, async (root) => {
+        await init(root);
+        const configPath = join(root, "archstrict.config.ts");
+        const config = await loadConfig(configPath);
+        const declaredModules = config.declaredModules!;
+        const keepFlags = tc.draw(
+          gs.arrays(gs.booleans(), { minSize: declaredModules.length, maxSize: declaredModules.length }),
+        );
+        const kept = declaredModules.filter((_, i) => keepFlags[i]);
+        writeFileSync(configPath, `export default ${JSON.stringify({ ...config, declaredModules: kept })};`);
+
+        // New, real files no surviving entry could ever match - guaranteed
+        // uncovered regardless of which entries the random removal above
+        // kept, and covering both group shapes (a root file, a root
+        // directory).
+        writeFileSync(join(root, "___zz_loose.ts"), "export const zz = 1;\n");
+        mkdirSync(join(root, "___zz_dir"), { recursive: true });
+        writeFileSync(join(root, "___zz_dir", "leaf.ts"), "export const zz2 = 1;\n");
+        if (tree.shape !== "none") {
+          writeFileSync(join(root, "src", "___zz_src_loose.ts"), "export const zz3 = 1;\n");
+        }
+
+        const rerun = await init(root);
+        const declareLines = rerun.messageLines
+          .filter((l) => l.trim().startsWith("declare: "))
+          .map((l) => l.trim().slice("declare: ".length).replace(/,$/, ""))
+          .sort();
+
+        const rerunConfig = await loadConfig(configPath);
+        const files = listAnalyzedFiles(root, rerunConfig.exclude ?? [], rerunConfig.declaredModules, rerunConfig.surface ?? "index.ts");
+        const outsideFiles = files.filter((f) => moduleForDeclaredFile(f, root, rerunConfig.declaredModules ?? []) === undefined);
+        assert.ok(outsideFiles.length > 0);
+        const fakeGraph = { rootDir: root, outsideFiles } as ModuleGraph;
+        const rule3Texts = [
+          ...new Set(checkUncoveredModules(fakeGraph, rerunConfig).map((v) => v.do.match(/^add (.+) to declaredModules/)![1])),
+        ].sort();
+        assert.deepEqual(declareLines, rule3Texts);
+
+        // Pasting every suggested entry, together with what survived the
+        // random removal, leaves 0 uncovered-module and every name unique.
+        const pasted = [...kept, ...declareLines.map((text) => (0, eval)(`(${text})`))];
+        assert.equal(new Set(pasted.map((e) => e.name)).size, pasted.length, "pasted entries have a duplicate name");
+        const pastedFiles = listAnalyzedFiles(root, rerunConfig.exclude ?? [], pasted, rerunConfig.surface ?? "index.ts");
+        assert.equal(pastedFiles.filter((f) => moduleForDeclaredFile(f, root, pasted) === undefined).length, 0);
       });
     });
   });

@@ -2,22 +2,17 @@
 // declares as modules - one directory group per top-level (or per-container)
 // directory that holds an analyzed file, one file group per loose file -
 // plus the on-disk naming rule for each group and the literal
-// declaredModules-entry text init pastes into the generated config.
+// declaredModules-entry text init pastes into the generated config. The
+// same grouping and naming also produces the paste-ready suggestion for a
+// file an EXISTING config doesn't cover yet (rule 3's own `do:`, `archstrict
+// rules <path>`, and init's re-run listing all share `suggestUncovered`
+// below, so the three can never drift into different phrasings of the same
+// entry).
 // Boundary: no I/O, and no opinion about WHICH files are analyzed - the
-// caller (init's own walk today; a config-vs-graph consistency check,
-// later) already decided that and hands this module the resulting file
-// list and anchor set.
-//
-// One naming case stays unimplemented: a project-root group (anchor "")
-// whose on-disk name an existing config's declaredModules already uses
-// (passed in as `taken`) still takes that plain on-disk name today,
-// because root groups never consult `taken` - only a deeper group's own
-// rel-path fallback does. A "./"-prefixed path would be the fix, but
-// nothing calls nameCandidates with a non-empty `taken` yet (init always
-// starts from a fresh config), so there is no real case to verify against.
-// A later caller that suggests an entry for a file an existing config
-// doesn't cover yet can extend nameCandidates without reshaping its return
-// value.
+// caller (init's own walk, or a config-vs-graph consistency check) already
+// decided that and hands this module the resulting file list, anchor set,
+// and the config's own declaredModules (for the `taken`-name check).
+import { moduleGlobBaseDir } from "./module-graph.js";
 
 // A file's project-relative path, POSIX-separated - the same shape
 // module-graph.ts's toProjectRelativePosix produces.
@@ -78,15 +73,20 @@ export function groupAnalyzedFiles(files: readonly string[], anchors: readonly s
   return [...groups.values()].sort((a, b) => byteSort(a.rel, b.rel));
 }
 
-// Naming, two cases (a third stays out of scope - see this file's own
-// header comment): (1) a group's name is its on-disk name, unless that name
-// collides with another group's own on-disk name at the SAME anchor depth -
-// one directory cannot hold a file and a directory of the same name, so a
-// top-level `cli.ts` and a `src/cli.ts` never collide with each other
-// directly, only through rule 2; (2) a group below the project root whose
-// on-disk name is already `taken` (by an existing config entry, or by
+// Naming, three cases: (1) a group's name is its on-disk name, unless that
+// name collides with another group's own on-disk name at the SAME anchor
+// depth - one directory cannot hold a file and a directory of the same
+// name, so a top-level `cli.ts` and a `src/cli.ts` never collide with each
+// other directly, only through rule 2; (2) a group below the project root
+// whose on-disk name is already `taken` (by an existing config entry, or by
 // another group sharing that name) instead takes its own project-relative
-// path as its name.
+// path as its name; (3) a project-root group (anchor "") has no deeper
+// path to fall back to - its on-disk name IS its rel - so a root name still
+// `taken` after that takes a "./"-prefixed rel instead (measured: pasting
+// `{ name: "./tools", glob: "tools/**" }` next to an existing "tools" gave
+// 0 violations and tsc passed). This only fires for a re-run's or rule 3's
+// suggestion - a fresh init never has a `taken` set with anything a fresh
+// root group's own on-disk name could collide with.
 export function nameCandidates(
   groups: readonly CandidateGroup[],
   taken: ReadonlySet<string>,
@@ -96,7 +96,7 @@ export function nameCandidates(
 
   return groups.map((g): NamedCandidateGroup => {
     const collides = taken.has(g.onDiskName) || (g.anchor !== "" && (onDiskCounts.get(g.onDiskName) ?? 0) > 1);
-    const name = g.anchor === "" ? g.onDiskName : collides ? g.rel : g.onDiskName;
+    const name = g.anchor === "" ? (collides ? `./${g.rel}` : g.onDiskName) : collides ? g.rel : g.onDiskName;
     const glob = g.kind === "dir" ? `${g.rel}/**` : g.rel;
     const entry: DeclaredModuleEntry =
       g.kind === "dir" ? { name, glob } : { name, glob, surface: g.onDiskName };
@@ -120,4 +120,44 @@ export function declaredModuleEntryText(entry: DeclaredModuleEntry): string {
   return entry.surface === undefined
     ? `{ name: ${q(entry.name)}, glob: ${q(entry.glob)} }`
     : `{ name: ${q(entry.name)}, glob: ${q(entry.glob)}, surface: ${q(entry.surface)} }`;
+}
+
+// The one shared entry point rule 3, `archstrict rules <path>`, and init's
+// re-run all call: given the project-relative paths of files an EXISTING
+// config's declaredModules doesn't cover, group and name them exactly as a
+// fresh init would, with the config's own declaredModules entries counted
+// as `taken` names. Anchors are the project root plus the parent directory
+// of each existing entry's own glob base - the same depth a fresh init
+// itself would have grouped that entry at, computed by string ops alone
+// (moduleGlobBaseDir already strips the glob down to its literal prefix;
+// only its own parent directory is needed here, not whether that prefix
+// names a real file or directory on disk).
+export function suggestUncovered(
+  uncoveredRelFiles: readonly string[],
+  declaredModules: readonly { name: string; glob: string }[],
+): NamedCandidateGroup[] {
+  const anchors = new Set<string>([""]);
+  for (const dm of declaredModules) {
+    const base = moduleGlobBaseDir(dm.glob);
+    const slash = base.lastIndexOf("/");
+    anchors.add(slash === -1 ? "" : base.slice(0, slash));
+  }
+  const taken = new Set(declaredModules.map((dm) => dm.name));
+  return nameCandidates(groupAnalyzedFiles(uncoveredRelFiles, [...anchors]), taken);
+}
+
+// Which of `suggestUncovered`'s own groups a single project-relative file
+// belongs to - a file group's own `rel` IS the file, a directory group's
+// `rel` is its own directory, so the file sits somewhere below it.
+export function groupForRelFile(rel: string, groups: readonly NamedCandidateGroup[]): NamedCandidateGroup | undefined {
+  return groups.find((g) => g.rel === rel || rel.startsWith(`${g.rel}/`));
+}
+
+// The one sentence rule 3's `do:` and `archstrict rules <path>` both print
+// for a single uncovered file - the paste-ready entry, with the exclude
+// alternative right beside it so the same suggestion never leads an agent
+// to add a directory entry for a file that turns out not to be module
+// content at all.
+export function suggestionDoText(group: NamedCandidateGroup): string {
+  return `add ${declaredModuleEntryText(group.entry)} to declaredModules in archstrict.config.ts, or add ${q(group.excludeGlob)} to exclude if it is not module content; then run archstrict init`;
 }

@@ -373,6 +373,12 @@ describe("check", () => {
       const text = formatText(result);
       expect(text).toContain("not covered by any declared module: 1");
       expect(text).not.toContain("modules glob");
+      // `archstrict todo` could never freeze this violation away (an
+      // uncovered file has no module of its own to freeze it into), so
+      // the footer names the real fix instead of the usual command.
+      expect(text.trim().split("\n").at(-1)).toBe(
+        "do: add each uncovered-module file to declaredModules or exclude in archstrict.config.ts, then run archstrict check",
+      );
     });
   });
 

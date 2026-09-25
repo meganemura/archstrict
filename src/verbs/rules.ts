@@ -3,9 +3,10 @@
 import { existsSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { classifyFile, compileGlob } from "../classify.js";
-import { buildModuleGraphForRules, DEFAULT_SURFACE, moduleForDeclaredFile, surfaceGlobsFor, toProjectRelativePosix } from "../module-graph.js";
+import { buildModuleGraphForRules, DEFAULT_SURFACE, moduleForDeclaredFile, surfaceGlobsFor, toProjectRelativePosix, type ModuleGraph } from "../module-graph.js";
 import { checkMustBeEmpty, type Violation as MustBeEmptyViolation } from "../rules/must-be-empty.js";
 import { uncoveredViolationFor, type Violation as UncoveredViolation } from "../rules/uncovered.js";
+import { groupForRelFile, suggestUncovered } from "../module-candidates.js";
 import { assertSequenceListsValue, formatPredicate, matchesPredicate, sequenceFor } from "../rules/constraints.js";
 import { loadConfig } from "./check.js";
 
@@ -67,6 +68,31 @@ function canonicalPath(path: string): string {
     ancestor = parent;
   }
   return join(realpathSync(ancestor), ...missing);
+}
+
+// Shares module-candidates.ts's grouping/naming with check's own
+// checkUncoveredModules, so a queried path's `do:` names the identical
+// entry check would report for that same file (rules.test.ts checks this
+// directly). A planned (not yet existing) path was never in
+// graph.outsideFiles, so it's appended to the file list groupAnalyzedFiles
+// sees - otherwise a lone planned file in an empty directory would be
+// missing from its own group entirely.
+function uncoveredViolationForQuery(
+  resolvedPath: string,
+  rel: string,
+  exists: boolean,
+  module: string | undefined,
+  excluded: boolean,
+  graph: ModuleGraph,
+  config: { declaredModules?: readonly { name: string; glob: string }[] },
+): UncoveredViolation | undefined {
+  if (excluded) return undefined;
+  const isUncovered = exists ? graph.outsideFiles.includes(resolvedPath) : module === undefined;
+  if (!isUncovered) return undefined;
+  const outsideRelFiles = graph.outsideFiles.map((f) => toProjectRelativePosix(f, graph.rootDir));
+  const relFiles = exists ? outsideRelFiles : [...outsideRelFiles, rel];
+  const groups = suggestUncovered(relFiles, config.declaredModules ?? []);
+  return uncoveredViolationFor(resolvedPath, graph.rootDir, groupForRelFile(rel, groups)!);
 }
 
 export async function rules(projectRoot: string, path: string): Promise<RulesResult> {
@@ -166,8 +192,7 @@ export async function rules(projectRoot: string, path: string): Promise<RulesRes
       .filter((friend) => compileGlob(friend.from).test(rel))
       .map((friend) => ({ module: m.name, file: friend.fileGlob, from: friend.from, because: friend.because }))),
     mustBeEmptyViolation: excluded ? undefined : checkMustBeEmpty([rel], config)[0],
-    uncoveredViolation: !excluded && (exists ? graph.outsideFiles.includes(resolvedPath) : module === undefined)
-      ? uncoveredViolationFor(resolvedPath, graph.rootDir) : undefined,
+    uncoveredViolation: uncoveredViolationForQuery(resolvedPath, rel, exists, module, excluded, graph, config),
   };
 }
 
