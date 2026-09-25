@@ -88,6 +88,49 @@ function reachableFrom(start: string, adjacency: Map<string, string[]>): Set<str
   return visited;
 }
 
+// Independent oracle for the lopsided-pair rule in src/rules/cycles.ts,
+// computed straight from the generator's own `edges` (never from the
+// parsed graph) - same independence the reachability-based SCC check
+// above relies on. Mirrors the implementation's threshold and tie-break
+// exactly (both are part of what this test checks). It expects exactly
+// one file-edge in a lopsided do:, never a comma-joined list, because
+// writeProject puts every edge from one module into a single
+// `importer.ts` - so 2 or 3 edges between the same two modules dedupe
+// down to that one (fromFile, resolvedFile) pair here, exercising the
+// dedup itself. A list of more than one distinct file pair needs more
+// than one file per module, which only cycles.test.ts's own dedicated
+// multi-file fixture writes.
+const MINORITY_MAX_EDGES = 3;
+const MAJORITY_MIN_RATIO = 3;
+
+function mostLopsidedPair(
+  component: string[],
+  valueEdges: EdgeSpec[],
+): { minorityFrom: string; minorityTo: string; minorityCount: number; majorityCount: number } | undefined {
+  const countOf = (from: string, to: string) => valueEdges.filter((e) => e.from === from && e.to === to).length;
+  const sorted = [...component].sort();
+  let best: { minorityFrom: string; minorityTo: string; minorityCount: number; majorityCount: number } | undefined;
+  for (let i = 0; i < sorted.length; i++) {
+    for (let j = i + 1; j < sorted.length; j++) {
+      const a = sorted[i]!;
+      const b = sorted[j]!;
+      const aToB = countOf(a, b);
+      const bToA = countOf(b, a);
+      if (aToB === 0 || bToA === 0) continue;
+
+      const [minorityFrom, minorityTo, minorityCount, majorityCount] =
+        aToB <= bToA ? [a, b, aToB, bToA] as const : [b, a, bToA, aToB] as const;
+      if (minorityCount > MINORITY_MAX_EDGES) continue;
+      if (majorityCount < minorityCount * MAJORITY_MIN_RATIO) continue;
+
+      if (best === undefined || majorityCount * best.minorityCount > best.majorityCount * minorityCount) {
+        best = { minorityFrom, minorityTo, minorityCount, majorityCount };
+      }
+    }
+  }
+  return best;
+}
+
 function stronglyConnectedComponentsOfSizeAbove1(edges: EdgeSpec[]): string[][] {
   const valueEdges = edges.filter((e) => !e.isTypeOnly && e.from !== e.to);
   const adjacency = new Map<string, string[]>();
@@ -143,10 +186,20 @@ describe("checkCycles (property)", () => {
               assert.equal(path[0], path.at(-1));
               assert.equal(v.todoModule, path[0]);
               const filePairs = path.slice(0, -1).map((from, i) => `src/${from}/importer.ts -> src/${path[i + 1]}/module.ts`);
-              assert.equal(v.do, `break the cycle at ${filePairs[0]} (module ${path[0]} -> ${path[1]}), or merge the modules involved - real import chain: ${filePairs.join(", ")}`);
+              const breakCycleDo = `break the cycle at ${filePairs[0]} (module ${path[0]} -> ${path[1]}), or merge the modules involved - real import chain: ${filePairs.join(", ")}`;
               const component = components.find((c) => c.includes(v.todoModule));
               assert.ok(component !== undefined);
               assert.equal(v.todoModule, [...component!].sort()[0]);
+
+              const valueEdges = edges.filter((e) => !e.isTypeOnly);
+              const lopsided = mostLopsidedPair(component!, valueEdges);
+              if (lopsided === undefined) {
+                assert.equal(v.do, breakCycleDo);
+              } else {
+                const fileEdge = `src/${lopsided.minorityFrom}/importer.ts -> src/${lopsided.minorityTo}/module.ts`;
+                const lopsidedDo = `remove the ${lopsided.minorityCount} import(s) from ${lopsided.minorityFrom} to ${lopsided.minorityTo} (${lopsided.minorityTo} imports ${lopsided.minorityFrom} ${lopsided.majorityCount} times, so ${lopsided.minorityFrom} -> ${lopsided.minorityTo} is likely the unintended direction): ${fileEdge}`;
+                assert.equal(v.do, `${lopsidedDo}; alternatively, ${breakCycleDo}`);
+              }
               for (let i = 0; i < path.length - 1; i++) {
                 assert.ok(valuePairs.has(`${path[i]}->${path[i + 1]}`));
               }

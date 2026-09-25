@@ -5,6 +5,7 @@ import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { buildModuleGraph } from "../src/module-graph.js";
 import { checkCycles, checkStaleCycleExceptions } from "../src/rules/cycles.js";
+import { fingerprintOf } from "../src/todo-store.js";
 
 const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), "fixtures/cycles");
 const declaredModules = ["a", "b", "c", "d"].map((name) => ({ name, glob: `src/${name}/**` }));
@@ -78,4 +79,138 @@ test("coarse module buckets name the actual importing files", () => {
     expect(violations[0]!.do).toBe("break the cycle at src/todo-store.ts -> src/rules/type-leak.ts (module root -> rules), or merge the modules involved - real import chain: src/todo-store.ts -> src/rules/type-leak.ts, src/rules/type-leak.ts -> src/config.ts");
     expect(violations[0]!.path).toBe(join(root, "src/todo-store.ts"));
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+// Repeated side-effect imports (`import "./x.js";`), one per line, are the
+// simplest way to get an exact, deliberate edge count between two modules
+// without needing distinct real exports for each one.
+function repeatedImport(specifier: string, count: number): string {
+  return Array.from({ length: count }, () => `import "${specifier}";`).join("\n") + "\n";
+}
+
+const lopsidedDeclaredModules = ["a", "b", "c"].map((name) => ({ name, glob: `src/${name}/**`, surface: "*.ts" }));
+
+function buildLopsidedFixture(root: string, files: Record<string, string>): void {
+  writeFileSync(join(root, "tsconfig.json"), JSON.stringify({ compilerOptions: { noLib: true, types: [] } }));
+  for (const [path, content] of Object.entries(files)) {
+    const full = join(root, path);
+    mkdirSync(dirname(full), { recursive: true });
+    writeFileSync(full, content);
+  }
+}
+
+test("a lopsided 2-module cycle (6 edges a -> b, 1 edge b -> a) names the b -> a edge first", () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "archstrict-lopsided-cycle-")));
+  try {
+    buildLopsidedFixture(root, {
+      "src/a/module.ts": repeatedImport("../b/module.js", 6),
+      "src/b/module.ts": repeatedImport("../a/module.js", 1),
+    });
+    const graph = buildModuleGraph({ projectRoot: root, declaredModules: lopsidedDeclaredModules });
+    expect(graph.unresolvedSpecifierCount).toBe(0);
+
+    const violations = checkCycles(graph);
+    expect(violations).toHaveLength(1);
+    expect(violations[0]!.evidence).toBe("a -> b -> a");
+    expect(violations[0]!.do).toBe(
+      "remove the 1 import(s) from b to a (a imports b 6 times, so b -> a is likely the unintended direction): src/b/module.ts -> src/a/module.ts" +
+      "; alternatively, break the cycle at src/a/module.ts -> src/b/module.ts (module a -> b), or merge the modules involved - real import chain: src/a/module.ts -> src/b/module.ts, src/b/module.ts -> src/a/module.ts",
+    );
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("a balanced 2-module cycle (2 edges each way) leaves the do: unchanged", () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "archstrict-balanced-cycle-")));
+  try {
+    buildLopsidedFixture(root, {
+      "src/a/module.ts": repeatedImport("../b/module.js", 2),
+      "src/b/module.ts": repeatedImport("../a/module.js", 2),
+    });
+    const graph = buildModuleGraph({ projectRoot: root, declaredModules: lopsidedDeclaredModules });
+    expect(graph.unresolvedSpecifierCount).toBe(0);
+
+    const violations = checkCycles(graph);
+    expect(violations).toHaveLength(1);
+    expect(violations[0]!.do).toBe(
+      "break the cycle at src/a/module.ts -> src/b/module.ts (module a -> b), or merge the modules involved - real import chain: src/a/module.ts -> src/b/module.ts, src/b/module.ts -> src/a/module.ts",
+    );
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("a 3-module cycle with one lopsided pair inside (b <-> c, not the anchor's own edge) names that pair's minority edge first", () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "archstrict-lopsided-triangle-")));
+  try {
+    // a -> b (1) and c -> a (1) are each one-directional - only b <-> c has
+    // edges both ways (6 and 1), so the lopsided pair here is not the one
+    // adjacent to the anchor module "a" in the shortest reported cycle.
+    buildLopsidedFixture(root, {
+      "src/a/module.ts": repeatedImport("../b/module.js", 1),
+      "src/b/module.ts": repeatedImport("../c/module.js", 6),
+      "src/c/module.ts": repeatedImport("../b/module.js", 1) + repeatedImport("../a/module.js", 1),
+    });
+    const graph = buildModuleGraph({ projectRoot: root, declaredModules: lopsidedDeclaredModules });
+    expect(graph.unresolvedSpecifierCount).toBe(0);
+
+    const violations = checkCycles(graph);
+    expect(violations).toHaveLength(1);
+    expect(violations[0]!.evidence).toBe("a -> b -> c -> a");
+    expect(violations[0]!.do).toBe(
+      "remove the 1 import(s) from c to b (b imports c 6 times, so c -> b is likely the unintended direction): src/c/module.ts -> src/b/module.ts" +
+      "; alternatively, break the cycle at src/a/module.ts -> src/b/module.ts (module a -> b), or merge the modules involved - real import chain: src/a/module.ts -> src/b/module.ts, src/b/module.ts -> src/c/module.ts, src/c/module.ts -> src/a/module.ts",
+    );
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("a lopsided pair's minority edges spread across more than one file are listed sorted and comma-joined", () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "archstrict-lopsided-multifile-")));
+  try {
+    buildLopsidedFixture(root, {
+      "src/a/module.ts": repeatedImport("../b/module.js", 6),
+      "src/b/module.ts": "export const noop = 1;\n",
+      "src/b/x.ts": repeatedImport("../a/module.js", 1),
+      "src/b/y.ts": repeatedImport("../a/module.js", 1),
+    });
+    const graph = buildModuleGraph({ projectRoot: root, declaredModules: lopsidedDeclaredModules });
+    expect(graph.unresolvedSpecifierCount).toBe(0);
+
+    const violations = checkCycles(graph);
+    expect(violations).toHaveLength(1);
+    expect(violations[0]!.do).toBe(
+      "remove the 2 import(s) from b to a (a imports b 6 times, so b -> a is likely the unintended direction): src/b/x.ts -> src/a/module.ts, src/b/y.ts -> src/a/module.ts" +
+      "; alternatively, break the cycle at src/a/module.ts -> src/b/module.ts (module a -> b), or merge the modules involved - real import chain: src/a/module.ts -> src/b/module.ts, src/b/x.ts -> src/a/module.ts",
+    );
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("a lopsided cycle's fingerprint is unchanged from a balanced-do: cycle with the same evidence", () => {
+  // fingerprintOf hashes rule + evidence only (path is excluded for the
+  // cycle rule already) - the lopsided and balanced fixtures above produce
+  // the same evidence ("a -> b -> a") and so must produce the same
+  // fingerprint despite their different do: text.
+  const lopsidedRoot = realpathSync(mkdtempSync(join(tmpdir(), "archstrict-lopsided-fp-")));
+  const balancedRoot = realpathSync(mkdtempSync(join(tmpdir(), "archstrict-balanced-fp-")));
+  try {
+    buildLopsidedFixture(lopsidedRoot, {
+      "src/a/module.ts": repeatedImport("../b/module.js", 6),
+      "src/b/module.ts": repeatedImport("../a/module.js", 1),
+    });
+    buildLopsidedFixture(balancedRoot, {
+      "src/a/module.ts": repeatedImport("../b/module.js", 2),
+      "src/b/module.ts": repeatedImport("../a/module.js", 2),
+    });
+    const lopsidedGraph = buildModuleGraph({ projectRoot: lopsidedRoot, declaredModules: lopsidedDeclaredModules });
+    const balancedGraph = buildModuleGraph({ projectRoot: balancedRoot, declaredModules: lopsidedDeclaredModules });
+    const [lopsided] = checkCycles(lopsidedGraph);
+    const [balanced] = checkCycles(balancedGraph);
+    expect(lopsided!.do).not.toBe(balanced!.do);
+    expect(fingerprintOf(lopsided!)).toBe(fingerprintOf(balanced!));
+    // Pinned from a build of cycles.ts before the lopsided do: existed, on
+    // this same fixture: fingerprintOf hashes only rule and evidence, so an
+    // unchanged hash here means evidence (and so the fingerprint) really
+    // didn't move when the do: text did.
+    expect(fingerprintOf(lopsided!)).toBe("ab5fb7328cfa");
+  } finally {
+    rmSync(lopsidedRoot, { recursive: true, force: true });
+    rmSync(balancedRoot, { recursive: true, force: true });
+  }
 });
