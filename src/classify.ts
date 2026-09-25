@@ -28,7 +28,24 @@ export type ClassifyByDirectoryName = { tagNamespace: string; names: readonly st
 // literal character, escaped for use in a RegExp. Exported: declared-module
 // membership (module-graph.ts) uses the same precedence rule as tag
 // classification does, and shouldn't reimplement it.
+// Every per-file caller (mostSpecificMatch, for declared-module membership
+// and tag classification; the exclude-glob check and the .d.ts surface
+// check in isEligibleSourceFileWithDtsGlobs) recompiles the same fixed,
+// small set of config globs once per candidate file - O(files * globs)
+// RegExp construction on a large codebase. A glob's own compiled form
+// depends only on its literal text, so caching by that text is exact, not
+// approximate: the same string always compiles to the same matcher.
+const compiledGlobCache = new Map<string, { test: (path: string) => boolean; literalPrefixLength: number; wildcardCount: number }>();
+
 export function compileGlob(glob: string): { test: (path: string) => boolean; literalPrefixLength: number; wildcardCount: number } {
+  const cached = compiledGlobCache.get(glob);
+  if (cached !== undefined) return cached;
+  const compiled = compileGlobUncached(glob);
+  compiledGlobCache.set(glob, compiled);
+  return compiled;
+}
+
+function compileGlobUncached(glob: string): { test: (path: string) => boolean; literalPrefixLength: number; wildcardCount: number } {
   const firstWildcard = glob.search(/\*/);
   const literalPrefixLength = firstWildcard === -1 ? glob.length : firstWildcard;
   const wildcardCount = (glob.match(/\*/g) ?? []).length;

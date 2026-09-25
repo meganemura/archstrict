@@ -389,6 +389,15 @@ function resolveExportsEntry(value: unknown, moduleDir: string): string | undefi
 // the map is absent, empty of real subpaths, or even one entry can't be
 // confidently resolved (whole-module fallback to the tool's own default,
 // never a partial or guessed-wrong surface array).
+// Deliberately NOT cached across calls: buildModuleGraphForRules rebuilds
+// the whole graph on a package.json exports edit, and a cache keyed only
+// by moduleDir would return the stale, pre-edit surface for that same
+// rebuild (measured directly - a test writing a new exports map to the
+// same package.json between two builds got the first build's answer
+// back). buildDeclaredModules and listAnalyzedFiles each reach this a few
+// times per module per scan (surfaceName, surfaceGlobsFor's own dts
+// check), not once per candidate file, so leaving it uncached costs a few
+// reads per module per build, independent of file count.
 function deriveSurfaceFromExports(moduleDir: string): string[] | undefined {
   const pkgPath = join(moduleDir, "package.json");
   if (!existsSync(pkgPath)) return undefined;
@@ -483,9 +492,17 @@ export function listAnalyzedFiles(
   declaredModules: readonly DeclaredModule[] = [],
   globalDefaultSurface: string | readonly string[] = DEFAULT_SURFACE,
 ): string[] {
+  // Computed once for the whole scan, not once per .d.ts candidate file:
+  // surfaceGlobsAllowingDts itself derives every module's own surface from
+  // its package.json (a file read plus a JSON.parse per module), and a
+  // project can have thousands of .d.ts candidates in one readDirectory
+  // call - isEligibleSourceFile's own exported form still recomputes this
+  // per call (safe there: callers of that form check a handful of files,
+  // not the whole tree).
+  const dtsSurfaceGlobs = surfaceGlobsAllowingDts(declaredModules, projectRoot, globalDefaultSurface);
   return ts.sys
     .readDirectory(projectRoot, ANALYZED_EXTENSIONS, ["**/node_modules/**", "**/dist/**"])
-    .filter((file) => isEligibleSourceFile(file, projectRoot, excludeGlobs, declaredModules, globalDefaultSurface));
+    .filter((file) => isEligibleSourceFileWithDtsGlobs(file, projectRoot, excludeGlobs, dtsSurfaceGlobs));
 }
 
 function countNonTsSourceFiles(rootDir: string, excludeGlobs: readonly string[]): number {
@@ -507,6 +524,24 @@ export function isEligibleSourceFile(
   declaredModules: readonly DeclaredModule[],
   globalDefaultSurface: string | readonly string[],
 ): boolean {
+  return isEligibleSourceFileWithDtsGlobs(
+    file,
+    projectRoot,
+    excludeGlobs,
+    surfaceGlobsAllowingDts(declaredModules, projectRoot, globalDefaultSurface),
+  );
+}
+
+// Shared core: takes the already-derived .d.ts-allowing surface globs
+// rather than declaredModules directly, so a caller scanning many files at
+// once (listAnalyzedFiles) can derive them exactly once for the whole
+// scan instead of once per candidate file.
+function isEligibleSourceFileWithDtsGlobs(
+  file: string,
+  projectRoot: string,
+  excludeGlobs: readonly string[],
+  dtsSurfaceGlobs: readonly string[],
+): boolean {
   const rel = toProjectRelativePosix(file, projectRoot);
   if (
     !ANALYZED_EXTENSIONS.some((ext) => file.endsWith(ext)) ||
@@ -515,8 +550,7 @@ export function isEligibleSourceFile(
     return false;
   }
   if (excludeGlobs.some((glob) => compileGlob(glob).test(rel))) return false;
-  return !isDeclarationFile(file) || surfaceGlobsAllowingDts(declaredModules, projectRoot, globalDefaultSurface)
-    .some((glob) => compileGlob(glob).test(rel));
+  return !isDeclarationFile(file) || dtsSurfaceGlobs.some((glob) => compileGlob(glob).test(rel));
 }
 
 function buildDeclaredModules(
@@ -633,15 +667,33 @@ function makeCompilerOptionsForFile(
   rootOptions: ts.CompilerOptions,
   rootConfigPath: string | undefined,
 ): (filePath: string) => ts.CompilerOptions {
-  const cache = new Map<string, ts.CompilerOptions>();
-  if (rootConfigPath !== undefined) cache.set(rootConfigPath, rootOptions);
+  const optionsByConfigPath = new Map<string, ts.CompilerOptions>();
+  if (rootConfigPath !== undefined) optionsByConfigPath.set(rootConfigPath, rootOptions);
+  // The cache above already stops readCompilerOptions from re-parsing the
+  // same tsconfig.json twice, but ts.findConfigFile itself still does one
+  // fileExists check per directory level between a file and its nearest
+  // config - that walk ran again for every file in the same directory,
+  // and buildPreparedGraph's edge walk calls this once per import
+  // specifier (not once per file), so a file with several imports
+  // repeated its own directory's walk several times over.
+  // graphBuildFingerprint also calls this once per root file, through the
+  // same closure, when buildModuleGraphForRules checks its cache before
+  // buildPreparedGraph's own edge walk runs - repeating every directory's
+  // walk a second time. Caching by the starting directory turns each
+  // directory's own walk into one lookup after its first caller.
+  const configPathByDir = new Map<string, string | undefined>();
   return (filePath: string): ts.CompilerOptions => {
-    const configPath = ts.findConfigFile(dirname(filePath), ts.sys.fileExists.bind(ts.sys));
+    const dir = dirname(filePath);
+    let configPath = configPathByDir.get(dir);
+    if (configPath === undefined && !configPathByDir.has(dir)) {
+      configPath = ts.findConfigFile(dir, ts.sys.fileExists.bind(ts.sys));
+      configPathByDir.set(dir, configPath);
+    }
     if (configPath === undefined) return rootOptions;
-    const cached = cache.get(configPath);
+    const cached = optionsByConfigPath.get(configPath);
     if (cached !== undefined) return cached;
     const options = readCompilerOptions(configPath);
-    cache.set(configPath, options);
+    optionsByConfigPath.set(configPath, options);
     return options;
   };
 }
@@ -665,7 +717,20 @@ export function prepareGraph(options: BuildOptions) {
   let rootNames = listAnalyzedFiles(projectRoot, exclude, declaredModules, surface);
   if (options.fileListOverride) rootNames = options.fileListOverride(rootNames);
   const modules = buildDeclaredModules(projectRoot, declaredModules, rootNames, surface);
-  const resolveModuleForFile = (filePath: string) => moduleForDeclaredFile(filePath, projectRoot, declaredModules);
+  // Cached by absolute file path: buildPreparedGraph calls this once per
+  // source file AND once per edge's resolvedFile, and a widely-imported
+  // file (a shared utils module, a design-system entry point) is a common
+  // edge target hundreds of times over in a real codebase - each repeat
+  // was a fresh O(declaredModules) glob-match walk over the exact same
+  // answer. Safe for the lifetime of one prepareGraph call: projectRoot
+  // and declaredModules are both fixed for that call.
+  const moduleForFileCache = new Map<string, string | undefined>();
+  const resolveModuleForFile = (filePath: string) => {
+    if (moduleForFileCache.has(filePath)) return moduleForFileCache.get(filePath);
+    const result = moduleForDeclaredFile(filePath, projectRoot, declaredModules);
+    moduleForFileCache.set(filePath, result);
+    return result;
+  };
 
   const nonTsSourceFileCount = countNonTsSourceFiles(rootDir, exclude);
   return { projectRoot, surface, rootDir, rootNames, modules, resolveModuleForFile, compilerOptions, compilerOptionsForFile, nonTsSourceFileCount };
@@ -692,8 +757,15 @@ export function buildPreparedGraph(prepared: ReturnType<typeof prepareGraph>, ov
   let unresolvedSpecifierCount = 0;
   const unresolvedSpecifiers: string[] = [];
 
+  // program.getSourceFiles() includes every file TS pulled in (lib.d.ts,
+  // node_modules ambient types, ...), not just rootNames - this membership
+  // test ran as an Array.includes per program file before, an O(files)
+  // linear scan repeated for every one of those files: O(files^2) overall
+  // on a large codebase. A Set built once turns it into one O(1) lookup
+  // per file.
+  const rootNameSet = new Set(rootNames);
   for (const sf of program.getSourceFiles()) {
-    if (!rootNames.includes(sf.fileName)) continue; // lib.d.ts, node_modules, etc.
+    if (!rootNameSet.has(sf.fileName)) continue; // lib.d.ts, node_modules, etc.
     const fromModule = resolveModuleForFile(sf.fileName);
     if (fromModule === undefined) {
       outsideFiles.push(sf.fileName);
