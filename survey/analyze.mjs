@@ -6,13 +6,13 @@
 //
 // usage: node survey/analyze.mjs <cloneDir> <owner/repo> <outJson> [--dir <subdir>]
 import { execFileSync } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, realpathSync, lstatSync, mkdirSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { builtinModules as NODE_BUILTIN_LIST } from "node:module";
 import ts from "typescript";
 const NODE_BUILTINS = new Set(NODE_BUILTIN_LIST);
-import { buildModuleGraph, listAnalyzedFiles } from "../dist/module-graph.js";
+import { buildPreparedGraph, prepareGraph } from "../dist/module-graph.js";
 import { freshRun } from "../dist/verbs/init.js";
 import { detectDeclared } from "./declared.mjs";
 
@@ -22,7 +22,17 @@ const [root, fullName, outJson, ...rest] = process.argv.slice(2);
 const dirArg = rest[0] === "--dir" ? rest[1] : undefined;
 const t0 = Date.now();
 const timings = {};
-const lap = (k) => { timings[k] = Date.now() - (timings._last ?? t0); timings._last = Date.now(); };
+// Peak RSS so far (MB) at the end of each stage. A stage line is also
+// appended to SURVEY_STAGE_LOG synchronously as it ends, so a run the kernel
+// kills for memory still leaves the last completed stage on disk.
+const peakRssMb = {};
+const STAGE_LOG = process.env.SURVEY_STAGE_LOG;
+const stage = (msg) => { if (STAGE_LOG) appendFileSync(STAGE_LOG, `${new Date().toISOString()} ${msg} rss=${Math.round(process.memoryUsage().rss / 1048576)}MB peak=${Math.round(process.resourceUsage().maxRSS / 1024)}MB\n`); };
+const lap = (k) => {
+  timings[k] = Date.now() - (timings._last ?? t0); timings._last = Date.now();
+  peakRssMb[k] = Math.round(process.resourceUsage().maxRSS / 1024);
+  stage(`done ${k} ${timings[k]}ms`);
+};
 
 const rel = (f) => relative(root, f).split(sep).join("/");
 const readJson = (f) => { try { return JSON.parse(readFileSync(f, "utf8")); } catch { return undefined; } };
@@ -163,8 +173,18 @@ function topLevelEntries() { return safeDir(root).map((e) => e.name); }
 lap("granularity");
 
 // ---- graph ---------------------------------------------------------------
-const graph = buildModuleGraph({ projectRoot: root, declaredModules, exclude });
-lap("graph");
+// buildModuleGraph split into its stages, so time and memory are known per
+// stage: file listing, the TypeScript program itself, then the edge walk
+// (which reuses the program through oldProgram).
+stage("start prepare");
+const prepared = prepareGraph({ projectRoot: root, declaredModules, exclude });
+lap("graphPrepare");
+stage(`start program over ${prepared.rootNames.length} files`);
+const program0 = ts.createProgram({ rootNames: prepared.rootNames, options: prepared.compilerOptions });
+lap("graphProgram");
+stage("start edge walk");
+const graph = buildPreparedGraph(prepared, { oldProgram: program0 });
+lap("graphEdges");
 const modules = [...graph.modules.values()].filter((m) => m.files.length > 0);
 const names = modules.map((m) => m.name);
 const idx = new Map(names.map((n, i) => [n, i]));
@@ -286,7 +306,7 @@ function structure(edgesAll) {
     edges: { all: edgesAll.length, value: vEdges.length, typeOnly: edgesAll.length - vEdges.length, distinctValueModulePairs: vAdj.reduce((a, s) => a + s.size, 0) },
     cycles: { valueSccsOver1: vScc.big.length, modulesInValueCycles: vScc.big.reduce((a, g) => a + g.length, 0),
       largestValueScc: vScc.big[0]?.length ?? 0, valueSccs: vScc.big.slice(0, 5).map((g) => g.length > 12 ? [...g.slice(0, 12), `...+${g.length - 12}`] : g),
-      mutualPairs: mutualPairs.slice(0, 15), mutualPairCount: mutualPairs.length,
+      mutualPairs, mutualPairCount: mutualPairs.length,
       withTypeOnlySccsOver1: allScc.big.length, modulesInAnyCycle: allScc.big.reduce((a, g) => a + g.length, 0) },
     order: { longestPathEdges: depth, modulePairs: N * (N - 1) / 2, comparablePairs: comparable, incomparablePairs: incomparable, pairsInSameCycle: sameScc,
       heights: N <= 60 ? heights : Object.fromEntries(Object.entries(heights).map(([h, ns]) => [h, ns.length])) },
@@ -395,7 +415,7 @@ const declared = detectDeclared(root);
 lap("misc");
 
 // One real `archstrict check --json` for the public-surface-bypass count.
-let check;
+let check, checkPeakRssMb, checkViolations = [];
 {
   writeFileSync(join(root, "archstrict.config.ts"), `export default ${JSON.stringify({ schemaVersion: 1, exclude, declaredModules, because: "survey measurement: one module per granularity choice" }, null, 2)};\n`);
   let out;
@@ -403,17 +423,89 @@ let check;
   // codebase costs more than the graph itself; bound it separately so a slow
   // check costs only this one number, not the repository's measurement.
   let timedOut = false;
-  try { out = execFileSync("node", ["--max-old-space-size=8000", join(HERE, "../dist/cli.js"), "check", "--json"], { cwd: root, encoding: "utf8", maxBuffer: 1 << 30, timeout: CHECK_TIMEOUT_MS, killSignal: "SIGKILL" }); }
+  // The child reports its own peak RSS on exit through a preload script.
+  const rssFile = join(root, ".survey-check-rss");
+  const env = { ...process.env, SURVEY_RSS_OUT: rssFile, NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} --require ${join(HERE, "rss-on-exit.cjs")}`.trim() };
+  stage("start check");
+  try { out = execFileSync("node", ["--max-old-space-size=8000", join(HERE, "../dist/cli.js"), "check", "--json"], { cwd: root, env, encoding: "utf8", maxBuffer: 1 << 30, timeout: CHECK_TIMEOUT_MS, killSignal: "SIGKILL" }); }
   catch (e) { out = e.stdout; timedOut = e.signal === "SIGKILL"; }
   if (timedOut) out = JSON.stringify({ error: `check timed out after ${CHECK_TIMEOUT_MS / 1000}s` });
+  try { checkPeakRssMb = Math.round(Number(readFileSync(rssFile, "utf8")) / 1024); } catch {}
   try {
     const j = JSON.parse(out);
     const byRule = {}; for (const v of j.violations ?? []) byRule[v.rule] = (byRule[v.rule] ?? 0) + 1;
-    const bypass = (j.violations ?? []).filter((v) => v.rule === "public-surface-bypass");
+    checkViolations = j.violations ?? [];
+    const bypass = checkViolations.filter((v) => v.rule === "public-surface-bypass");
     check = { violationsByRule: byRule, publicSurfaceBypass: bypass.length, publicSurfaceBypassFromTests: bypass.filter((v) => isTest(v.path)).length, error: j.error };
   } catch (e) { check = { error: String(out ?? e).slice(0, 300) }; }
 }
 lap("check");
+
+// ---- follow-up measurements ---------------------------------------------
+// Test files by naming convention. Each file gets the first matching
+// category, in this order; the main survey's own isTest() is unchanged and
+// reported alongside (it does not count e2e/ or fixtures/).
+const TEST_KINDS = [
+  ["e2e/", (r) => /(^|\/)e2e(-[\w-]+)?\//.test(r)],
+  ["__tests__/", (r) => /(^|\/)__tests__\//.test(r)],
+  ["__mocks__/", (r) => /(^|\/)__mocks__\//.test(r)],
+  ["test/ or tests/", (r) => /(^|\/)tests?\//.test(r)],
+  ["*.test.ts", (r) => /\.test\.[cm]?tsx?$/.test(r)],
+  ["*.spec.ts", (r) => /\.spec\.[cm]?tsx?$/.test(r)],
+  ["fixtures/", (r) => /(^|\/)(__)?fixtures?(__)?\//.test(r)],
+  ["other (spec/, test-utils/, *.bench.ts)", (r) => /(^|\/)(spec|test-utils?)\//.test(r) || /\.bench\.[cm]?tsx?$/.test(r)],
+];
+const testKind = (f) => { const r = rel(f); return TEST_KINDS.find(([, t]) => t(r))?.[0]; };
+const testFilesByKind = {}, bypassByKind = {};
+let colocated = 0, wideTestFiles = 0;
+const dirHasProd = new Map();
+for (const f of allFiles) if (!testKind(f)) dirHasProd.set(dirname(f), true);
+for (const f of allFiles) {
+  const k = testKind(f); if (!k) continue;
+  wideTestFiles++; testFilesByKind[k] = (testFilesByKind[k] ?? 0) + 1;
+  if (dirHasProd.get(dirname(f))) colocated++;
+}
+const bypassViolations = checkViolations.filter((v) => v.rule === "public-surface-bypass");
+for (const v of bypassViolations) { const k = testKind(v.path) ?? "production"; bypassByKind[k] = (bypassByKind[k] ?? 0) + 1; }
+const testLayout = {
+  testFiles: wideTestFiles, testFilesByKind,
+  colocatedTestFiles: colocated, colocatedShare: wideTestFiles ? +(colocated / wideTestFiles).toFixed(3) : null,
+  bypass: { total: bypassViolations.length, fromTestsMainDefinition: bypassViolations.filter((v) => isTest(v.path)).length, byKind: bypassByKind },
+};
+
+// .tsx baseline: where imports from .tsx files resolve, with the same
+// per-file compiler options archstrict uses. "In scope" = inside a module's
+// directory (outside excluded paths is not re-checked here).
+const tsxAll = ts.sys.readDirectory(root, [".tsx"], ["**/node_modules/**", "**/dist/**"]);
+const moduleDirs = modules.map((m) => m.dir + sep);
+const tsxInScope = tsxAll.filter((f) => moduleDirs.some((d) => f.startsWith(d)) && !/(^|\/)\./.test(rel(f)));
+const realRoot = realpathSync(root);
+const tsx = { files: tsxAll.length, filesInScope: tsxInScope.length, imports: 0, toTs: 0, toTsx: 0, toTsDistinctFiles: 0, toTsCrossModule: 0, external: 0, unresolved: 0, tsToTsxEdges: 0 };
+{
+  const hit = new Set();
+  const modOf = (f) => modules.find((m) => f.startsWith(m.dir + sep) || f === m.dir || f.startsWith(realpathSync(m.dir) + sep))?.name;
+  for (const f of tsxInScope) {
+    let text; try { text = readFileSync(f, "utf8"); } catch { continue; }
+    const opts = prepared.compilerOptionsForFile(f);
+    for (const { fileName: spec } of ts.preProcessFile(text, true, true).importedFiles) {
+      tsx.imports++;
+      const r = ts.resolveModuleName(spec, f, opts, ts.sys).resolvedModule;
+      if (!r) { tsx.unresolved++; continue; }
+      // A workspace sibling resolves through its node_modules symlink and is
+      // flagged external by TypeScript; its real path decides instead.
+      let target = r.resolvedFileName;
+      try { target = realpathSync(target); } catch {}
+      const inside = !target.split(sep).includes("node_modules") && target.startsWith(realRoot + sep);
+      if (!inside || target.endsWith(".d.ts")) { tsx.external++; continue; }
+      if (target.endsWith(".tsx")) tsx.toTsx++;
+      else if (/\.[cm]?ts$/.test(target)) { tsx.toTs++; hit.add(target); if (modOf(target) && modOf(target) !== modOf(f)) tsx.toTsCrossModule++; }
+      else tsx.external++;
+    }
+  }
+  tsx.toTsDistinctFiles = hit.size;
+  tsx.tsToTsxEdges = graph.edges.filter((e) => e.resolvedFile?.endsWith(".tsx")).length;
+}
+lap("followUp");
 delete timings._last;
 
 const result = {
@@ -437,7 +529,9 @@ const result = {
   appLib, pluginAreas,
   tests: { prodToTestEdges: prodToTest.length, examples: prodToTest.slice(0, 5).map((e) => `${rel(e.fromFile)} -> ${rel(e.resolvedFile)}`) },
   declaredBoundaryConfig: { present: declared.length > 0, where: declared },
-  check, timingsMs: { ...timings, total: Date.now() - t0 },
+  check, testLayout, tsx,
+  timingsMs: { ...timings, total: Date.now() - t0 },
+  peakRssMb: { ...peakRssMb, check: checkPeakRssMb ?? null },
 };
 mkdirSync(dirname(outJson), { recursive: true });
 writeFileSync(outJson, JSON.stringify(result, null, 2));
