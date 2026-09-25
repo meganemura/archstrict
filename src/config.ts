@@ -225,7 +225,10 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function describeShape(value: unknown): string {
+// Exported: loadConfig's own declaredModules validation (check.ts) needs
+// the same wording for the same kind of shape mismatch, rather than a
+// second, differently-worded describer for the same fact.
+export function describeShape(value: unknown): string {
   return Array.isArray(value) ? "an array" : typeof value;
 }
 

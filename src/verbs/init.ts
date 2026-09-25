@@ -385,7 +385,13 @@ export async function init(projectRoot: string, rawDir?: string): Promise<InitRe
     if (dir !== undefined) {
       messageLines.push(`the directory argument applies only when init writes a new archstrict.config.ts`);
     }
-    const config = await loadConfig(configPath);
+    const config = await loadConfig(configPath, undefined, DO_INIT);
+    // `?? []` is for the type checker, not runtime defense: loadConfig
+    // itself now rejects any loaded config whose declaredModules is
+    // missing, non-array, or holds a malformed entry, so this line never
+    // actually sees a bad shape. Config's own `declaredModules` field
+    // stays typed optional regardless (other Config values exist that
+    // never went through loadConfig), so the fallback keeps typechecking.
     const moduleNames = [...new Set((config.declaredModules ?? []).map((m: DeclaredModule) => m.name))].sort();
     writeFileSync(generatedPath, generatedFileContents(moduleNames));
     messageLines.push(
@@ -396,7 +402,7 @@ export async function init(projectRoot: string, rawDir?: string): Promise<InitRe
 
   const { opened, rootLabel, noiseDirs, exclude, containerGroups, topGroups } = freshRun(projectRoot, dir);
   writeFileSync(configPath, configText(opened, containerGroups, topGroups, exclude, noiseDirs));
-  const config = await loadConfig(configPath);
+  const config = await loadConfig(configPath, undefined, DO_INIT);
   const moduleNames = [...new Set((config.declaredModules ?? []).map((m: DeclaredModule) => m.name))].sort();
   writeFileSync(generatedPath, generatedFileContents(moduleNames));
 

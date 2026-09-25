@@ -89,6 +89,76 @@ describe("loadConfig", () => {
     });
   });
 
+  // `declaredModules` satisfying `'declaredModules' in raw` (REQUIRED_FIELDS)
+  // is not the same fact as it being a real array of well-shaped entries -
+  // `null`, `undefined`, and a non-array value all satisfy `in` and, before
+  // this check existed, reached buildModuleGraph/init's own `.map` as a
+  // raw TypeError, not a ReportError naming the config and the problem.
+  describe.each([
+    {
+      label: "declaredModules: null",
+      declaredModules: "null",
+      message: "field 'declaredModules' must be an array, not object",
+    },
+    {
+      label: "declaredModules: undefined",
+      declaredModules: "undefined",
+      message: "field 'declaredModules' must be an array, not undefined",
+    },
+    {
+      label: "declaredModules is not an array (a string)",
+      declaredModules: `"src/**"`,
+      message: "field 'declaredModules' must be an array, not string",
+    },
+    {
+      label: "an entry without a name",
+      declaredModules: `[{ glob: "src/app/**" }]`,
+      message: "field 'declaredModules[0].name' must be a non-empty string, not undefined",
+    },
+    {
+      label: "an entry with an empty-string name",
+      declaredModules: `[{ name: "", glob: "src/app/**" }]`,
+      message: "field 'declaredModules[0].name' must be a non-empty string, got an empty string",
+    },
+    {
+      label: "an entry with a non-string glob",
+      declaredModules: `[{ name: "app", glob: 5 }]`,
+      message: "field 'declaredModules[0].glob' must be a string, not number",
+    },
+  ])("declaredModules shape: $label", ({ declaredModules, message }) => {
+    test("loadConfig throws a ReportError naming the config path and the problem, with a do: to run archstrict check", async () => {
+      await withTempProject(async (root) => {
+        const configPath = join(root, "archstrict.config.ts");
+        writeFileSync(configPath, `export default { declaredModules: ${declaredModules}, because: "test" };\n`);
+        let thrown: unknown;
+        try {
+          await loadConfig(configPath);
+        } catch (error) {
+          thrown = error;
+        }
+        expect(thrown).toBeInstanceOf(ReportError);
+        expect((thrown as ReportError).message).toBe(`${configPath} ${message}`);
+        expect((thrown as ReportError).do).toContain(configPath);
+        expect((thrown as ReportError).do).toContain("then run archstrict check");
+      });
+    });
+
+    test("check reports the same ReportError instead of a raw TypeError", async () => {
+      await withTempProject(async (root) => {
+        const configPath = join(root, "archstrict.config.ts");
+        writeFileSync(configPath, `export default { declaredModules: ${declaredModules}, because: "test" };\n`);
+        let thrown: unknown;
+        try {
+          await check(root);
+        } catch (error) {
+          thrown = error;
+        }
+        expect(thrown).toBeInstanceOf(ReportError);
+        expect((thrown as ReportError).message).toBe(`${configPath} ${message}`);
+      });
+    });
+  });
+
   test("a config that imports a runtime value (not `import type`) fails with a clear error", async () => {
     await withTempProject(async (root) => {
       mkdirSync(join(root, "src", "app"), { recursive: true });

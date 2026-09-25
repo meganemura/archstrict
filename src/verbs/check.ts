@@ -8,7 +8,7 @@ import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import ts from "typescript";
 import { buildModuleGraph, toProjectRelativePosix, type ModuleGraph, type BuildOptions } from "../module-graph.js";
-import { assertEdgesShapeValid, assertSchemaVersion, type Config } from "../config.js";
+import { assertEdgesShapeValid, assertSchemaVersion, describeShape, type Config } from "../config.js";
 import { ReportError } from "../report-error.js";
 import { checkPublicSurfaceBypass, type Violation as PublicSurfaceViolation } from "../rules/public-surface.js";
 import {
@@ -144,7 +144,15 @@ const REQUIRED_FIELDS = ["declaredModules", "because"] as const;
 // has no directory of its own. Checked for below, with a clear error
 // instead of that opaque resolution failure.
 // Proposed source uses the same content-keyed URL, so a changed proposal cannot reuse a stale config module.
-export async function loadConfig(configPath: string, sourceOverride?: string): Promise<Config> {
+//
+// `verb` is the command a thrown error's `do:` tells the caller to re-run
+// once the file is fixed. init's own two calls pass "archstrict init": a
+// re-run's do: pointing at `archstrict check` would send the caller to a
+// command that never regenerates archstrict.types.ts, the file init's own
+// load exists to write. Only errors thrown directly here take `verb` -
+// assertSchemaVersion and assertEdgesShapeValid are shared with other
+// verbs and keep their own fixed "archstrict check", unchanged.
+export async function loadConfig(configPath: string, sourceOverride?: string, verb = "archstrict check"): Promise<Config> {
   // init is what creates this file. A missing one is the first-run path,
   // and a raw ENOENT doesn't name that command.
   if (sourceOverride === undefined && !existsSync(configPath)) {
@@ -161,7 +169,7 @@ export async function loadConfig(configPath: string, sourceOverride?: string): P
   if (/^\s*import\b/m.test(outputText)) {
     throw new ReportError(
       `${configPath} may only import types from "./archstrict.types.js" - use \`import type\`, not \`import\``,
-      `change the import in ${configPath} to \`import type\`, then run archstrict check`,
+      `change the import in ${configPath} to \`import type\`, then run ${verb}`,
     );
   }
   const dataUrl = `data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`;
@@ -170,7 +178,7 @@ export async function loadConfig(configPath: string, sourceOverride?: string): P
   if (raw === undefined || typeof raw !== "object" || raw === null) {
     throw new ReportError(
       `${configPath} has no default export`,
-      `add a default export satisfying Config to ${configPath}, then run archstrict check`,
+      `add a default export satisfying Config to ${configPath}, then run ${verb}`,
     );
   }
   assertSchemaVersion(configPath, raw);
@@ -178,13 +186,61 @@ export async function loadConfig(configPath: string, sourceOverride?: string): P
     if (!(field in raw)) {
       throw new ReportError(
         `${configPath} is missing required field '${field}'`,
-        `add '${field}' to the default export in ${configPath}, then run archstrict check`,
+        `add '${field}' to the default export in ${configPath}, then run ${verb}`,
       );
     }
   }
+  assertDeclaredModulesShapeValid(configPath, raw, verb);
   const config = { ...(raw as object), configPath } as Config;
   assertEdgesShapeValid(config);
   return config;
+}
+
+// `field in raw` (REQUIRED_FIELDS above) only checks presence, not shape:
+// `declaredModules: null` or `declaredModules: undefined` both satisfy
+// `in` and passed straight through to init's `.map`, which then either
+// threw a raw TypeError (check) or produced `ModuleName = never` /
+// `"a" | ;` - invalid TypeScript - written over the last good union
+// (init). Every reader of `config.declaredModules` (buildModuleGraph,
+// init's own union writer) depends on it actually being an array of
+// `{ name: non-empty string, glob: string }`, so that shape is validated
+// once, here, rather than trusted at every call site.
+function assertDeclaredModulesShapeValid(configPath: string, raw: object, verb: string): void {
+  const declaredModules = (raw as { declaredModules?: unknown }).declaredModules;
+  if (!Array.isArray(declaredModules)) {
+    throw new ReportError(
+      `${configPath} field 'declaredModules' must be an array, not ${describeShape(declaredModules)}`,
+      `make 'declaredModules' an array of { name, glob } entries in ${configPath}, then run ${verb}`,
+    );
+  }
+  declaredModules.forEach((entry, i) => {
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+      throw new ReportError(
+        `${configPath} field 'declaredModules[${i}]' must be an object, not ${describeShape(entry)}`,
+        `make 'declaredModules[${i}]' an object with a 'name' and a 'glob' in ${configPath}, then run ${verb}`,
+      );
+    }
+    const name = (entry as { name?: unknown }).name;
+    if (typeof name === "string" && name.length === 0) {
+      throw new ReportError(
+        `${configPath} field 'declaredModules[${i}].name' must be a non-empty string, got an empty string`,
+        `give 'declaredModules[${i}]' a non-empty string 'name' in ${configPath}, then run ${verb}`,
+      );
+    }
+    if (typeof name !== "string") {
+      throw new ReportError(
+        `${configPath} field 'declaredModules[${i}].name' must be a non-empty string, not ${describeShape(name)}`,
+        `give 'declaredModules[${i}]' a non-empty string 'name' in ${configPath}, then run ${verb}`,
+      );
+    }
+    const glob = (entry as { glob?: unknown }).glob;
+    if (typeof glob !== "string") {
+      throw new ReportError(
+        `${configPath} field 'declaredModules[${i}].glob' must be a string, not ${describeShape(glob)}`,
+        `give 'declaredModules[${i}]' a string 'glob' in ${configPath}, then run ${verb}`,
+      );
+    }
+  });
 }
 
 function allProjectRelativeFiles(graph: ModuleGraph): string[] {
@@ -376,9 +432,10 @@ export function hasBlockingViolations(result: CheckResult): boolean {
 export async function check(projectRoot: string, focusFile?: string, options: CheckOptions = {}): Promise<CheckResult> {
   const configPath = resolve(projectRoot, "archstrict.config.ts");
   const config = await loadConfig(configPath);
-  // declaredModules is the only source of scope now - REQUIRED_FIELDS
-  // above already guarantees a loaded config has it. config.exclude keeps
-  // a project's own root-level files (archstrict.config.ts itself,
+  // declaredModules is the only source of scope now - loadConfig already
+  // guarantees a loaded config has it, as an array of well-shaped entries
+  // (assertDeclaredModulesShapeValid), not merely present. config.exclude
+  // keeps a project's own root-level files (archstrict.config.ts itself,
   // dist/, etc.) out of scope entirely; `init` writes one by default.
   const graph = (options.buildGraph ?? buildModuleGraph)({
     projectRoot,

@@ -133,12 +133,84 @@ describe("init", () => {
   test("a re-run with a broken config rejects and leaves archstrict.types.ts untouched", async () => {
     await withTempProject(["app"], async (root) => {
       await init(root);
+      const configPath = join(root, "archstrict.config.ts");
+      // Hand-add an entry naming a glob with no real matching directory - a
+      // fresh discovery walk could never propose it, so the union this
+      // re-run writes ("app" | "hand-added") cannot coincide with what a
+      // walk, or the broken config below, would produce. Without this, the
+      // fixture's own union and a walk's union were identical, so a bug
+      // that silently regenerated from a fresh walk instead of the config
+      // on disk went undetected.
+      writeFileSync(
+        configPath,
+        readFileSync(configPath, "utf8").replace(
+          "declaredModules: [",
+          'declaredModules: [\n    { name: "hand-added", glob: "src/hand-added/**" },',
+        ),
+      );
+      await init(root);
       const generatedPath = join(root, "archstrict.types.ts");
       const before = readFileSync(generatedPath, "utf8");
-      writeFileSync(join(root, "archstrict.config.ts"), "export default {};\n");
+      expect(before).toContain("hand-added");
+      writeFileSync(configPath, "export default {};\n");
 
       await expect(init(root)).rejects.toThrow(/missing required field 'declaredModules'/);
       expect(readFileSync(generatedPath, "utf8")).toBe(before);
+    });
+  });
+
+  // Same defect as the missing-field case above, one layer deeper:
+  // declaredModules satisfying `in` is not the same fact as it being a real
+  // array of well-shaped entries. Each case here exits 1 with the exact
+  // message and do:, and leaves archstrict.types.ts's exact old bytes -
+  // before this check existed, init instead wrote `ModuleName = never` (or
+  // invalid TypeScript for the missing-name case) over the last good union.
+  describe.each([
+    {
+      label: "declaredModules: null",
+      declaredModules: "null",
+      message: "field 'declaredModules' must be an array, not object",
+    },
+    {
+      label: "declaredModules: undefined",
+      declaredModules: "undefined",
+      message: "field 'declaredModules' must be an array, not undefined",
+    },
+    {
+      label: "declaredModules is not an array (a string)",
+      declaredModules: `"src/**"`,
+      message: "field 'declaredModules' must be an array, not string",
+    },
+    {
+      label: "an entry without a name",
+      declaredModules: `[{ glob: "src/app/**" }]`,
+      message: "field 'declaredModules[0].name' must be a non-empty string, not undefined",
+    },
+    {
+      label: "an entry with a non-string glob",
+      declaredModules: `[{ name: "app", glob: 5 }]`,
+      message: "field 'declaredModules[0].glob' must be a string, not number",
+    },
+  ])("a re-run with $label", ({ declaredModules, message }) => {
+    test("exits 1 with the exact message and do:, leaving archstrict.types.ts's exact old bytes", async () => {
+      await withTempProject(["app"], async (root) => {
+        await init(root);
+        const configPath = join(root, "archstrict.config.ts");
+        const generatedPath = join(root, "archstrict.types.ts");
+        const before = readFileSync(generatedPath, "utf8");
+        writeFileSync(configPath, `export default { declaredModules: ${declaredModules}, because: "test" };\n`);
+
+        let thrown: unknown;
+        try {
+          await init(root);
+        } catch (error) {
+          thrown = error;
+        }
+        expect((thrown as { message: string }).message).toBe(`${configPath} ${message}`);
+        expect((thrown as { do: string }).do).toContain(configPath);
+        expect((thrown as { do: string }).do).toContain("then run archstrict init");
+        expect(readFileSync(generatedPath, "utf8")).toBe(before);
+      });
     });
   });
 
@@ -564,9 +636,22 @@ export default {
       mkdirSync(join(root, "src", "app"), { recursive: true });
       writeFileSync(join(root, "src", "app", "module.ts"), "export const app = 1;\n");
       execFileSync("node", [CLI_PATH, "init"], { cwd: root });
+      const configPath = join(root, "archstrict.config.ts");
+      // Same reason as the unit-level test above: a hand-added entry the
+      // walk could never propose, so the pre-existing union cannot
+      // coincide with what a walk or the broken config would produce.
+      writeFileSync(
+        configPath,
+        readFileSync(configPath, "utf8").replace(
+          "declaredModules: [",
+          'declaredModules: [\n    { name: "hand-added", glob: "src/hand-added/**" },',
+        ),
+      );
+      execFileSync("node", [CLI_PATH, "init"], { cwd: root });
       const generatedPath = join(root, "archstrict.types.ts");
       const before = readFileSync(generatedPath, "utf8");
-      writeFileSync(join(root, "archstrict.config.ts"), "export default {};\n");
+      expect(before).toContain("hand-added");
+      writeFileSync(configPath, "export default {};\n");
 
       let caught: { status: number | null; stderr: string } | undefined;
       try {
