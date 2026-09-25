@@ -22,7 +22,8 @@
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.build.json",
     "dogfood:nukadoko": "npm run build && nuka run features",
-    "ci:ts7-probe": "node scripts/probe-typescript7.mjs"
+    "ci:ts7-probe": "node scripts/probe-typescript7.mjs",
+    "prepare": "npm run build"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",
