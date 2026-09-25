@@ -44,27 +44,56 @@ below use 48, since 4 of the 52 already appeared in the first survey's own
 which pattern is most common, because they measure different populations -
 read both counts below, not just one, before calling a pattern rare.
 
-| Pattern | Tool-search sample (of 82) | Star-ordered sample (of 48) |
-|---|---|---|
-| Public-entry-only | 17 | **22**, the most common pattern in this sample |
-| Layered order | **34**, the most common pattern in this sample | 10 |
-| Runtime/platform environments | 23 | 13 |
-| Feature isolation with a shared kernel | 20 | 2 |
-| Leaf / pure kernel | 16 | 7 |
-| External package confined to one area | 13 | 14 |
-| Type-only exception | 5 | 10 |
-| Host/plugin inversion | 5 | 4 |
-| Hexagonal / clean | 5 | 2 |
-| Test code kept out of production | 9 | 4 |
-| Scope/domain isolation | 9 | 2 |
-| Barrel-inverse | 5 | 3 |
-| App vs lib | 5 | 2 |
-| Two tag axes combined | 7 | 1 |
-| Load-path isolation | no category in this sample | 8 |
-| Edition split | no category in this sample | 2 |
-| Composition root | no category in this sample | 2 |
-| Friend list | no category in this sample | 1 |
-| Entry-graph budget | no category in this sample | 1 |
+| Pattern | Tool-search sample (of 82) | Star-ordered sample (of 48) | Kept in the real import graph (of 50) |
+|---|---|---|---|
+| Public-entry-only | 17 | **22**, the most common pattern in this sample | 2 |
+| Layered order | **34**, the most common pattern in this sample | 10 | 14 |
+| Runtime/platform environments | 23 | 13 | 12 |
+| Feature isolation with a shared kernel | 20 | 2 | 11 |
+| Leaf / pure kernel | 16 | 7 | 14 |
+| External package confined to one area | 13 | 14 | **43**, the most common shape kept in the graph |
+| Type-only exception | 5 | 10 | not measured this way |
+| Host/plugin inversion | 5 | 4 | 10 |
+| Hexagonal / clean | 5 | 2 | not measured this way |
+| Test code kept out of production | 9 | 4 | 30 |
+| Scope/domain isolation | 9 | 2 | not measured this way |
+| Barrel-inverse | 5 | 3 | not measured this way |
+| App vs lib | 5 | 2 | 5 |
+| Two tag axes combined | 7 | 1 | not measured this way |
+| Load-path isolation | no category in this sample | 8 | not measured this way |
+| Edition split | no category in this sample | 2 | not measured this way |
+| Composition root | no category in this sample | 2 | not measured this way |
+| Friend list | no category in this sample | 1 | not measured this way |
+| Entry-graph budget | no category in this sample | 1 | not measured this way |
+
+A third measurement, done directly against the real import graph of 50
+repositories rather than against declared configs, gives the fourth column
+above (see
+[docs/boundary-patterns.md](../../../docs/boundary-patterns.md) for its
+method and limits). It flips the public-entry-only result: the pattern most
+projects declare (22 of 48) is one the graph itself keeps in only 2 of 50
+repositories - declaring it is enforcing something real, not writing down
+what the code already does. External-package confinement and test
+separation are the opposite case: the most common shapes kept in the graph
+whether or not any project declares them, so a config for either is cheap to
+add as a guard on an existing habit rather than a new constraint.
+
+The same graph survey also turned up shapes worth a proposal's own guidance,
+even though none of them is a distinct pattern to configure:
+
+- A cycle that looks balanced at the module level is often lopsided at the
+  edge level - one direction carrying almost every edge, the other carrying
+  one or two. Read a lopsided cycle as "one direction is intended; remove
+  the few reverse edges", not as evidence the pair has no order.
+- Judge a layer order on the production import graph, not the whole-file
+  graph. Test files routinely import a sibling module as a fixture, which
+  can turn a clean layering into a cycle only once tests are counted -
+  archstrict's own cycle and order rules already read the production graph
+  for this reason.
+- A pattern most repositories already keep without declaring it - external
+  package confinement, test code kept out of production - is cheap to
+  propose as a guard: the codebase's own habit is already doing the work,
+  and the rule only needs to say so.
 
 Public-entry-only and an external package confined to one area hold up or
 strengthen across both samples - propose these with confidence when the

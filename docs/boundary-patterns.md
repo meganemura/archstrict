@@ -252,6 +252,103 @@ project references were not read as a source of boundary evidence in this
 sample. As with the first survey, a count here is a frequency within this
 sample, not a share of all public TypeScript code.
 
+## What real import graphs keep
+
+Both samples above read declared configuration files, not the code itself. A
+third pass, done on 2026-09-25, instead measured the real import graph of the
+50 most-starred public TypeScript repositories (star order; 5 skipped for not
+qualifying as a real codebase, one not measured because analysis ran out of
+memory), independent of whether each one declares any rule at all. Two of the
+50 already appear by name elsewhere in this document (VS Code, in the sample
+below) - every other repository is described only by size and shape, per this
+project's own policy on naming other codebases.
+
+**Method.** Each repository was cloned once, shallow (`--depth 1`); nothing
+from it was installed, built, or run. To make a workspace's own internal
+packages resolvable without running an install, `node_modules/<name>` was
+symlinked to each package directory a repository's own manifest named;
+third-party packages stayed unresolved throughout. A monorepo got one module
+per workspace package; every other repository used archstrict's own init-walk
+(one module per directory holding `.ts` under `src/` or the project root). A
+production graph drops every edge whose importing file is test code, since a
+test file importing a sibling package as a fixture is not the same claim as
+production code doing it; cycles and layering are measured on this production,
+value-import graph, with type-only imports counted as a separate, second
+question rather than folded into the same count.
+
+**Counts, with the declaring subset.**
+
+| Pattern | Kept in the graph (of 50) | Of those, declares a rule |
+|---|---|---|
+| Layered order | 14 | 2 |
+| Runtime/platform environments | 12 | 2 |
+| Feature isolation with a shared kernel | 11 | 3 |
+| Public entry only | 2 | 1 |
+| Leaf / pure kernel | 14 | 3 |
+| External package confined to one area | 43 | 9 |
+| App vs lib | 5 | 0 |
+| Test code kept out of production | 30 | 4 |
+| Host/plugin inversion | 10 | 2 |
+
+About 9 of the 50 declare any internal boundary rule at all, read by hand from
+each repository's own root configuration files.
+
+**The key contrast.** Public-entry-only was the single most-declared pattern
+in the star-ordered sample of declared configs (22 of 48 repositories that
+declare anything). In the real graph, it holds for only 2 of these 50
+repositories - a config declaring it is enforcing something the graph does
+not keep on its own as a byproduct of ordinary code organization. External-
+package confinement (43 of 50) and test separation (30 of 50) are the
+opposite case: the most common shapes the graph already keeps, whether or not
+any config exists to say so.
+
+**Shapes not on the pattern list above.**
+
+- **Test code folds a clean layering into one cycle.** In 15 of the 50
+  repositories, more modules sit inside a value-import cycle once test files
+  count than in the production graph alone - a 329-module repository went
+  from 0 modules in cycles to 46; an 84-module repository went from 0 to 2;
+  VS Code went from 4 to 6 of its 10 modules. A test file importing a sibling
+  package as a fixture is the usual cause; judging layering on the production
+  graph, not the whole-file graph, avoids counting that as a real reverse
+  dependency.
+- **One stray import turns an ordered pair into a mutual cycle.** 17 of the
+  50 repositories have a two-module cycle in production code, and it is
+  usually lopsided rather than balanced: VS Code's own two largest modules
+  pair 951 edges one way against 1 the other; a small repository's
+  configuration file and its library pairing showed 1 edge against 48; a
+  12-module repository showed two directories pairing 1 edge against 9. One
+  direction is the intended dependency; the handful of reverse edges read as
+  the exceptions worth removing, not evidence the pair has no order at all.
+- **Type-only imports add back edges a value-only reading misses.** In 8 of
+  the 50 repositories, counting type-only imports puts more modules inside a
+  cycle than counting value imports alone: an 85-module repository went from
+  4 modules in cycles to 73; a 9-module repository went from 0 to 3; a
+  31-module repository went from 10 to 12.
+- **Nearly disconnected workspaces.** 14 of the 50 repositories with at least
+  5 modules have at most one real production dependency for every two
+  modules: a 10-module repository had 3 dependency pairs; a 12-module
+  repository had 5; a 5-module repository had none at all.
+- **One large cycle instead of a layer order.** 9 of the 50 repositories have
+  a single production value cycle covering at least 30% of their modules (a
+  19-module repository with 12 of them in one cycle; a 9-module repository
+  with 3; a 21-module repository with 8); at this granularity these
+  repositories show no layered order to propose at all.
+
+**Limits.** One commit per repository, from a shallow clone with no history -
+nothing here says whether a kept shape is a real, ongoing decision or a
+snapshot of one moment. Only `.ts` files were parsed at the time of this
+measurement; a repository where `.tsx` outnumbers `.ts` has a graph that
+omits most of its UI code. Third-party imports were never resolved, so
+external-package confinement reads the specifier text a file wrote, and an
+unresolved path alias could be miscounted as a package. Granularity is a
+choice archstrict's own init-walk makes, and a different granularity would
+draw different module boundaries and could shift which patterns are visible
+at all. Every threshold above is this survey's own choice, not a bar drawn by
+any measured project; the per-repository numbers this survey produced allow
+a different threshold to be applied later. Intent is always inferred from
+structure, never confirmed by asking anyone who wrote the code.
+
 ## The decision: a reference for agents, not a preset
 
 archstrict does not ship a `--preset` flag, and `init`/`recommend` never
