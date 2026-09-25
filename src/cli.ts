@@ -26,19 +26,25 @@ function reportFailure(error: unknown, verb: string, asJson: boolean): void {
   }
 }
 
-function runInit(args: string[]): number {
+async function runInit(args: string[]): Promise<number> {
   const [modulesGlob] = args;
-  const result = init(process.cwd(), modulesGlob);
-  process.stdout.write(`wrote ${result.generatedPath}\n`);
+  const result = await init(process.cwd(), modulesGlob);
   if (result.configWritten) {
     process.stdout.write(`wrote ${result.configPath}\n`);
+    process.stdout.write(`wrote ${result.generatedPath}\n`);
     if (result.seededExcludeDirs.length > 0) {
       const label = result.seededExcludeDirs.length === 1 ? "directory" : "directories";
       const names = result.seededExcludeDirs.map((name) => `${name}/`).join(", ");
       process.stdout.write(`excluded ${result.seededExcludeDirs.length} noise ${label} found on disk: ${names}\n`);
     }
   } else {
+    // A re-run never touches the config - the union it just wrote came
+    // from reading that untouched file's own declaredModules, not from a
+    // fresh discovery walk, so this line says where the count came from.
     process.stdout.write(`${result.configPath} already exists, left untouched\n`);
+    process.stdout.write(
+      `wrote ${result.generatedPath}: ${result.moduleNames.length} module names, read from archstrict.config.ts\n`,
+    );
   }
   process.stdout.write(`do: archstrict check\n`);
   return 0;
@@ -153,7 +159,7 @@ async function main(argv: string[]): Promise<number> {
     if (verb === "simulate") return await runSimulate(rest);
     if (verb === "fix") return await runFix(rest);
     if (verb === "recommend") return await runRecommend(rest);
-    if (verb === "init") return runInit(rest);
+    if (verb === "init") return await runInit(rest);
     if (verb === "check") return await runCheck(rest);
     if (verb === "todo") return await runTodo(rest);
     if (verb === "rules") return await runRules(rest);

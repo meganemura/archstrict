@@ -49,7 +49,7 @@ describe("loadConfig", () => {
     await withTempProject(async (root) => {
       mkdirSync(join(root, "src", "app"), { recursive: true });
       writeFileSync(join(root, "src", "app", "module.ts"), "export const app = 1;\n");
-      init(root);
+      await init(root);
 
       const config = await loadConfig(join(root, "archstrict.config.ts"));
       expect(config.declaredModules).toEqual([{ name: "app", glob: "src/app/**", surface: "index.ts" }]);
@@ -90,7 +90,7 @@ describe("loadConfig", () => {
     await withTempProject(async (root) => {
       mkdirSync(join(root, "src", "app"), { recursive: true });
       writeFileSync(join(root, "src", "app", "module.ts"), "export const app = 1;\n");
-      init(root);
+      await init(root);
 
       const configPath = join(root, "archstrict.config.ts");
       writeFileSync(
@@ -110,7 +110,7 @@ describe("loadConfig", () => {
     await withTempProject(async (root) => {
       mkdirSync(join(root, "src", "app"), { recursive: true });
       writeFileSync(join(root, "src", "app", "module.ts"), "export const app = 1;\n");
-      init(root);
+      await init(root);
 
       const configPath = join(root, "archstrict.config.ts");
       const first = await loadConfig(configPath);
@@ -130,7 +130,7 @@ describe("loadConfig", () => {
     await withTempProject(async (root) => {
       mkdirSync(join(root, "src", "app"), { recursive: true });
       writeFileSync(join(root, "src", "app", "module.ts"), "export const app = 1;\n");
-      init(root);
+      await init(root);
 
       const configPath = join(root, "archstrict.config.ts");
       writeFileSync(
@@ -146,7 +146,7 @@ describe("loadConfig", () => {
     await withTempProject(async (root) => {
       mkdirSync(join(root, "src", "app"), { recursive: true });
       writeFileSync(join(root, "src", "app", "module.ts"), "export const app = 1;\n");
-      init(root);
+      await init(root);
 
       const configPath = join(root, "archstrict.config.ts");
       writeFileSync(
@@ -163,7 +163,7 @@ describe("loadConfig", () => {
     await withTempProject(async (root) => {
       mkdirSync(join(root, "src", "app"), { recursive: true });
       writeFileSync(join(root, "src", "app", "module.ts"), "export const app = 1;\n");
-      init(root);
+      await init(root);
 
       const configPath = join(root, "archstrict.config.ts");
       writeFileSync(
@@ -180,7 +180,7 @@ describe("loadConfig", () => {
     await withTempProject(async (root) => {
       mkdirSync(join(root, "src", "app"), { recursive: true });
       writeFileSync(join(root, "src", "app", "module.ts"), "export const app = 1;\n");
-      init(root);
+      await init(root);
 
       const configPath = join(root, "archstrict.config.ts");
       writeFileSync(
@@ -216,7 +216,7 @@ describe("check", () => {
         join(root, "src", "app", "importer.ts"),
         "import { shared } from \"../shared/module.ts\";\nexport const x = shared;\n",
       );
-      init(root);
+      await init(root);
 
       const result = await check(root);
       expect(result.modules).toBe(2);
@@ -276,7 +276,7 @@ describe("check", () => {
     await withTempProject(async (root) => {
       mkdirSync(join(root, "src", "app"), { recursive: true });
       writeFileSync(join(root, "src", "app", "module.ts"), "export const app = 1;\n");
-      init(root);
+      await init(root);
 
       const result = await check(root);
       expect(result.violations).toHaveLength(0);
@@ -290,7 +290,7 @@ describe("check", () => {
     await withTempProject(async (root) => {
       mkdirSync(join(root, "src", "app"), { recursive: true });
       writeFileSync(join(root, "src", "app", "module.ts"), "export const app = 1;\n");
-      init(root); // declares only "app" - "other" doesn't exist yet at init time
+      await init(root); // declares only "app" - "other" doesn't exist yet at init time
 
       mkdirSync(join(root, "src", "other"), { recursive: true });
       writeFileSync(join(root, "src", "other", "module.ts"), "export const other = 1;\n");
@@ -307,7 +307,7 @@ describe("check", () => {
     await withTempProject(async (root) => {
       mkdirSync(join(root, "lib", "widgets"), { recursive: true });
       writeFileSync(join(root, "lib", "widgets", "module.ts"), "export const widgets = 1;\n");
-      init(root, "lib/*");
+      await init(root, "lib/*");
 
       const result = await check(root);
       expect(result.modules).toBe(1); // found lib/widgets, not src/* (which doesn't exist here)
@@ -327,7 +327,7 @@ describe("check", () => {
         join(root, "src", "app", "b.ts"),
         "import { shared } from \"../shared/module.ts\";\nexport const y = shared;\n",
       );
-      init(root);
+      await init(root);
 
       const full = await check(root);
       expect(full.violations).toHaveLength(2); // a.ts and b.ts each bypass shared
@@ -364,7 +364,7 @@ describe("check", () => {
         join(root, "src", "app", "a.ts"),
         "import { shared } from \"../shared/module.ts\";\nexport const x = shared;\n",
       );
-      init(root);
+      await init(root);
 
       const linkedRoot = join(root, "..", `${root.split("/").at(-1)}-symlink`);
       symlinkSync(root, linkedRoot);
@@ -381,7 +381,7 @@ describe("check", () => {
     await withTempProject(async (root) => {
       mkdirSync(join(root, "src", "app"), { recursive: true });
       writeFileSync(join(root, "src", "app", "module.ts"), "export const app = 1;\n");
-      init(root);
+      await init(root);
 
       await expect(check(root, join(root, "src", "app", "missing.ts"))).rejects.toThrow(/no such file/);
     });
@@ -434,7 +434,7 @@ describe("check", () => {
           `export const x = [a, b, c];`,
         ].join("\n"),
       );
-      init(root);
+      await init(root);
 
       const result = await check(root);
       // Two distinct subpath specifiers of the same scoped package

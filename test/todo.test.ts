@@ -27,7 +27,7 @@ describe("todo", () => {
   test("first run freezes the current violation; check on the same input is then green", async () => {
     await withTempProject(async (root) => {
       writeBypassProject(root);
-      init(root);
+      await init(root);
 
       const before = await check(root);
       expect(before.violations).toHaveLength(1);
@@ -48,7 +48,7 @@ describe("todo", () => {
   test("todo file lives inside the exposed module's own directory", async () => {
     await withTempProject(async (root) => {
       writeBypassProject(root);
-      init(root);
+      await init(root);
       await todo(root);
 
       const todoFile = join(root, "src", "shared", "archstrict.todo.json");
@@ -61,7 +61,7 @@ describe("todo", () => {
   test("a second run only prunes: fixing the violation removes the todo file, not by adding", async () => {
     await withTempProject(async (root) => {
       writeBypassProject(root);
-      init(root);
+      await init(root);
       await todo(root);
 
       // Fix the violation by removing the bypassing import.
@@ -84,7 +84,7 @@ describe("todo", () => {
       mkdirSync(join(root, "src", "shared"), { recursive: true });
       writeFileSync(join(root, "src", "shared", "module.ts"), "export const shared = 1;\n");
       writeFileSync(join(root, "src", "app", "module.ts"), "export const app = 1;\n");
-      init(root); // declares both app and shared now, while neither bypasses the other
+      await init(root); // declares both app and shared now, while neither bypasses the other
       await todo(root); // first run: nothing to freeze yet
 
       // Introduces a real violation, but only within modules init already
@@ -107,7 +107,7 @@ describe("todo", () => {
     await withTempProject(async (root) => {
       mkdirSync(join(root, "src", "app"), { recursive: true });
       writeFileSync(join(root, "src", "app", "module.ts"), "export const app = 1;\n");
-      init(root); // declares only "app" - "shared" doesn't exist yet
+      await init(root); // declares only "app" - "shared" doesn't exist yet
 
       writeBypassProject(root); // adds src/shared/ AND makes app bypass it, without re-running init
 
@@ -128,19 +128,20 @@ describe("todo", () => {
       // Re-running init does NOT add "shared" to declaredModules either:
       // init never rewrites an existing archstrict.config.ts (a hand-edited
       // config must never be clobbered - the same guarantee "is idempotent"
-      // in init.test.ts already covers). It only regenerates
-      // archstrict.types.ts's own module-name union, which does pick up
-      // "shared" - a real signal a project owner would see (a stale name
-      // appearing in ModuleName that declaredModules doesn't cover yet),
-      // just not one that changes what check itself analyzes. Declaring a
-      // genuinely new module means hand-adding its own declaredModules
+      // in init.test.ts already covers). archstrict.types.ts's own
+      // module-name union now also leaves "shared" out: the union is read
+      // back from the untouched config's own declaredModules, not from a
+      // fresh discovery walk, so it agrees with what check itself analyzes
+      // instead of naming a module check doesn't know about yet. Declaring
+      // a genuinely new module means hand-adding its own declaredModules
       // entry - the same real trade-off Prisma's own architecture.config.json
       // makes (a new package there needs its own new config entry too, not
       // automatic discovery).
-      const reinitResult = init(root);
+      const reinitResult = await init(root);
       expect(reinitResult.configWritten).toBe(false);
-      expect(reinitResult.moduleNames).toEqual(["app", "shared"]);
-      expect(readFileSync(reinitResult.generatedPath, "utf8")).toContain('"app" | "shared"');
+      expect(reinitResult.moduleNames).toEqual(["app"]);
+      expect(readFileSync(reinitResult.generatedPath, "utf8")).toContain('"app"');
+      expect(readFileSync(reinitResult.generatedPath, "utf8")).not.toContain("shared");
 
       const afterReinit = await check(root);
       expect(afterReinit.modules).toBe(1); // declaredModules in the untouched config still names only "app"
@@ -157,7 +158,7 @@ describe("todo", () => {
         `import type { Config } from "./archstrict.types.js";\n` +
           `export default { declaredModules: [{ name: "app", glob: "src/app/**", surface: "index.ts" }, { name: "shared", glob: "src/shared/**", surface: "index.ts" }], strict: ["shared"], exclude: ["*.ts"], because: "test" } satisfies Config;\n`,
       );
-      init(root); // writes archstrict.types.ts; leaves the hand-written config alone
+      await init(root); // writes archstrict.types.ts; leaves the hand-written config alone
 
       const result = await todo(root);
       expect(result.added).toBe(0);
@@ -171,7 +172,7 @@ describe("todo", () => {
   test("a strict module's own existing todo entries are a violation, not silently kept", async () => {
     await withTempProject(async (root) => {
       writeBypassProject(root);
-      init(root);
+      await init(root);
       await todo(root); // freezes the violation while shared is not yet strict
 
       // Mark shared strict after the fact - it already has a frozen entry.
@@ -197,7 +198,7 @@ describe("todo", () => {
         join(root, "src", "m", "index.ts"),
         'import type { Hidden } from "./internal.js";\nexport type A = { h: Hidden };\n',
       );
-      init(root);
+      await init(root);
       await todo(root); // freezes the one leak (Hidden, referenced by A)
 
       const beforeTodoFile = JSON.parse(
@@ -313,7 +314,7 @@ describe("todo", () => {
   test("a new freeze writes a project-relative, forward-slashed path, not the live violation's absolute one", async () => {
     await withTempProject(async (root) => {
       writeBypassProject(root);
-      init(root);
+      await init(root);
       await todo(root);
 
       const todoFile = join(root, "src", "shared", "archstrict.todo.json");
@@ -326,7 +327,7 @@ describe("todo", () => {
   test("a legacy absolute-path entry that survives pruning is rewritten to relative form (self-healing); one that gets pruned is simply dropped", async () => {
     await withTempProject(async (root) => {
       writeBypassProject(root);
-      init(root);
+      await init(root);
       await todo(root); // marks the project as past its first run
 
       // Hand-write a legacy-shaped entry (absolute path) whose fingerprint
@@ -358,7 +359,7 @@ describe("todo", () => {
   test("a stale todo entry (hand-edited to no longer match) is its own violation", async () => {
     await withTempProject(async (root) => {
       writeBypassProject(root);
-      init(root);
+      await init(root);
       await todo(root);
 
       // Hand-edit the todo to name a fingerprint nothing produces.

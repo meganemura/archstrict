@@ -97,12 +97,12 @@ const _checkDeclaredModuleFieldsMatch: AssertKeysMatch<
 > = true;
 
 describe("init's generated Config type stays in sync with the real Config", () => {
-  test("every real Config field (other than configPath) actually appears in what a fresh archstrict init writes to disk", () => {
+  test("every real Config field (other than configPath) actually appears in what a fresh archstrict init writes to disk", async () => {
     const root = mkdtempSync(join(tmpdir(), "archstrict-generated-type-drift-"));
     try {
       mkdirSync(join(root, "src", "app"), { recursive: true });
       writeFileSync(join(root, "src", "app", "module.ts"), "export const app = 1;\n");
-      const { generatedPath } = init(root);
+      const { generatedPath } = await init(root);
       const generated = readFileSync(generatedPath, "utf8");
 
       for (const field of EXPECTED_GENERATED_FIELDS) {

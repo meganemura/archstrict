@@ -1,11 +1,18 @@
 import { describe, expect, test } from "vitest";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import * as hegel from "@hegeldev/hegel";
+import * as gen from "@hegeldev/hegel/generators";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { init } from "../src/verbs/init.js";
 
-function withTempProject(modules: string[], fn: (root: string) => void): void {
+// The built CLI, spawned as a real process - the exact-stdout and exit-code
+// tests below check what a real invocation prints, not just what the
+// library function returns.
+const CLI_PATH = new URL("../dist/cli.js", import.meta.url).pathname;
+
+async function withTempProject(modules: string[], fn: (root: string) => void | Promise<void>): Promise<void> {
   const root = mkdtempSync(join(tmpdir(), "archstrict-init-"));
   try {
     for (const name of modules) {
@@ -14,16 +21,16 @@ function withTempProject(modules: string[], fn: (root: string) => void): void {
       writeFileSync(join(dir, "module.ts"), `export const ${name} = 1;\n`);
     }
     writeFileSync(join(root, "tsconfig.json"), "{}");
-    fn(root);
+    await fn(root);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 }
 
 describe("init", () => {
-  test("writes archstrict.types.ts and archstrict.config.ts", () => {
-    withTempProject(["app", "shared"], (root) => {
-      const result = init(root);
+  test("writes archstrict.types.ts and archstrict.config.ts", async () => {
+    await withTempProject(["app", "shared"], async (root) => {
+      const result = await init(root);
       expect(result.configWritten).toBe(true);
       expect(result.moduleNames).toEqual(["app", "shared"]);
 
@@ -39,34 +46,90 @@ describe("init", () => {
     });
   });
 
-  test("is idempotent: a second run does not overwrite a hand-edited config", () => {
-    withTempProject(["app"], (root) => {
-      init(root);
+  test("is idempotent: a second run does not overwrite a hand-edited config", async () => {
+    await withTempProject(["app"], async (root) => {
+      await init(root);
       const configPath = join(root, "archstrict.config.ts");
       writeFileSync(configPath, "// hand-edited, do not clobber\n" + readFileSync(configPath, "utf8"));
 
-      const second = init(root);
+      const second = await init(root);
       expect(second.configWritten).toBe(false);
       expect(readFileSync(configPath, "utf8")).toContain("hand-edited");
     });
   });
 
-  test("regenerates archstrict.types.ts on every run, since init owns that file", () => {
-    withTempProject(["app"], (root) => {
-      init(root);
-      // Add a module after the first init, then run again.
+  test("a re-run's union follows the config's own declaredModules, not a fresh directory walk", async () => {
+    await withTempProject(["app"], async (root) => {
+      await init(root);
+      // A directory added after the first init, with NO matching
+      // declaredModules entry hand-added to the config: the config on disk
+      // still names only "app", so the re-run's union must too - the walk
+      // that found "app" the first time is a fresh-config-only suggestion,
+      // never a re-run's source of truth. The opposite bug (a hand-added
+      // declaredModules entry the walk never proposed silently dropping
+      // out of the union on the next run) is the next test below.
       mkdirSync(join(root, "src", "shared"), { recursive: true });
       writeFileSync(join(root, "src", "shared", "module.ts"), "export const shared = 1;\n");
 
-      const second = init(root);
-      expect(second.moduleNames).toEqual(["app", "shared"]);
-      expect(readFileSync(second.generatedPath, "utf8")).toContain('"app" | "shared"');
+      const second = await init(root);
+      expect(second.moduleNames).toEqual(["app"]);
+      expect(readFileSync(second.generatedPath, "utf8")).not.toContain("shared");
     });
   });
 
-  test("the generated config actually typechecks against real tsc", () => {
-    withTempProject(["app", "shared"], (root) => {
-      init(root);
+  test("a re-run's union picks up a hand-added declaredModules entry the discovery walk would never propose", async () => {
+    await withTempProject(["dir1"], async (root) => {
+      await init(root);
+      const configPath = join(root, "archstrict.config.ts");
+      writeFileSync(join(root, "src", "x.ts"), "export const x = 1;\n");
+      writeFileSync(
+        configPath,
+        readFileSync(configPath, "utf8").replace(
+          "declaredModules: [",
+          'declaredModules: [\n    { name: "core", glob: "src/*.ts" },',
+        ),
+      );
+
+      const second = await init(root);
+      expect(second.configWritten).toBe(false);
+      expect(second.moduleNames).toEqual(["core", "dir1"]);
+      expect(readFileSync(second.generatedPath, "utf8")).toContain('"core" | "dir1"');
+    });
+  });
+
+  test("removing a declaredModules entry by hand makes its name leave the union on the next re-run", async () => {
+    await withTempProject(["app", "shared"], async (root) => {
+      await init(root);
+      const configPath = join(root, "archstrict.config.ts");
+      const withoutShared = readFileSync(configPath, "utf8").replace(
+        /\s*\{ name: "shared",[^}]*\},/,
+        "",
+      );
+      expect(withoutShared).not.toContain('"shared"');
+      writeFileSync(configPath, withoutShared);
+
+      const second = await init(root);
+      expect(second.configWritten).toBe(false);
+      expect(second.moduleNames).toEqual(["app"]);
+      expect(readFileSync(second.generatedPath, "utf8")).not.toContain("shared");
+    });
+  });
+
+  test("a re-run with a broken config rejects and leaves archstrict.types.ts untouched", async () => {
+    await withTempProject(["app"], async (root) => {
+      await init(root);
+      const generatedPath = join(root, "archstrict.types.ts");
+      const before = readFileSync(generatedPath, "utf8");
+      writeFileSync(join(root, "archstrict.config.ts"), "export default {};\n");
+
+      await expect(init(root)).rejects.toThrow(/missing required field 'declaredModules'/);
+      expect(readFileSync(generatedPath, "utf8")).toBe(before);
+    });
+  });
+
+  test("the generated config actually typechecks against real tsc", async () => {
+    await withTempProject(["app", "shared"], async (root) => {
+      await init(root);
       writeFileSync(
         join(root, "tsconfig.json"),
         JSON.stringify(
@@ -93,9 +156,9 @@ describe("init", () => {
     });
   });
 
-  test("a config using every optional field (deprecated, strict, ignoredCycles, exclude, classify, mustBeEmpty) typechecks against real tsc", () => {
-    withTempProject(["app", "shared"], (root) => {
-      init(root);
+  test("a config using every optional field (deprecated, strict, ignoredCycles, exclude, classify, mustBeEmpty) typechecks against real tsc", async () => {
+    await withTempProject(["app", "shared"], async (root) => {
+      await init(root);
       writeFileSync(
         join(root, "archstrict.config.ts"),
         `import type { Config } from "./archstrict.types.js";
@@ -151,9 +214,9 @@ export default {
   // rule shapes (allowDeny/order/point), a declaredModules entry's own
   // friends field, and a declaredModules entry's own surface as an array
   // of globs, together.
-  test("a config using scope, classifyByDirectoryName, edges (allowDeny/order/point), a declaredModules friends entry, and a declaredModules array surface typechecks against real tsc", () => {
-    withTempProject(["app", "shared"], (root) => {
-      init(root);
+  test("a config using scope, classifyByDirectoryName, edges (allowDeny/order/point), a declaredModules friends entry, and a declaredModules array surface typechecks against real tsc", async () => {
+    await withTempProject(["app", "shared"], async (root) => {
+      await init(root);
       writeFileSync(
         join(root, "archstrict.config.ts"),
         `import type { Config } from "./archstrict.types.js";
@@ -231,9 +294,9 @@ export default {
     });
   });
 
-  test("a config that omits surface entirely still typechecks against the generated Config", () => {
-    withTempProject(["app"], (root) => {
-      init(root);
+  test("a config that omits surface entirely still typechecks against the generated Config", async () => {
+    await withTempProject(["app"], async (root) => {
+      await init(root);
       writeFileSync(
         join(root, "archstrict.config.ts"),
         `import type { Config } from "./archstrict.types.js";
@@ -269,9 +332,9 @@ export default {
     });
   });
 
-  test("a declaredModules entry that omits its own surface still typechecks against the generated Config", () => {
-    withTempProject(["app"], (root) => {
-      init(root);
+  test("a declaredModules entry that omits its own surface still typechecks against the generated Config", async () => {
+    await withTempProject(["app"], async (root) => {
+      await init(root);
       writeFileSync(
         join(root, "archstrict.config.ts"),
         `import type { Config } from "./archstrict.types.js";
@@ -307,14 +370,14 @@ export default {
     });
   });
 
-  test("seeds exclude with real noise directories found on disk", () => {
-    withTempProject(["app"], (root) => {
+  test("seeds exclude with real noise directories found on disk", async () => {
+    await withTempProject(["app"], async (root) => {
       mkdirSync(join(root, "test"), { recursive: true });
       writeFileSync(join(root, "test", "some.test.ts"), "export const x = 1;\n");
       mkdirSync(join(root, "spike"), { recursive: true });
       writeFileSync(join(root, "spike", "notes.ts"), "export const y = 1;\n");
 
-      const result = init(root);
+      const result = await init(root);
       expect(result.configWritten).toBe(true);
       expect(result.seededExcludeDirs).toEqual(["test", "spike"]);
 
@@ -325,9 +388,9 @@ export default {
     });
   });
 
-  test("leaves exclude at just *.ts when none of the candidate noise directories exist", () => {
-    withTempProject(["app"], (root) => {
-      const result = init(root);
+  test("leaves exclude at just *.ts when none of the candidate noise directories exist", async () => {
+    await withTempProject(["app"], async (root) => {
+      const result = await init(root);
       expect(result.configWritten).toBe(true);
       expect(result.seededExcludeDirs).toEqual([]);
 
@@ -338,9 +401,9 @@ export default {
     });
   });
 
-  test("never touches an already-existing config, even when noise directories exist on disk", () => {
-    withTempProject(["app"], (root) => {
-      init(root);
+  test("never touches an already-existing config, even when noise directories exist on disk", async () => {
+    await withTempProject(["app"], async (root) => {
+      await init(root);
       const configPath = join(root, "archstrict.config.ts");
       const original = "// hand-edited, do not clobber\n" + readFileSync(configPath, "utf8");
       writeFileSync(configPath, original);
@@ -348,7 +411,7 @@ export default {
       mkdirSync(join(root, "test"), { recursive: true });
       writeFileSync(join(root, "test", "some.test.ts"), "export const x = 1;\n");
 
-      const result = init(root);
+      const result = await init(root);
       expect(result.configWritten).toBe(false);
       expect(result.seededExcludeDirs).toEqual([]);
       expect(readFileSync(configPath, "utf8")).toBe(original);
@@ -364,7 +427,7 @@ export default {
       writeFileSync(join(root, "test", "some.test.ts"), "export const t = 1;\n");
       writeFileSync(join(root, "tsconfig.json"), "{}");
 
-      init(root);
+      await init(root);
 
       const { check } = await import("../src/verbs/check.js");
       const result = await check(root);
@@ -377,14 +440,105 @@ export default {
     }
   });
 
-  test("init on a project with no src/ at all fails loudly, naming what's missing", () => {
+  test("init on a project with no src/ at all fails loudly, naming what's missing", async () => {
     const root = mkdtempSync(join(tmpdir(), "archstrict-init-"));
     try {
       // No src/ directory created at all — the likely first-run state for
       // a brand-new project, since init is the first verb anyone runs.
-      expect(() => init(root)).toThrow(/does not exist/);
+      // A fresh run's own discovery walk throws before any await, but
+      // init() is itself async now, so the throw surfaces as a rejection,
+      // not a synchronous exception.
+      await expect(init(root)).rejects.toThrow(/does not exist/);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  test("the exact CLI stdout for a fresh run", () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "archstrict-cli-init-fresh-")));
+    try {
+      mkdirSync(join(root, "src", "app"), { recursive: true });
+      writeFileSync(join(root, "src", "app", "module.ts"), "export const app = 1;\n");
+
+      const out = execFileSync("node", [CLI_PATH, "init"], { cwd: root, encoding: "utf8" });
+      expect(out).toBe(
+        `wrote ${join(root, "archstrict.config.ts")}\n` +
+          `wrote ${join(root, "archstrict.types.ts")}\n` +
+          `do: archstrict check\n`,
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("the exact CLI stdout for a re-run", () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "archstrict-cli-init-rerun-")));
+    try {
+      mkdirSync(join(root, "src", "app"), { recursive: true });
+      writeFileSync(join(root, "src", "app", "module.ts"), "export const app = 1;\n");
+      execFileSync("node", [CLI_PATH, "init"], { cwd: root });
+
+      const out = execFileSync("node", [CLI_PATH, "init"], { cwd: root, encoding: "utf8" });
+      expect(out).toBe(
+        `${join(root, "archstrict.config.ts")} already exists, left untouched\n` +
+          `wrote ${join(root, "archstrict.types.ts")}: 1 module names, read from archstrict.config.ts\n` +
+          `do: archstrict check\n`,
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a re-run with a broken config exits 1 with the loader's message and do:, leaving archstrict.types.ts's exact old bytes", () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "archstrict-cli-init-broken-")));
+    try {
+      mkdirSync(join(root, "src", "app"), { recursive: true });
+      writeFileSync(join(root, "src", "app", "module.ts"), "export const app = 1;\n");
+      execFileSync("node", [CLI_PATH, "init"], { cwd: root });
+      const generatedPath = join(root, "archstrict.types.ts");
+      const before = readFileSync(generatedPath, "utf8");
+      writeFileSync(join(root, "archstrict.config.ts"), "export default {};\n");
+
+      let caught: { status: number | null; stderr: string } | undefined;
+      try {
+        execFileSync("node", [CLI_PATH, "init"], { cwd: root, encoding: "utf8" });
+      } catch (error) {
+        caught = error as { status: number | null; stderr: string };
+      }
+      expect(caught).toBeDefined();
+      expect(caught!.status).toBe(1);
+      expect(caught!.stderr).toContain("is missing required field 'declaredModules'");
+      expect(caught!.stderr).toContain("do:");
+      expect(readFileSync(generatedPath, "utf8")).toBe(before);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // Property: init only ever seeds a FRESH config from discovery; a
+  // re-run's union comes from reading declaredModules back, so for any
+  // set of unique valid names already in the config, the union it writes
+  // is exactly those names, sorted - regardless of how many there are or
+  // what real directories exist on disk (there are none here at all).
+  test("hegel: a re-run's union equals the sorted, unique names already in the config's declaredModules", async () => {
+    await hegel.testAsync(async (tc) => {
+      const count = tc.draw(gen.integers({ minValue: 1, maxValue: 6 }));
+      const offset = tc.draw(gen.integers({ minValue: 0, maxValue: 10000 }));
+      const names = Array.from({ length: count }, (_, i) => `m${offset + i}`);
+      const root = mkdtempSync(join(tmpdir(), "archstrict-init-hegel-"));
+      try {
+        const declaredModules = names.map((name) => ({ name, glob: `src/${name}/**` }));
+        writeFileSync(
+          join(root, "archstrict.config.ts"),
+          `export default ${JSON.stringify({ declaredModules, because: "hegel" })};\n`,
+        );
+
+        const result = await init(root);
+        expect(result.configWritten).toBe(false);
+        expect(result.moduleNames).toEqual([...names].sort());
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
   });
 });
