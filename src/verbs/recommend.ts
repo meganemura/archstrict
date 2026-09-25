@@ -22,7 +22,11 @@ export type RecommendResult = {
 // Report every eligible pair, even when the count is large; a hidden cap would conceal choices the reader should make.
 // Beyond empty directories, pruning heuristics would substitute the tool's priorities for the reader's decision about which boundaries matter.
 // This verb proposes observed boundaries without imposing or judging them, so it offers no --apply, --write, or --prove flag.
-export async function recommend(projectRoot: string, dir?: string, surface = DEFAULT_SURFACE): Promise<RecommendResult> {
+export async function recommend(
+  projectRoot: string,
+  dir?: string,
+  surface: string | readonly string[] = DEFAULT_SURFACE,
+): Promise<RecommendResult> {
   const configPath = resolve(projectRoot, "archstrict.config.ts");
   const config = existsSync(configPath) ? await loadConfig(configPath) : undefined;
   // A config supplies its own scope regardless of `dir` - unchanged from

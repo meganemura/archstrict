@@ -1,6 +1,6 @@
 # The PostToolUse hook
 
-This plugin's `PostToolUse` hook (`.agents/hooks/post-tool-use.mjs`) runs after every Edit/Write/MultiEdit. Claude invokes it as `${CLAUDE_PLUGIN_ROOT}/hooks/post-tool-use.mjs`; repo-root `hooks/` is a symlink to `.agents/hooks`. On a `.ts` file, it shells out to **the edited project's own** `node_modules/.bin/archstrict check <file> --json` - never this repository's own build - and returns any violation into the agent's own context via `hookSpecificOutput.additionalContext`, the same moment a human editor's red squiggly would appear.
+This plugin's `PostToolUse` hook (`.agents/hooks/post-tool-use.mjs`) runs after every Edit/Write/MultiEdit. Claude invokes it as `${CLAUDE_PLUGIN_ROOT}/hooks/post-tool-use.mjs`; repo-root `hooks/` is a symlink to `.agents/hooks`. On a TypeScript source file (`.ts`, `.tsx`, `.mts`, `.cts`), it shells out to **the edited project's own** `node_modules/.bin/archstrict check <file> --json` - never this repository's own build - and returns any violation into the agent's own context via `hookSpecificOutput.additionalContext`, the same moment a human editor's red squiggly would appear.
 
 ## Why it might say nothing
 
@@ -14,7 +14,7 @@ Every one of these is silent by design, not a failure:
 
 When `archstrict check --json` reports `{ "error": "...", "do": "..." }` instead of a real result, or exits with no output at all - `check` exiting 1 with violations present is expected, normal output, read as data, not this case. A config error (`archstrict.config.ts` missing a required field, a `schemaVersion` other than `1`, a `deprecated` entry naming a module that doesn't exist, `check <file>` naming a file that doesn't exist) reports this way; the message names which one, and `do` names the command to run. The hook includes that `do` line in the context it returns.
 
-`archstrict init` itself, not the hook, reports its own errors when a project has no analyzed `.ts` file to declare at all (`init` writes neither file and exits 1), or its own directory argument names something init won't open (a glob character, a nested path, a hidden name, `node_modules`, `dist`, or an explicit directory that doesn't exist or holds no `.ts`) - each names what's wrong and the one command to run next.
+`archstrict init` itself, not the hook, reports its own errors when a project has no analyzed TypeScript source file to declare at all (`init` writes neither file and exits 1), or its own directory argument names something init won't open (a glob character, a nested path, a hidden name, `node_modules`, `dist`, or an explicit directory that doesn't exist or holds no TypeScript source) - each names what's wrong and the one command to run next.
 
 ## Path resolution
 

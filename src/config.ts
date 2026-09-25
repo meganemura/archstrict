@@ -27,12 +27,15 @@ export type Config = {
   // See SCHEMA_VERSION. Optional so a config written before the field
   // existed still typechecks; loadConfig rejects any value other than 1.
   schemaVersion?: typeof SCHEMA_VERSION;
-  // The public-surface file name (module-graph.ts's own `surface` option).
-  // Not fixed by the tool: a project names its own, and `init` writes the
-  // default ("index.ts") explicitly rather than detecting an existing
-  // convention. Optional here so a hand-written config that omits it still
-  // typechecks; module-graph.ts applies the same default when it's absent.
-  surface?: string;
+  // The public-surface file name(s) (module-graph.ts's own `surface`
+  // option) - a single string, or an array, the same shape a per-module
+  // `declaredModules[].surface` already accepts. Not fixed by the tool: a
+  // project names its own, and `init` writes the default (DEFAULT_SURFACE,
+  // one entry per analyzed source extension) explicitly rather than
+  // detecting an existing convention. Optional here so a hand-written
+  // config that omits it still typechecks; module-graph.ts applies the
+  // same default when it's absent.
+  surface?: string | readonly string[];
   // A from -> to module edge whose count must not increase (rule 5).
   // `because` is mandatory: a deprecated edge names a real design tradeoff,
   // and a root-level rule with no stated reason is a decision no future

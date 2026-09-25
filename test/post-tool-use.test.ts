@@ -81,6 +81,26 @@ describe("post-tool-use hook", () => {
     });
   });
 
+  test("surfaces a violation after editing a .tsx file", () => {
+    withTempProject((root) => {
+      mkdirSync(join(root, "src", "app"), { recursive: true });
+      mkdirSync(join(root, "src", "shared"), { recursive: true });
+      writeFileSync(join(root, "src", "shared", "module.ts"), "export const shared = 1;\n");
+      const importer = join(root, "src", "app", "View.tsx");
+      writeFileSync(importer, "import { shared } from \"../shared/module.ts\";\nexport const x = shared;\n");
+      writeFileSync(
+        join(root, "archstrict.config.ts"),
+        "export default { declaredModules: [{ name: \"app\", glob: \"src/app/**\" }, { name: \"shared\", glob: \"src/shared/**\" }], exclude: [\"archstrict.config.ts\"], because: \"test\" };\n",
+      );
+      installArchstrictBin(root);
+
+      const output = runHook({ tool_name: "Edit", tool_input: { file_path: importer }, cwd: root });
+
+      expect(output.hookSpecificOutput?.additionalContext).toContain("public-surface-bypass");
+      expect(output.hookSpecificOutput?.additionalContext).toContain(importer);
+    });
+  });
+
   test("says nothing when the edited file has no violation", () => {
     withTempProject((root) => {
       mkdirSync(join(root, "src", "app"), { recursive: true });

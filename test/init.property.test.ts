@@ -33,9 +33,12 @@ import { checkUncoveredModules } from "../src/rules/uncovered.js";
 // src/ file, or a same-name directory at two levels) rather than never
 // drawing one at all.
 const SRC_DIR_NAMES = ["alpha", "beta", "gamma", "widgets"] as const;
-const SRC_FILE_NAMES = ["one.ts", "two.ts", "cli.ts"] as const;
+// "two.tsx" and "tool.config.tsx" are deliberately .tsx, not .ts - the
+// coverage property below (P1) must hold the same way over a generated
+// tree mixing both analyzed source extensions, not just plain .ts.
+const SRC_FILE_NAMES = ["one.ts", "two.tsx", "cli.ts"] as const;
 const TOP_DIR_NAMES = ["widgets", "gizmos", "context"] as const;
-const TOP_FILE_NAMES = ["cli.ts", "tool.config.ts", "context.ts"] as const;
+const TOP_FILE_NAMES = ["cli.ts", "tool.config.tsx", "context.ts"] as const;
 
 type Shape = "none" | "flat" | "dirs";
 
@@ -88,7 +91,7 @@ function writeTree(root: string, tree: Tree): void {
     writeFileSync(join(root, "src", SRC_FILE_NAMES[0]), "export const one = 1;\n");
     for (const [i, name] of SRC_FILE_NAMES.entries()) {
       if (i === 0 || !tree.srcFileFlags[i]) continue;
-      writeFileSync(join(root, "src", name), `export const ${name.replace(".ts", "")} = 1;\n`);
+      writeFileSync(join(root, "src", name), `export const ${name.replace(/\.tsx?$/, "")} = 1;\n`);
     }
     nestParent = join(root, "src");
   } else {

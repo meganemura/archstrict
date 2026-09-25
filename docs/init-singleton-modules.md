@@ -2,8 +2,9 @@
 
 `archstrict init [dir]` walks the project with check's own file-eligibility
 rule and declares one module per top-level directory that holds an
-analyzed `.ts` file, and one single-file module per loose top-level `.ts`
-file - both inside the opened container (`src/` by default) and at the
+analyzed source file (`.ts`, `.tsx`, `.mts`, or `.cts`), and one
+single-file module per loose top-level file of one of those extensions -
+both inside the opened container (`src/` by default) and at the
 project root. Every file the first `check` analyzes then belongs to
 exactly one declared module, by construction. The first check therefore
 reports 0 `uncovered-module` and 0 `empty-rule-set` violations, on any
@@ -81,7 +82,7 @@ alternative (checking the whole container as one module instead) without
 writing it - that shape stays a hand-edit, since a `do:` line names one
 action, not a menu.
 
-A project with no analyzed `.ts` file anywhere - under the seeded
+A project with no analyzed source file anywhere - under the seeded
 exclude - has nothing for `init` to declare. It writes neither file and
 exits 1, naming what's missing.
 

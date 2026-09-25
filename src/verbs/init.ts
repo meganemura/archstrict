@@ -84,7 +84,7 @@ function uncoveredGroups(
   projectRoot: string,
   declaredModules: readonly DeclaredModule[],
   exclude: readonly string[],
-  surface: string,
+  surface: string | readonly string[],
 ): NamedCandidateGroup[] {
   const files = listAnalyzedFiles(projectRoot, exclude, declaredModules, surface);
   const uncovered = files.filter((f) => moduleForDeclaredFile(f, projectRoot, declaredModules) === undefined);
@@ -193,14 +193,14 @@ function configText(
 ): string {
   const lines: string[] = [];
   if (containerGroups.length > 0) {
-    lines.push(`    // Each directory and .ts file directly in ${opened}/.`);
+    lines.push(`    // Each directory and TypeScript source file directly in ${opened}/.`);
     lines.push(...containerGroups.map((g) => `    ${declaredModuleEntryText(g.entry)},`));
   }
   if (topGroups.length > 0) {
     lines.push(
       opened !== ""
-        ? `    // Each other top-level directory that holds .ts, and each top-level .ts file.`
-        : `    // Each top-level directory that holds .ts, and each top-level .ts file.`,
+        ? `    // Each other top-level directory that holds TypeScript source, and each top-level TypeScript source file.`
+        : `    // Each top-level directory that holds TypeScript source, and each top-level TypeScript source file.`,
     );
     lines.push(...topGroups.map((g) => `    ${declaredModuleEntryText(g.entry)},`));
   }
@@ -213,14 +213,14 @@ function configText(
   return `import type { Config } from "./archstrict.types.js";
 
 // Public surface: other modules may import a directory module only through
-// its index.ts (named by \`surface\` below), or through the files its own
+// its own surface file (named by \`surface\` below), or through the files its own
 // package.json exports map names. An import that reaches any other file in
 // the directory is a violation. A directory module with no such file is
 // entirely private. A module whose glob names one file is that file, so its
 // entry names the file itself as its surface.
 export default {
   schemaVersion: ${SCHEMA_VERSION},
-  surface: ${q(DEFAULT_SURFACE)},
+  surface: [${DEFAULT_SURFACE.map((s) => q(s)).join(", ")}],
   // Kept out of analysis entirely:
   // - archstrict's own two files, which are never module content;
   // - hidden directories at any depth (.git, tool state), which tsc's own
@@ -228,14 +228,15 @@ export default {
   exclude: [
 ${exclude.map((e) => `    ${q(e)},`).join("\n")}
   ],
-  // init declared one module per directory that holds .ts and one per .ts
-  // file, so every file that check analyzes belongs to exactly one module.
-  // Merge, rename, or remove entries freely: init never rewrites this file.
-  // After an edit, run archstrict init to regenerate archstrict.types.ts.
+  // init declared one module per directory that holds TypeScript source and
+  // one per TypeScript source file, so every file that check analyzes
+  // belongs to exactly one module. Merge, rename, or remove entries freely:
+  // init never rewrites this file. After an edit, run archstrict init to
+  // regenerate archstrict.types.ts.
   declaredModules: [
 ${lines.join("\n")}
   ],
-  because: "archstrict init: one module per directory that holds .ts and per .ts file, so the first check covers every file it analyzes",
+  because: "archstrict init: one module per directory that holds TypeScript source and per TypeScript source file, so the first check covers every file it analyzes",
 } satisfies Config;
 `;
 }
@@ -255,7 +256,7 @@ export type Config = {
   // value archstrict reads. Omit it and the loader treats the file as
   // schema ${SCHEMA_VERSION}.
   schemaVersion?: ${SCHEMA_VERSION};
-  surface?: string;
+  surface?: string | readonly string[];
   deprecated?: readonly {
     from: ModuleName;
     to: ModuleName;
@@ -527,7 +528,7 @@ export async function init(projectRoot: string, rawDir?: string): Promise<InitRe
 
   messageLines.push(`wrote ${configPath}`, `wrote ${generatedPath}`);
   const allGroups = [...containerGroups, ...topGroups];
-  messageLines.push(`declared ${plural(allGroups.length, "module", "modules")}, one per directory that holds .ts and one per .ts file:`);
+  messageLines.push(`declared ${plural(allGroups.length, "module", "modules")}, one per directory that holds TypeScript source and one per TypeScript source file:`);
   if (opened !== "") messageLines.push(`  ${opened}/: ${countLabel(containerGroups)}`);
   if (topGroups.length > 0) {
     const label = opened !== "" ? `outside ${opened}/` : rootLabel!;
@@ -537,7 +538,7 @@ export async function init(projectRoot: string, rawDir?: string): Promise<InitRe
   const hiddenDirs = findHiddenTopDirs(projectRoot, noiseDirs);
   if (hiddenDirs.length > 0) {
     messageLines.push(
-      `excluded ${plural(hiddenDirs.length, "hidden directory", "hidden directories")} that ${hiddenDirs.length === 1 ? "holds" : "hold"} .ts: ${hiddenDirs.map((n) => `${n}/`).join(", ")}`,
+      `excluded ${plural(hiddenDirs.length, "hidden directory", "hidden directories")} that ${hiddenDirs.length === 1 ? "holds" : "hold"} TypeScript source: ${hiddenDirs.map((n) => `${n}/`).join(", ")}`,
     );
   }
   if (noiseDirs.length > 0) {

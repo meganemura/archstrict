@@ -311,9 +311,9 @@ describe("init", () => {
       expect(out).toBe(
         `wrote ${join(root, "archstrict.config.ts")}\n` +
           `wrote ${join(root, "archstrict.types.ts")}\n` +
-          `declared 6 modules, one per directory that holds .ts and one per .ts file:\n` +
+          `declared 6 modules, one per directory that holds TypeScript source and one per TypeScript source file:\n` +
           `  src/: 2 directories, 4 files\n` +
-          `excluded 1 hidden directory that holds .ts: .scratch/\n` +
+          `excluded 1 hidden directory that holds TypeScript source: .scratch/\n` +
           `excluded 3 noise directories found on disk: test/, example/, spike/\n` +
           `do: archstrict check\n`,
       );
@@ -323,14 +323,14 @@ describe("init", () => {
         `import type { Config } from "./archstrict.types.js";
 
 // Public surface: other modules may import a directory module only through
-// its index.ts (named by \`surface\` below), or through the files its own
+// its own surface file (named by \`surface\` below), or through the files its own
 // package.json exports map names. An import that reaches any other file in
 // the directory is a violation. A directory module with no such file is
 // entirely private. A module whose glob names one file is that file, so its
 // entry names the file itself as its surface.
 export default {
   schemaVersion: 1,
-  surface: "index.ts",
+  surface: ["index.ts", "index.tsx", "index.mts", "index.cts"],
   // Kept out of analysis entirely:
   // - archstrict's own two files, which are never module content;
   // - hidden directories at any depth (.git, tool state), which tsc's own
@@ -346,12 +346,13 @@ export default {
     "example/**",
     "spike/**",
   ],
-  // init declared one module per directory that holds .ts and one per .ts
-  // file, so every file that check analyzes belongs to exactly one module.
-  // Merge, rename, or remove entries freely: init never rewrites this file.
-  // After an edit, run archstrict init to regenerate archstrict.types.ts.
+  // init declared one module per directory that holds TypeScript source and
+  // one per TypeScript source file, so every file that check analyzes
+  // belongs to exactly one module. Merge, rename, or remove entries freely:
+  // init never rewrites this file. After an edit, run archstrict init to
+  // regenerate archstrict.types.ts.
   declaredModules: [
-    // Each directory and .ts file directly in src/.
+    // Each directory and TypeScript source file directly in src/.
     { name: "alpha.ts", glob: "src/alpha.ts", surface: "alpha.ts" },
     { name: "beta.ts", glob: "src/beta.ts", surface: "beta.ts" },
     { name: "build", glob: "src/build/**" },
@@ -359,7 +360,7 @@ export default {
     { name: "gamma.ts", glob: "src/gamma.ts", surface: "gamma.ts" },
     { name: "runtime", glob: "src/runtime/**" },
   ],
-  because: "archstrict init: one module per directory that holds .ts and per .ts file, so the first check covers every file it analyzes",
+  because: "archstrict init: one module per directory that holds TypeScript source and per TypeScript source file, so the first check covers every file it analyzes",
 } satisfies Config;
 `,
       );
@@ -387,7 +388,7 @@ export default {
       expect(out).toBe(
         `wrote ${join(root, "archstrict.config.ts")}\n` +
           `wrote ${join(root, "archstrict.types.ts")}\n` +
-          `declared 4 modules, one per directory that holds .ts and one per .ts file:\n` +
+          `declared 4 modules, one per directory that holds TypeScript source and one per TypeScript source file:\n` +
           `  src/: 0 directories, 3 files\n` +
           `  ./ (outside src/): 1 directory, 0 files: plugin\n` +
           `excluded 1 noise directory found on disk: tests/\n` +
@@ -401,7 +402,7 @@ export default {
       rmSync(join(root, "archstrict.config.ts"));
       rmSync(join(root, "archstrict.types.ts"));
       const rerun = execFileSync("node", [CLI_PATH, "init", "."], { cwd: root, encoding: "utf8" });
-      expect(rerun).toContain("declared 2 modules, one per directory that holds .ts and one per .ts file:");
+      expect(rerun).toContain("declared 2 modules, one per directory that holds TypeScript source and one per TypeScript source file:");
       const config = readFileSync(join(root, "archstrict.config.ts"), "utf8");
       expect(config).toContain('{ name: "plugin", glob: "plugin/**" }');
       expect(config).toContain('{ name: "src", glob: "src/**" }');
@@ -496,7 +497,7 @@ export default {
     put("src/normal/index.ts", "export const n = 1;\n");
     try {
       const out = execFileSync("node", [CLI_PATH, "init"], { cwd: root, encoding: "utf8" });
-      expect(out).toContain("excluded 1 hidden directory that holds .ts: .hid/");
+      expect(out).toContain("excluded 1 hidden directory that holds TypeScript source: .hid/");
       const config = readFileSync(join(root, "archstrict.config.ts"), "utf8");
       expect(config).not.toContain('"a"');
       expect(config).not.toContain(".hid");
@@ -730,7 +731,7 @@ export default {
       expect(out).toBe(
         `wrote ${join(root, "archstrict.config.ts")}\n` +
           `wrote ${join(root, "archstrict.types.ts")}\n` +
-          `declared 1 module, one per directory that holds .ts and one per .ts file:\n` +
+          `declared 1 module, one per directory that holds TypeScript source and one per TypeScript source file:\n` +
           `  src/: 1 directory, 0 files\n` +
           `do: archstrict check\n`,
       );

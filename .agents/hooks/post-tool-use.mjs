@@ -44,7 +44,7 @@ function main() {
   }
 
   const filePath = input.tool_input?.file_path;
-  if (typeof filePath !== "string" || !filePath.endsWith(".ts")) {
+  if (typeof filePath !== "string" || !/\.(ts|tsx|mts|cts)$/.test(filePath)) {
     emit();
     return;
   }

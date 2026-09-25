@@ -151,10 +151,11 @@ export type ModuleGraph = {
   // authoring a config against nrwl/nx's own packages/). check.ts derives a
   // by-prefix breakdown from this list rather than duplicating the walk.
   unresolvedSpecifiers: string[];
-  // The configured public-surface file name (e.g. "index.ts"), carried on
-  // the graph so a rule can name it in a message without needing the whole
-  // Config passed in just for this one string.
-  surface: string;
+  // The configured public-surface file name(s) (e.g. "index.ts", or
+  // DEFAULT_SURFACE's own array), carried on the graph so a rule can name
+  // it in a message without needing the whole Config passed in just for
+  // this one value.
+  surface: string | readonly string[];
   // The realpath'd project root - rule 6 (type leak) needs it as the
   // boundary a declaration must fall inside to count as internal (a
   // dependency's own types, under node_modules, are not this project's
@@ -173,7 +174,11 @@ export type BuildOptions = {
   // with that list, without a second, manually constructed prepared object.
   fileListOverride?: (realFiles: string[]) => string[];
   projectRoot: string;
-  surface?: string; // the global default public-surface file name, default "index.ts"
+  // The global default public-surface file name(s), default DEFAULT_SURFACE
+  // below. A single string, or several - the same array-vs-string shape a
+  // per-module `surface` already carries (surfaceGlobsFor's own entries
+  // normalization already treats a bare string as a one-entry array).
+  surface?: string | readonly string[];
   declaredModules: readonly DeclaredModule[];
   // Glob patterns excluded from the file scan entirely - config.exclude. A
   // file matching any one pattern is invisible to every rule, not just
@@ -182,7 +187,29 @@ export type BuildOptions = {
   exclude?: readonly string[];
 };
 
-export const DEFAULT_SURFACE = "index.ts";
+// Every TypeScript source extension archstrict analyzes - .tsx and
+// .mts/.cts included, since limiting the walk to plain .ts silently
+// dropped a whole React codebase's own UI code (a real, measured survey:
+// 5 of 50 popular TypeScript repos have more .tsx than .ts). A hand-
+// authored .d.ts/.d.mts/.d.cts stays excluded by default regardless (see
+// isEligibleSourceFile's own comment) - this list is source extensions
+// only, not every extension ts.sys.readDirectory could be asked for.
+export const ANALYZED_EXTENSIONS = [".ts", ".tsx", ".mts", ".cts"] as const;
+
+// The default public surface now names one file per analyzed source
+// extension (an array, not a single string) - a directory module whose
+// real entry point is index.tsx (a React project) or index.mts/index.cts
+// must be found by the SAME default a plain index.ts project already
+// gets, with no per-project config needed just to declare that.
+export const DEFAULT_SURFACE: readonly string[] = ["index.ts", "index.tsx", "index.mts", "index.cts"];
+
+// True for a hand-authored declaration file of ANY analyzed source
+// extension (.d.ts, .d.mts, .d.cts) - the single pattern every
+// declaration-file check below shares, so widening the analyzed source
+// extensions never has to widen this check in more than one place.
+function isDeclarationFile(file: string): boolean {
+  return /\.d\.(?:ts|mts|cts)$/.test(file);
+}
 
 // The literal directory prefix a glob names before its first wildcard,
 // trailing slash stripped - "packages/x/**" -> "packages/x". `surface` is
@@ -273,7 +300,11 @@ function isWorkspaceSiblingResolution(resolvedFile: string, rootDir: string): bo
 // (moduleGlobBaseDir of `dm.glob`), one project-relative glob per surface
 // entry - a single string normalizes to one entry, an array to one per
 // element.
-export function surfaceGlobsFor(dm: DeclaredModule, projectRoot: string, globalDefaultSurface: string): string[] {
+export function surfaceGlobsFor(
+  dm: DeclaredModule,
+  projectRoot: string,
+  globalDefaultSurface: string | readonly string[],
+): string[] {
   const moduleDir = join(projectRoot, moduleGlobBaseDir(dm.glob));
   const surface = effectiveSurface(dm, moduleDir, globalDefaultSurface);
   const entries = Array.isArray(surface) ? surface : [surface as string];
@@ -283,27 +314,28 @@ export function surfaceGlobsFor(dm: DeclaredModule, projectRoot: string, globalD
 function surfaceGlobsAllowingDts(
   declaredModules: readonly DeclaredModule[],
   projectRoot: string,
-  globalDefaultSurface: string,
+  globalDefaultSurface: string | readonly string[],
 ): string[] {
   return declaredModules
     .flatMap((dm) => surfaceGlobsFor(dm, projectRoot, globalDefaultSurface))
-    .filter((g) => g.endsWith(".d.ts"));
+    .filter((g) => isDeclarationFile(g));
 }
 
 // A build-output path's own extension, swapped for the real source
-// extension every one of these ships from - never guessed beyond this
+// extension(s) every one of these ships from - never guessed beyond this
 // fixed, small set (a project using some other build layout entirely
 // simply isn't derivable, and falls back to the tool's own default
-// instead of a wrong guess).
-const BUILT_TO_SOURCE_EXTENSION: readonly [string, string][] = [
-  [".d.mts", ".ts"],
-  [".d.cts", ".ts"],
-  [".d.ts", ".ts"],
-  [".mjs", ".ts"],
-  [".cjs", ".ts"],
-  [".mts", ".ts"],
-  [".cts", ".ts"],
-  [".js", ".ts"],
+// instead of a wrong guess). More than one candidate per built extension
+// (e.g. ".js" -> both ".ts" and ".tsx") - a React package's own built
+// "./dist/index.js" ships from "index.tsx", not "index.ts", and the first
+// existing guess wins (existsSync in the caller's own loop).
+const BUILT_TO_SOURCE_EXTENSIONS: readonly [string, readonly string[]][] = [
+  [".d.mts", [".mts", ".ts"]],
+  [".d.cts", [".cts", ".ts"]],
+  [".d.ts", [".ts", ".tsx"]],
+  [".mjs", [".mts", ".ts"]],
+  [".cjs", [".cts", ".ts"]],
+  [".js", [".ts", ".tsx"]],
 ];
 
 // One export subpath's own value (a bare string, or a conditions object)
@@ -334,14 +366,16 @@ function resolveExportsEntry(value: unknown, moduleDir: string): string | undefi
 
   for (const raw of candidates) {
     const stripped = raw.replace(/^\.\//, "");
-    // Declaration outputs must pass through the built-to-source conversion.
-    const isDeclaration = /\.d\.(?:ts|mts|cts)$/.test(stripped);
-    const asSource = !isDeclaration && (stripped.endsWith(".ts") || stripped.endsWith(".tsx")) ? stripped : undefined;
+    // A declaration output must still pass through the built-to-source
+    // conversion below; a bare .ts/.tsx/.mts/.cts is already real source.
+    const isDeclaration = isDeclarationFile(stripped);
+    const asSource =
+      !isDeclaration && ANALYZED_EXTENSIONS.some((ext) => stripped.endsWith(ext)) ? stripped : undefined;
     const guesses =
       asSource !== undefined
         ? [asSource]
-        : BUILT_TO_SOURCE_EXTENSION.filter(([ext]) => stripped.endsWith(ext)).map(([ext, replacement]) =>
-            stripped.replace(/^dist\//, "").slice(0, -ext.length) + replacement,
+        : BUILT_TO_SOURCE_EXTENSIONS.filter(([ext]) => stripped.endsWith(ext)).flatMap(([ext, replacements]) =>
+            replacements.map((replacement) => stripped.replace(/^dist\//, "").slice(0, -ext.length) + replacement),
           );
     for (const guess of guesses) {
       if (existsSync(join(moduleDir, guess))) return guess;
@@ -395,7 +429,11 @@ function deriveSurfaceFromExports(moduleDir: string): string[] | undefined {
 // map derived back to source (every real, sanctioned entry point at
 // once), else the project's own global default - never a mix of derived
 // and hand-set for the same module.
-function effectiveSurface(dm: DeclaredModule, moduleDir: string, globalDefaultSurface: string): string | readonly string[] {
+function effectiveSurface(
+  dm: DeclaredModule,
+  moduleDir: string,
+  globalDefaultSurface: string | readonly string[],
+): string | readonly string[] {
   if (dm.surface !== undefined) return dm.surface;
   return deriveSurfaceFromExports(moduleDir) ?? globalDefaultSurface;
 }
@@ -443,10 +481,10 @@ export function listAnalyzedFiles(
   projectRoot: string,
   excludeGlobs: readonly string[],
   declaredModules: readonly DeclaredModule[] = [],
-  globalDefaultSurface: string = DEFAULT_SURFACE,
+  globalDefaultSurface: string | readonly string[] = DEFAULT_SURFACE,
 ): string[] {
   return ts.sys
-    .readDirectory(projectRoot, [".ts"], ["**/node_modules/**", "**/dist/**"])
+    .readDirectory(projectRoot, ANALYZED_EXTENSIONS, ["**/node_modules/**", "**/dist/**"])
     .filter((file) => isEligibleSourceFile(file, projectRoot, excludeGlobs, declaredModules, globalDefaultSurface));
 }
 
@@ -467,12 +505,17 @@ export function isEligibleSourceFile(
   projectRoot: string,
   excludeGlobs: readonly string[],
   declaredModules: readonly DeclaredModule[],
-  globalDefaultSurface: string,
+  globalDefaultSurface: string | readonly string[],
 ): boolean {
   const rel = toProjectRelativePosix(file, projectRoot);
-  if (!file.endsWith(".ts") || rel.split("/").some((part) => part === "node_modules" || part === "dist")) return false;
+  if (
+    !ANALYZED_EXTENSIONS.some((ext) => file.endsWith(ext)) ||
+    rel.split("/").some((part) => part === "node_modules" || part === "dist")
+  ) {
+    return false;
+  }
   if (excludeGlobs.some((glob) => compileGlob(glob).test(rel))) return false;
-  return !file.endsWith(".d.ts") || surfaceGlobsAllowingDts(declaredModules, projectRoot, globalDefaultSurface)
+  return !isDeclarationFile(file) || surfaceGlobsAllowingDts(declaredModules, projectRoot, globalDefaultSurface)
     .some((glob) => compileGlob(glob).test(rel));
 }
 
@@ -480,7 +523,7 @@ function buildDeclaredModules(
   projectRoot: string,
   declaredModules: readonly DeclaredModule[],
   allFiles: readonly string[],
-  globalDefaultSurface: string = DEFAULT_SURFACE,
+  globalDefaultSurface: string | readonly string[] = DEFAULT_SURFACE,
 ): Map<string, Module> {
   const membership = declaredModules.map((dm) => ({ glob: dm.glob, value: dm.name }));
   const modules = new Map<string, Module>(

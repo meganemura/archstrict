@@ -26,7 +26,7 @@ export default defineStep({
     typeLeak: [runArchstrictCheck, "typeLeak"],
   },
   rationale:
-    "init declares one module per directory that holds .ts and one per loose .ts file, so every file the first check analyzes already belongs to exactly one module: 0 uncovered-module violations, by construction. No module here has any public surface of its own, so every cross-module edge is rule 1's public-surface-bypass; a strongly-connected pair of modules is rule 2's cycle; and a singleton file module exposing another module's own internal type is rule 6's type-leak (this project's own currently-implemented reading of that rule; see rules.md). A run this fresh must report at least one violation and suppress none of them.",
+    "init declares one module per directory that holds TypeScript source and one per loose TypeScript source file, so every file the first check analyzes already belongs to exactly one module: 0 uncovered-module violations, by construction. No module here has any public surface of its own, so every cross-module edge is rule 1's public-surface-bypass; a strongly-connected pair of modules is rule 2's cycle; and a singleton file module exposing another module's own internal type is rule 6's type-leak (this project's own currently-implemented reading of that rule; see rules.md). A run this fresh must report at least one violation and suppress none of them.",
   run({}, { violations, todo, exitCode, uncoveredModule, publicSurfaceBypass, cycle, typeLeak }) {
     if (violations === 0) throw new Error("expected at least one violation on a fresh, unfrozen scratch copy");
     if (todo !== 0) throw new Error(`expected todo: 0 before archstrict todo ever ran, got ${todo}`);

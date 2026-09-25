@@ -5,8 +5,8 @@ Feature: Dogfooding archstrict against nukadoko's real source
   entirely private under archstrict's default posture. This checks that
   posture against real files instead of a synthetic fixture, and checks the
   full init -> check -> todo -> edit -> check round trip end to end. init's
-  own walk declares one module per directory that holds .ts, and one per
-  loose top-level .ts file, so every file the first check analyzes already
+  own walk declares one module per directory that holds TypeScript source,
+  and one per loose top-level TypeScript source file, so every file the first check analyzes already
   belongs to exactly one module - no hand-authored exclude for nukadoko's
   own loose root files is needed before the round trip goes green.
 
