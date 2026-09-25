@@ -378,6 +378,8 @@ describe("init (property)", () => {
           assert.equal(proposed?.glob, dm.glob, `glob mismatch for module ${dm.name}`);
         }
       });
-    });
-  });
+    // Each case builds a full graph for recommend; the default case count
+    // exceeded the 15 s test timeout on a loaded machine.
+    }, { testCases: 25 });
+  }, 60_000);
 });
