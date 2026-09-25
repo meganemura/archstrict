@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { init } from "../src/verbs/init.js";
+import { check } from "../src/verbs/check.js";
 
 // The built CLI, spawned as a real process - the exact-stdout and exit-code
 // tests below check what a real invocation prints, not just what the
@@ -629,6 +630,147 @@ export default {
     }
   });
 
+  // Colocated test files: init excludes a real test-file naming convention
+  // it finds on disk, never blindly - one module (app) has a colocated
+  // *.test.ts, one (lib) has a *.spec.tsx AND a __tests__/ directory, and
+  // one (other) has neither, so the first check still covers "other"
+  // normally (no test-file exclude changes a module with no test file at
+  // all). Both `.test.ts` files (app.test.ts, svc.test.ts) share the
+  // pattern, both `__tests__/` and root/nested forms are exercised through
+  // the same fixture the coverage test below reuses.
+  describe("colocated test-file excludes", () => {
+    function putColocatedFixture(put: (rel: string, contents: string) => void): void {
+      put("src/app/index.ts", "export const app = 1;\n");
+      put("src/app/internal.ts", "export const appInternal = 1;\n");
+      put("src/app/app.test.ts", "import { appInternal } from \"./internal.js\";\nexport const t = appInternal;\n");
+      put("src/lib/index.ts", "export const lib = 1;\n");
+      put("src/lib/lib.spec.tsx", "export const t = 1;\n");
+      put("src/lib/__tests__/setup.ts", "export const setup = 1;\n");
+      put("src/other/index.ts", "export const other = 1;\n");
+    }
+
+    test("exact exclude array and stdout line", () => {
+      const { root, put } = scratchProject("archstrict-init-colocated-");
+      putColocatedFixture(put);
+      try {
+        const out = execFileSync("node", [CLI_PATH, "init"], { cwd: root, encoding: "utf8" });
+        expect(out).toContain(
+          "excluded 3 test-file patterns found on disk: *.test.ts (1 file), *.spec.tsx (1 file), __tests__/ (1 file)\n",
+        );
+
+        const config = readFileSync(join(root, "archstrict.config.ts"), "utf8");
+        expect(config).toContain(
+          `  exclude: [
+    "archstrict.config.ts",
+    "archstrict.types.ts",
+    ".*/**",
+    "**/.*/**",
+    "*.test.ts",
+    "**/*.test.ts",
+    "*.spec.tsx",
+    "**/*.spec.tsx",
+    "__tests__/**",
+    "**/__tests__/**",
+  ],`,
+        );
+        expect(config).toContain(
+          "colocated test files, found on disk (*.test.ts, *.spec.tsx, __tests__/).\n" +
+            "  //   A test file imports across modules as a fixture; boundary rules read production code.",
+        );
+        // "other" has no test file of its own - the exclude is project-wide
+        // (init never writes a per-module exclude), but its own module
+        // entry is unaffected either way.
+        expect(config).toContain('{ name: "other", glob: "src/other/**" }');
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    test("--json field: one entry per convention found, exact pattern/exclude/files", () => {
+      const { root, put } = scratchProject("archstrict-init-colocated-json-");
+      putColocatedFixture(put);
+      try {
+        const out = execFileSync("node", [CLI_PATH, "init", "--json"], { cwd: root, encoding: "utf8" });
+        const parsed = JSON.parse(out);
+        expect(parsed.testFileExcludes).toEqual([
+          { pattern: "*.test.ts", exclude: ["*.test.ts", "**/*.test.ts"], files: 1 },
+          { pattern: "*.spec.tsx", exclude: ["*.spec.tsx", "**/*.spec.tsx"], files: 1 },
+          { pattern: "__tests__/", exclude: ["__tests__/**", "**/__tests__/**"], files: 1 },
+        ]);
+
+        // Re-run: init never touches an existing config, so it never
+        // recomputes which conventions a fresh run would have excluded -
+        // the same empty-on-re-run shape hiddenDirs/noiseDirs already have.
+        const rerun = JSON.parse(execFileSync("node", [CLI_PATH, "init", "--json"], { cwd: root, encoding: "utf8" }));
+        expect(rerun.testFileExcludes).toEqual([]);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    test("first check: 0 uncovered-module with the colocated test files excluded", async () => {
+      const { root, put } = scratchProject("archstrict-init-colocated-check-");
+      putColocatedFixture(put);
+      try {
+        await init(root);
+        const result = await check(root);
+        expect(result.outsideFiles).toBe(0);
+        expect(result.violations.some((v) => v.rule === "uncovered-module")).toBe(false);
+        expect(result.modules).toBe(3); // app, lib, other
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    // A test file directly at the project root (no directory segment at
+    // all) - the exact shape compileGlob's own `**/` form never matches,
+    // so this is the fixture that would catch a fix that added only the
+    // `**/*.test.ts`/`**/__tests__/**` half of each pair and forgot its
+    // own root-form twin.
+    test("root-level test file and root-level __tests__/ directory are both excluded, not declared", () => {
+      const { root, put } = scratchProject("archstrict-init-colocated-root-");
+      put("src/app/index.ts", "export const app = 1;\n");
+      put("a.test.ts", "export const a = 1;\n");
+      put("__tests__/b.ts", "export const b = 1;\n");
+      try {
+        const out = execFileSync("node", [CLI_PATH, "init"], { cwd: root, encoding: "utf8" });
+        expect(out).toContain(
+          "excluded 2 test-file patterns found on disk: *.test.ts (1 file), __tests__/ (1 file)\n",
+        );
+        const config = readFileSync(join(root, "archstrict.config.ts"), "utf8");
+        expect(config).not.toContain('"a.test.ts"');
+        expect(config).not.toContain('"__tests__"');
+        expect(config).toContain('"*.test.ts"');
+        expect(config).toContain('"__tests__/**"');
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    // A colocated test importing another module's internal (non-surface)
+    // file is the exact shape rule 1 (public-surface-bypass) would
+    // otherwise flag - excluded entirely, it never becomes an edge at all,
+    // so no bypass is ever reported for it.
+    test("a colocated test importing another module's internal file produces no bypass", async () => {
+      const { root, put } = scratchProject("archstrict-init-colocated-bypass-");
+      put("src/app/index.ts", "export const app = 1;\n");
+      put("src/app/internal.ts", "export const appInternal = 1;\n");
+      put("src/svc/index.ts", "export const svc = 1;\n");
+      put(
+        "src/svc/svc.test.ts",
+        "import { appInternal } from \"../app/internal.js\";\nexport const t = appInternal;\n",
+      );
+      try {
+        await init(root);
+        const result = await check(root);
+        expect(result.violations).toHaveLength(0);
+        expect(result.modules).toBe(2); // app, svc
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+  });
+
   // Every argument-table error, with its exact message, and no
   // glob character in any do: line this verb ever prints.
   describe("argument errors", () => {
@@ -1116,6 +1258,7 @@ export default {
           moduleNames: ["alpha.ts", "beta.ts", "build", "delta.ts", "gamma.ts", "runtime"],
           hiddenDirs: [".scratch"],
           noiseDirs: ["test", "example", "spike"],
+          testFileExcludes: [],
           uncovered: [],
           notes: [],
           do: "archstrict check",
@@ -1144,6 +1287,7 @@ export default {
           moduleNames: ["app"],
           hiddenDirs: [],
           noiseDirs: [],
+          testFileExcludes: [],
           uncovered: [
             { path: "src/extra", kind: "dir", files: 1, declare: { name: "extra", glob: "src/extra/**" }, exclude: "src/extra/**" },
             { path: "src/sqlite.ts", kind: "file", files: 1, declare: { name: "sqlite.ts", glob: "src/sqlite.ts", surface: "sqlite.ts" }, exclude: "src/sqlite.ts" },
@@ -1169,7 +1313,7 @@ export default {
         }
         expect(status).toBe(1);
         expect(JSON.parse(out)).toEqual({
-          error: `found no .ts file to declare as a module in ${root} (init skips node_modules/, dist/, hidden directories, and noise directories)`,
+          error: `found no .ts file to declare as a module in ${root} (init skips node_modules/, dist/, hidden directories, noise directories, and colocated test files)`,
           do: "add a .ts source file outside those directories, then run archstrict init",
         });
         expect(() => readFileSync(join(root, "archstrict.config.ts"), "utf8")).toThrow();

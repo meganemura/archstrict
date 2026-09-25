@@ -428,11 +428,33 @@ edges: {
 ```
 
 **Caveat.** `archstrict init` seeds a fresh config's own `exclude` with
-common non-source directory names, including `test`-shaped ones. An
-excluded file is not a module member, not an edge source, and not an edge
-target - a test directory this pattern is meant to guard still needs its
-own `declaredModules` entry (or at least stay out of `exclude`), or this
-rule's own `evaluated` count stays at 0 no matter how it is written.
+common non-source directory names, including `test`-shaped ones, and with
+every colocated test-file naming convention it finds on disk (`*.test.ts`,
+`*.spec.tsx`, `__tests__/`, and similar). An excluded file is not a module
+member, not an edge source, and not an edge target - a test directory this
+pattern is meant to guard still needs its own `declaredModules` entry (or
+at least stay out of `exclude`), or this rule's own `evaluated` count stays
+at 0 no matter how it is written.
+
+A `__tests__`/`test-utils`/`mocks` directory, guarded above, is a different
+shape from a single test file colocated beside the production file it
+tests (`payment.ts` next to `payment.test.ts`, same directory). Removing
+that convention's own `exclude` entry brings the file back into analysis;
+tag it with a glob sharing its own directory's full literal prefix -
+`{ glob: "src/app/*.test.ts", tags: ["kind:test"] }` beside
+`{ glob: "src/app/**", tags: ["kind:prod"] }` - so `classify`'s
+most-specific-glob-wins precedence ties on prefix length and then prefers
+the fewer-wildcard entry (one `*` beats `**`'s two), giving the test file
+`kind:test` and every other file in the directory `kind:prod`. A
+project-wide glob like `**/*.test.ts` does not work for this: its own
+literal prefix is empty, so the directory's own production glob always
+outranks it, and the file stays `kind:prod`. The point rule above,
+unchanged, already reads `kind:test` from either shape once the file is
+tagged that way. Removing the `exclude` entry also brings back the test
+file's own `public-surface-bypass` findings (rule 1): any import in it
+that reaches another module's internal file, rather than that module's
+own surface, is reported again - the exact noise `init`'s default exclude
+removes.
 
 ## Type-only across a boundary
 

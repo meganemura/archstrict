@@ -42,6 +42,13 @@ const TOP_FILE_NAMES = ["cli.ts", "tool.config.tsx", "context.ts"] as const;
 
 type Shape = "none" | "flat" | "dirs";
 
+// Which colocated test file (if any) this draw mixes into the tree - P1
+// coverage must hold with a generated test file mixed in, not only over
+// trees that happen to have none, and must hold the same way whether that
+// file sits at the project root (where compileGlob's own `**/` form never
+// matches) or nested under the shape's own guaranteed real directory.
+type ColocatedTestKind = "none" | "nested-test" | "root-test" | "root-tests-dir" | "nested-spec";
+
 type Tree = {
   shape: Shape;
   srcDirFlags: boolean[];
@@ -52,6 +59,7 @@ type Tree = {
   hiddenNested: boolean;
   includeNoise: boolean;
   includeMd: boolean;
+  colocatedTest: ColocatedTestKind;
 };
 
 const treeGenerator = gs.record({
@@ -64,6 +72,7 @@ const treeGenerator = gs.record({
   hiddenNested: gs.booleans(),
   includeNoise: gs.booleans(),
   includeMd: gs.booleans(),
+  colocatedTest: gs.sampledFrom(["none", "nested-test", "root-test", "root-tests-dir", "nested-spec"] as const),
 });
 
 // Writes the random tree to disk under `root`. Each shape guarantees at
@@ -123,6 +132,27 @@ function writeTree(root: string, tree: Tree): void {
   }
   if (tree.includeMd) {
     writeFileSync(join(nestParent, "notes.md"), "# not source\n");
+  }
+  switch (tree.colocatedTest) {
+    case "none":
+      break;
+    case "nested-test":
+      writeFileSync(join(nestParent, "scratch.test.ts"), "export const t = 1;\n");
+      break;
+    case "root-test":
+      // compileGlob's own `**/` form never matches a file with no
+      // directory segment at all - this draw is the one that would catch
+      // a fix that added only the `**/*.test.ts` glob and forgot its own
+      // root-form pair.
+      writeFileSync(join(root, "scratch.test.ts"), "export const t = 1;\n");
+      break;
+    case "root-tests-dir":
+      mkdirSync(join(root, "__tests__"), { recursive: true });
+      writeFileSync(join(root, "__tests__", "helper.ts"), "export const helper = 1;\n");
+      break;
+    case "nested-spec":
+      writeFileSync(join(nestParent, "scratch.spec.tsx"), "export const t = 1;\n");
+      break;
   }
 }
 
@@ -202,6 +232,30 @@ describe("init (property)", () => {
         for (const file of files) {
           const rel = toProjectRelativePosix(file, root);
           assert.ok(!rel.split("/").some((segment) => segment.startsWith(".")), `${rel} is under a hidden directory`);
+        }
+      });
+    });
+  });
+
+  // P1 (coverage) alone cannot catch a colocated test file init forgot to
+  // exclude: an uncovered/miscovered test file would still match exactly
+  // one glob, either its own directory's or its own single-file entry -
+  // P1 has nothing to say about WHICH files got analyzed, only that
+  // whichever set did is covered exactly once. This property checks the
+  // set itself: whatever `colocatedTest` drew, the file it wrote is gone
+  // from the analyzed list entirely, at every one of its own on-disk
+  // shapes (root, nested, and the `__tests__/` directory form).
+  test("P9 colocated tests excluded: no analyzed file has a test/spec basename or a __tests__ path segment", async () => {
+    await hegel.testAsync(async (tc) => {
+      const tree = tc.draw(treeGenerator);
+      await withTree(tree, async (root) => {
+        await init(root);
+        const config = await loadConfig(join(root, "archstrict.config.ts"));
+        const files = listAnalyzedFiles(root, config.exclude ?? [], config.declaredModules, config.surface ?? "index.ts");
+        for (const file of files) {
+          const rel = toProjectRelativePosix(file, root);
+          assert.ok(!/\.(test|spec)\.(ts|tsx|mts|cts)$/.test(rel), `${rel} is a colocated test file, still analyzed`);
+          assert.ok(!rel.split("/").includes("__tests__"), `${rel} is under __tests__/, still analyzed`);
         }
       });
     });

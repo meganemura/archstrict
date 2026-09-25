@@ -66,6 +66,7 @@ async function runInit(args: string[]): Promise<number> {
         moduleNames: result.moduleNames,
         hiddenDirs: result.hiddenDirs,
         noiseDirs: result.noiseDirs,
+        testFileExcludes: result.testFileExcludes.map((t) => ({ pattern: t.label, exclude: t.exclude, files: t.fileCount })),
         uncovered: result.uncovered.map((g) => ({
           path: g.rel,
           kind: g.kind,

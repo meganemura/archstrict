@@ -25,7 +25,14 @@
 // itself inside rule 6's own type-leak boundary.
 import { existsSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { DEFAULT_SURFACE, listAnalyzedFiles, moduleForDeclaredFile, toProjectRelativePosix, type DeclaredModule } from "../module-graph.js";
+import {
+  ANALYZED_EXTENSIONS,
+  DEFAULT_SURFACE,
+  listAnalyzedFiles,
+  moduleForDeclaredFile,
+  toProjectRelativePosix,
+  type DeclaredModule,
+} from "../module-graph.js";
 import {
   groupAnalyzedFiles,
   nameCandidates,
@@ -33,6 +40,7 @@ import {
   suggestUncovered,
   type NamedCandidateGroup,
 } from "../module-candidates.js";
+import { compileGlob } from "../classify.js";
 import { SCHEMA_VERSION } from "../config.js";
 import { ReportError } from "../report-error.js";
 import { loadConfig } from "./check.js";
@@ -49,6 +57,10 @@ export type InitResult = {
   moduleNames: string[];
   hiddenDirs: string[];
   noiseDirs: string[];
+  // Empty on a re-run, the same as hiddenDirs/noiseDirs: a re-run never
+  // touches the config, so it never recomputes which test-file conventions
+  // a fresh run would have excluded.
+  testFileExcludes: TestFileExclude[];
   // Only ever non-empty on a re-run: a fresh run's own groups always cover
   // every analyzed file, by construction (see the module header).
   uncovered: NamedCandidateGroup[];
@@ -118,6 +130,60 @@ const OWN_FILES = ["archstrict.config.ts", "archstrict.types.ts"];
 // a hidden directory at the project root, one for a hidden directory at
 // any deeper level.
 const HIDDEN_EXCLUDE = [".*/**", "**/.*/**"];
+
+// A colocated test file imports across module boundaries as a fixture.
+// Measured across 50 popular TypeScript codebases: about 7.6% of public-
+// surface-bypass findings trace to one of these three naming conventions
+// alone (*.test.ts, *.spec.ts, __tests__/) - a separate, larger share
+// traces to a test/ or tests/ directory (init excludes a top-level one as
+// noise) - and roughly two of every five
+// test files sit beside the production file they test, not in a
+// directory of their own. So init excludes each real test-file naming
+// convention it finds on disk, the same never-blindly discipline
+// NOISE_DIR_CANDIDATES already follows.
+// One entry per (test|spec) suffix crossed with every analyzed extension,
+// plus the `__tests__/` directory convention. `root` and `nested` are
+// always both added: compileGlob's own `**/` needs a literal slash, so
+// `**/*.test.ts` alone never matches a file sitting at the project root
+// (see HIDDEN_EXCLUDE's own two-pattern split, the same reason).
+const TEST_FILE_EXCLUDE_CANDIDATES: readonly { label: string; root: string; nested: string }[] = [
+  ...(["test", "spec"] as const).flatMap((suffix) =>
+    ANALYZED_EXTENSIONS.map((ext) => ({
+      label: `*.${suffix}${ext}`,
+      root: `*.${suffix}${ext}`,
+      nested: `**/*.${suffix}${ext}`,
+    })),
+  ),
+  { label: "__tests__/", root: "__tests__/**", nested: "**/__tests__/**" },
+];
+
+export type TestFileExclude = {
+  // The naming convention this entry matched, for stdout and the config
+  // comment - never itself a glob passed to compileGlob.
+  label: string;
+  // The two literal exclude globs `configText` pastes into `exclude`, and
+  // the exact strings to delete from a written config to bring these files
+  // back into analysis.
+  exclude: readonly [string, string];
+  fileCount: number;
+};
+
+// Which real test-file conventions the walk found, and how many analyzed
+// files (root or nested) each one matches - computed against `files`
+// BEFORE these globs are folded into the exclude used for grouping, since
+// that's the file set the convention needs to be real against. Never
+// blind: a convention this project never used (say, `.spec.cts` in a
+// project with no `.cts` file at all) adds nothing.
+function findTestFileExcludes(files: readonly string[]): TestFileExclude[] {
+  const result: TestFileExclude[] = [];
+  for (const c of TEST_FILE_EXCLUDE_CANDIDATES) {
+    const rootTest = compileGlob(c.root).test;
+    const nestedTest = compileGlob(c.nested).test;
+    const fileCount = files.filter((f) => rootTest(f) || nestedTest(f)).length;
+    if (fileCount > 0) result.push({ label: c.label, exclude: [c.root, c.nested], fileCount });
+  }
+  return result;
+}
 
 function isRealDirectory(path: string): boolean {
   return existsSync(path) && statSync(path).isDirectory();
@@ -190,6 +256,7 @@ function configText(
   topGroups: readonly NamedCandidateGroup[],
   exclude: readonly string[],
   noiseDirs: readonly string[],
+  testFileExcludes: readonly TestFileExclude[],
 ): string {
   const lines: string[] = [];
   if (containerGroups.length > 0) {
@@ -210,6 +277,11 @@ function configText(
       ? `\n  // - common noise directories that init found on disk (${noiseDirs.join(", ")}).\n  //   Remove one of these entries if that directory holds module content.`
       : "";
 
+  const testComment =
+    testFileExcludes.length > 0
+      ? `\n  // - colocated test files, found on disk (${testFileExcludes.map((t) => t.label).join(", ")}).\n  //   A test file imports across modules as a fixture; boundary rules read production code.\n  //   Remove both matching entries below (root and nested form) if that file must stay analyzed.`
+      : "";
+
   return `import type { Config } from "./archstrict.types.js";
 
 // Public surface: other modules may import a directory module only through
@@ -224,7 +296,7 @@ export default {
   // Kept out of analysis entirely:
   // - archstrict's own two files, which are never module content;
   // - hidden directories at any depth (.git, tool state), which tsc's own
-  //   default include also skips;${noiseComment}
+  //   default include also skips;${noiseComment}${testComment}
   exclude: [
 ${exclude.map((e) => `    ${q(e)},`).join("\n")}
   ],
@@ -369,6 +441,7 @@ export function freshRun(
   opened: string;
   rootLabel: string | undefined;
   noiseDirs: string[];
+  testFileExcludes: TestFileExclude[];
   exclude: string[];
   containerGroups: NamedCandidateGroup[];
   topGroups: NamedCandidateGroup[];
@@ -377,11 +450,20 @@ export function freshRun(
   const explicit = dir !== undefined;
   const want = dir ?? "src";
   const noiseDirs = findNoiseDirs(projectRoot, want);
-  const exclude = [...OWN_FILES, ...HIDDEN_EXCLUDE, ...noiseDirs.map((n) => `${n}/**`)];
+  const baseExclude = [...OWN_FILES, ...HIDDEN_EXCLUDE, ...noiseDirs.map((n) => `${n}/**`)];
+  // The test-file scan runs against the file set noise/hidden excludes
+  // leave behind, BEFORE folding its own globs in - findTestFileExcludes
+  // needs to see a real *.test.ts to decide the convention is real, and
+  // that file would otherwise already be gone.
+  const preTestFiles = listAnalyzedFiles(projectRoot, baseExclude).map((f) => toProjectRelativePosix(f, projectRoot));
+  const testFileExcludes = findTestFileExcludes(preTestFiles);
+  const exclude = [...baseExclude, ...testFileExcludes.flatMap((t) => t.exclude)];
   // Project-relative, POSIX-separated: every anchor, glob, and stdout path
   // below is project-relative too, and listAnalyzedFiles itself returns
   // absolute, platform-separated paths (the same shape a real TypeScript
-  // program's own file names take).
+  // program's own file names take). Re-scanned with the full exclude
+  // (noise, hidden, AND test-file globs) so a colocated test file is
+  // gone from grouping too, not just from this convention's own count.
   const files = listAnalyzedFiles(projectRoot, exclude).map((f) => toProjectRelativePosix(f, projectRoot));
 
   let opened = "";
@@ -414,7 +496,7 @@ export function freshRun(
     );
     const openable = noiseDirs.find((n) => beforeNoiseExclude.some((f) => f.startsWith(`${n}/`)));
     fail(
-      `found no .ts file to declare as a module in ${projectRoot} (init skips node_modules/, dist/, hidden directories, and noise directories)`,
+      `found no .ts file to declare as a module in ${projectRoot} (init skips node_modules/, dist/, hidden directories, noise directories, and colocated test files)`,
       openable !== undefined
         ? `archstrict ${verb} ${openable}`
         : `add a .ts source file outside those directories, then run archstrict ${verb}`,
@@ -427,6 +509,7 @@ export function freshRun(
     opened,
     rootLabel,
     noiseDirs,
+    testFileExcludes,
     exclude,
     containerGroups,
     topGroups,
@@ -513,6 +596,7 @@ export async function init(projectRoot: string, rawDir?: string): Promise<InitRe
       moduleNames,
       hiddenDirs: [],
       noiseDirs: [],
+      testFileExcludes: [],
       uncovered: groups,
       notes,
       messageLines,
@@ -520,8 +604,8 @@ export async function init(projectRoot: string, rawDir?: string): Promise<InitRe
     };
   }
 
-  const { opened, rootLabel, noiseDirs, exclude, containerGroups, topGroups } = freshRun(projectRoot, dir);
-  writeFileSync(configPath, configText(opened, containerGroups, topGroups, exclude, noiseDirs));
+  const { opened, rootLabel, noiseDirs, testFileExcludes, exclude, containerGroups, topGroups } = freshRun(projectRoot, dir);
+  writeFileSync(configPath, configText(opened, containerGroups, topGroups, exclude, noiseDirs, testFileExcludes));
   const config = await loadConfig(configPath, undefined, DO_INIT);
   const moduleNames = [...new Set((config.declaredModules ?? []).map((m: DeclaredModule) => m.name))].sort();
   writeFileSync(generatedPath, generatedFileContents(moduleNames));
@@ -546,6 +630,12 @@ export async function init(projectRoot: string, rawDir?: string): Promise<InitRe
       `excluded ${plural(noiseDirs.length, "noise directory", "noise directories")} found on disk: ${noiseDirs.map((n) => `${n}/`).join(", ")}`,
     );
   }
+  if (testFileExcludes.length > 0) {
+    const parts = testFileExcludes.map((t) => `${t.label} (${plural(t.fileCount, "file", "files")})`).join(", ");
+    messageLines.push(
+      `excluded ${plural(testFileExcludes.length, "test-file pattern", "test-file patterns")} found on disk: ${parts}`,
+    );
+  }
   const notes: string[] = [];
   if (opened !== "" && containerGroups.length > 0 && containerGroups.every((g) => g.kind === "file")) {
     const note = `${opened}/ holds only files, so each file is its own module. To check ${opened}/ as one module instead (then no import between two of its files is checked): delete archstrict.config.ts, then run archstrict init .`;
@@ -561,6 +651,7 @@ export async function init(projectRoot: string, rawDir?: string): Promise<InitRe
     moduleNames,
     hiddenDirs,
     noiseDirs,
+    testFileExcludes,
     uncovered: [], // a fresh run's own groups always cover every analyzed file, by construction
     notes,
     messageLines,

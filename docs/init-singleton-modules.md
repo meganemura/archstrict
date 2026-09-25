@@ -64,15 +64,20 @@ project-relative path as its name: a root `cli.ts` and a container's own
 `init` writes an `exclude` covering: its own two files
 (`archstrict.config.ts`, `archstrict.types.ts`); every hidden directory,
 at any depth (`.git`, a tool's own state directory) - the same thing
-`tsc`'s own default `include` already skips; and a fixed list of common
+`tsc`'s own default `include` already skips; a fixed list of common
 non-source directory names (`test`, `tests`, `example`, `examples`,
 `spike`, `build`, `coverage`, `fixtures`, `e2e`, `tmp`), each added only when a
-real directory of that name exists on disk. A container named on the
-command line is never treated as noise, even when its own name is on that
-list. The two hidden-directory patterns are the same on every machine (a
+real directory of that name exists on disk; and a colocated test file's own
+naming convention (`*.test.ts`, `*.spec.tsx`, and every other suffix/analyzed-
+extension pair, plus a `__tests__/` directory), each added only when a real
+analyzed file already matches it. A container named on the command line is
+never treated as noise, even when its own name is on the directory list.
+The two hidden-directory patterns are the same on every machine (a
 committed config never names a directory that exists on only one
-machine); a directory a project decided is real source keeps its exclude
-entry removed by hand.
+machine); a directory or test file a project decided is real source keeps
+its own exclude entry removed by hand - the config comment names the
+reason (a test file imports across modules as a fixture, and boundary
+rules read production code) right beside the pattern it excluded.
 
 ## Zero-directory and zero-candidate cases
 
@@ -108,7 +113,8 @@ memory (no file is written) instead of a single-level modules-glob
 discovery, so its own proposed globs always agree with what `init` would
 write for the same tree. `init --json` reports one object on success
 (`configPath`, `typesPath`, `configWritten`, `opened`, `moduleNames`,
-`hiddenDirs`, `noiseDirs`, `uncovered`, `notes`, `do`) and `{ error, do }`
+`hiddenDirs`, `noiseDirs`, `testFileExcludes`, `uncovered`, `notes`, `do`)
+and `{ error, do }`
 on failure, the same convention `check --json` and `todo --json` already
 follow. A later change removed the old single-level discovery path
 entirely, once no user-facing command called it anymore: `declaredModules`
