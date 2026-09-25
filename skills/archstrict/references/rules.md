@@ -56,6 +56,22 @@ A configured rule that structurally cannot match anything: zero `declaredModules
   - a `deprecated` entry whose actual edge count fell to 0: `remove the '<from> -> <to>' entry from deprecated in archstrict.config.ts`
   - an `edges` rule (`allowDeny`/`order`/`point`) with `evaluated: 0`: `remove or correct this <kind> entry in archstrict.config.ts's edges - its own source/target never applies to any real edge this project has (a workspace-sibling import may resolve as an external package rather than a project tag; see rules.md)`
 
+### exhaustive-allow-list
+
+An `allowDeny` rule whose `allow` list names every value of its `targetNamespace` that exists in the graph today. Such a rule cannot fire on any current or future edge between those values, so it passes without checking anything - the same failure rule 4 reports, reached by a list instead of by a missing target.
+
+- The universe is every value of `targetNamespace` that any file in the graph carries, not only the values this rule's source reaches today. A value reached only by another source still counts.
+- The source's own tag is left out of the universe: a target that shares it is always exempt.
+- `exceptions`, `edgeType`, and `importForm` do not shrink the universe. A value that only exempted, type-only, or dynamic edges reach still keeps the list from being exhaustive.
+- Only `allow` lists are checked. A `deny` list may name a value that does not exist yet, to guard against a future edge.
+- A rule with `evaluated: 0` is reported as `empty-rule-set` instead, never as both.
+- On a small graph, a list can become exhaustive by accident. Add a value the rule must forbid (or wait until one exists) before you trust the rule.
+
+- evidence: `allowDeny rule '<identifier>' allows every real target value with allow [...]`
+- because: the rule's own `because`
+- `path`: the config file
+- do: `narrow the allow list for '<identifier>' in archstrict.config.ts to a genuine subset of real target values, or remove the rule if it should forbid nothing today`
+
 ## 5. deprecated-edge-increased / deprecated-edge-decreased
 
 A `deprecated` entry in the config names an edge between two modules and a `count` it must not exceed - tach's own deprecated-dependency idea (warn, don't forbid), with "must not grow" added on top. The actual edge count exceeding the declared `count` is a violation (`rule: "deprecated-edge-increased"`); the actual count falling strictly between 0 and the declared count is a `suggestion` under a different rule id (`rule: "deprecated-edge-decreased"`, informational, never affects the exit code - the edge shrank, which is progress, not a failure). `because` is mandatory in the config; deprecating an edge without a reason is a decision no future reader can judge.
