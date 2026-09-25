@@ -38,11 +38,9 @@ file at once. Two ideas were rejected:
 - **One catch-all module for every loose file at once
   (`{ name: "loose", glob: "src/*.ts" }`).** Its own public surface is
   every one of those files' own exports at once - a degenerate shape with
-  no real public/private distinction inside it. A glob like this, or one
-  based at the project root (`**`, `*.ts`), also has an empty glob base;
-  with a real `node_modules` present, that puts `node_modules` inside
-  rule 6's own type-leak analysis boundary. `init` never writes a glob
-  whose base is the project root.
+  no real public/private distinction inside it. `init` also never writes
+  a glob whose base is the project root (`**`, `*.ts`): such a module's
+  directory is the whole project.
 
 A directory module carries no per-entry `surface` of its own - the
 project's own top-level default applies, or a real `package.json`

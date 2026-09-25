@@ -34,6 +34,7 @@ const PROPERTY_KINDS = [
   "internal-nested",
   "internal-in-type-argument",
   "re-exported",
+  "re-exported-aliased",
   "anonymous",
 ] as const;
 type PropertyKind = (typeof PROPERTY_KINDS)[number];
@@ -51,7 +52,14 @@ function writeProject(root: string, kinds: readonly PropertyKind[]): void {
   writeFileSync(join(dir, "internal.ts"), `${internalTypeDecls}\n`);
 
   const reExports = kinds
-    .map((kind, i) => (kind === "re-exported" ? `export type { Internal${i} } from "./internal.js";` : undefined))
+    .map((kind, i) => {
+      if (kind === "re-exported") return `export type { Internal${i} } from "./internal.js";`;
+      // A re-export under a generated alias, not the type's own declared
+      // name - still gives the consumer a real, importable name for it
+      // (e.g. `export { type X as Y }`).
+      if (kind === "re-exported-aliased") return `export type { Internal${i} as Alias${i} } from "./internal.js";`;
+      return undefined;
+    })
     .filter((line) => line !== undefined);
 
   const properties = kinds.map((kind, i) => {

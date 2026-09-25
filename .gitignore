@@ -14,6 +14,8 @@ dist/
 !test/fixtures/package-resolution/node_modules/**
 !test/fixtures/types-shadow-package/node_modules/
 !test/fixtures/types-shadow-package/node_modules/**
+!test/fixtures/type-leak-node-modules/node_modules/
+!test/fixtures/type-leak-node-modules/node_modules/**
 
 # Hegel failure database
 .hegel/

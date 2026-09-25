@@ -129,3 +129,84 @@ test("a non-surface declaration still leaks beside a public sibling type", () =>
     const internalFile = join("src", "m", "internal.ts");
     expect(leak.do).toBe(`export 'Hidden' by name from ${leak.path} (it's declared in ${internalFile}), change the referencing exports to not expose it, or add ${internalFile} to this module's own surface`);
   }));
+
+describe("checkTypeLeaks (a consumer already has a name from another declared module's surface)", () => {
+  const CROSS_MODULE_FIXTURE = join(
+    dirname(fileURLToPath(import.meta.url)),
+    "fixtures/type-leak-cross-module",
+  );
+
+  test("a type declared in ANOTHER module's own surface file is not a leak, but a type in that module's internal file (never re-exported) still is", () => {
+    const graph = buildModuleGraph({ projectRoot: CROSS_MODULE_FIXTURE, modulesGlob: "src/*", surface: "index.ts" });
+    expect(graph.unresolvedSpecifierCount).toBe(0);
+
+    const violations = checkTypeLeaks(graph);
+    expect(violations).toHaveLength(1);
+    const leak = violations[0]!;
+    expect(leak.evidence.startsWith("'Hidden'")).toBe(true);
+    expect(leak.todoModule).toBe("a");
+    expect(leak.evidence).not.toContain("'B'");
+  });
+});
+
+describe("checkTypeLeaks (an aliased re-export names an internal type)", () => {
+  async function withAliasedReExport(alias: boolean, run: (root: string) => Promise<void>) {
+    const root = mkdtempSync(join(tmpdir(), "archstrict-alias-reexport-"));
+    try {
+      mkdirSync(join(root, "src/m"), { recursive: true });
+      writeFileSync(join(root, "tsconfig.json"), JSON.stringify({ compilerOptions: { noLib: true, types: [] } }));
+      writeFileSync(join(root, "archstrict.config.ts"), `export default ${JSON.stringify({
+        declaredModules: [{ name: "m", glob: "src/m/**", surface: "index.ts" }], exclude: ["*.ts"], because: "Expose the named public files.",
+      })};`);
+      writeFileSync(
+        join(root, "src/m/internal.ts"),
+        "export interface Violation { rule: string }\nexport function makeViolation(): Violation { return { rule: \"x\" }; }",
+      );
+      writeFileSync(
+        join(root, "src/m/index.ts"),
+        alias
+          ? 'export { type Violation as AViolation, makeViolation } from "./internal.js";'
+          : 'export { makeViolation } from "./internal.js";',
+      );
+      await run(root);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  }
+
+  test("re-exporting under an alias gives the consumer a name - no leak", () =>
+    withAliasedReExport(true, async root => {
+      const result = await check(root);
+      expect(result.violations.filter(v => v.rule === "type-leak")).toEqual([]);
+      expect(result.typeLeaks).toBe(0);
+    }));
+
+  test("re-exporting only the function, not the type, under any name - still a leak (unchanged)", () =>
+    withAliasedReExport(false, async root => {
+      const result = await check(root);
+      const leaks = result.violations.filter(v => v.rule === "type-leak");
+      expect(leaks).toHaveLength(1);
+      expect(leaks[0]!.leak?.internalType).toBe("Violation");
+    }));
+});
+
+describe("checkTypeLeaks (a dependency's own type, real node_modules on disk)", () => {
+  const NODE_MODULES_FIXTURE = join(
+    dirname(fileURLToPath(import.meta.url)),
+    "fixtures/type-leak-node-modules",
+  );
+
+  test("a declared module whose glob is rooted at the project root does not treat node_modules as its own internal boundary", () => {
+    const graph = buildModuleGraph({
+      projectRoot: NODE_MODULES_FIXTURE,
+      declaredModules: [{ name: "all", glob: "**", surface: "src/index.ts" }],
+    });
+    expect(checkTypeLeaks(graph)).toHaveLength(0);
+  });
+
+  test("control: a module glob scoped under src/ never reached node_modules in the first place", () => {
+    const graph = buildModuleGraph({
+      projectRoot: NODE_MODULES_FIXTURE,
+      declaredModules: [{ name: "all", glob: "src/**", surface: "index.ts" }],
+    });
+    expect(checkTypeLeaks(graph)).toHaveLength(0);
+  });
+});

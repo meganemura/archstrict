@@ -1,12 +1,22 @@
 // Responsibility: rule 6, type leak. A module's public surface re-exports
 // or otherwise exposes an internal declaration - one that lives outside
-// the surface file, inside this project's own checked source, and was
-// never itself exported by name from that surface - without the consumer
-// having a name for it. Promoted from a spike once its definition settled
-// (three candidates converged on one general case: a structural leak,
-// which subsumes an inferred-return-type leak and a generic-parameter
-// leak as named subsets, kept as their own `via` tag rather than a
-// separate rule each).
+// the surface file, inside this project's own checked source - without the
+// consumer having a name for it. "A name" means any name a declared
+// module's own surface assigns it, resolved through an aliased re-export
+// (`export { X as Y }`) and through a re-export chain, from that same
+// module's surface or from any OTHER declared module's surface (a
+// consumer that can already `import { Y } from "b"` has a name for the
+// type, whichever module's surface structurally reaches it) - a
+// declaration reached through a `node_modules` segment relative to that
+// boundary is never internal either, whatever a module's glob base
+// happens to contain (the consumer names it from the package, not from
+// this project's own boundary - see isInternal's own boundary-check
+// comment for why this is scoped to the matched boundary root, not the
+// declaration's bare absolute path). Promoted from a spike
+// once its definition settled (three candidates converged on one general
+// case: a structural leak, which subsumes an inferred-return-type leak and
+// a generic-parameter leak as named subsets, kept as their own `via` tag
+// rather than a separate rule each).
 // Boundary: pure predicate over a ModuleGraph (its shared program and
 // checker) and a boundary root. No I/O, no output formatting.
 import ts from "typescript";
@@ -27,6 +37,54 @@ function declaredIn(symbol: ts.Symbol): string | undefined {
   return symbol.getDeclarations()?.[0]?.getSourceFile().fileName;
 }
 
+// A re-export's own alias (`export { X as Y } from "./z.js"`, and a chain
+// of those across several files - `verbs/index.ts` re-exporting a type
+// `rules/index.ts` itself re-exported) is unwrapped one hop at a time by
+// `getAliasedSymbol` - looping here follows the chain all the way to the
+// symbol whose own declarations are the real, original ones, which is
+// what `isInternal` below needs to compare against.
+function resolveAlias(checker: ts.TypeChecker, symbol: ts.Symbol): ts.Symbol {
+  let current = symbol;
+  while (current.flags & ts.SymbolFlags.Alias) {
+    const next = checker.getAliasedSymbol(current);
+    if (next === current) break; // defensive: an unresolvable alias must not loop forever
+    current = next;
+  }
+  return current;
+}
+
+// Every declaration a consumer can already reach under SOME public name -
+// gathered once per `checkTypeLeaks` run, over every declared module's own
+// surface files, not just the leaking module's own: a type a consumer can
+// already `import` from module B is not a leak in module A's surface
+// either (the decision behind this: rule 6 exists so a consumer has a name
+// for every type it receives, and a name from ANY declared module's own
+// surface satisfies that, not only the exposing module's own). Keyed by
+// declaration NODE, not by symbol object or by name - `resolveAlias`'s own
+// target symbol is what a plain name-based check (the old
+// `exportedNames.has(symbol.name)`) missed for `export { X as Y }`: Y's own
+// exported symbol resolves to X's real declaration, and that declaration
+// is what `isInternal` looks up its own candidate symbol's declarations
+// against.
+function collectNamedDeclarations(
+  program: ts.Program,
+  checker: ts.TypeChecker,
+  surfaceFiles: readonly string[],
+): Set<ts.Node> {
+  const declarations = new Set<ts.Node>();
+  for (const path of surfaceFiles) {
+    const sf = program.getSourceFile(path);
+    if (sf === undefined) continue;
+    const moduleSymbol = checker.getSymbolAtLocation(sf);
+    if (moduleSymbol === undefined) continue;
+    for (const exp of checker.getExportsOfModule(moduleSymbol)) {
+      const resolved = resolveAlias(checker, exp);
+      for (const decl of resolved.getDeclarations() ?? []) declarations.add(decl);
+    }
+  }
+  return declarations;
+}
+
 // A generic type reference (Promise<Internal>, Map<K, Internal>,
 // Array<Internal>) is an Object type carrying the Reference object flag -
 // a plain object literal type carries Object but not Reference.
@@ -45,12 +103,28 @@ export function detectTypeLeaks(
   entrySf: ts.SourceFile,
   boundaryRoot: string | readonly string[],
   siblingSurfaceFiles: readonly string[] = [],
+  // Declarations exported by SOME OTHER declared module's own surface
+  // (checkTypeLeaks passes these in, gathered once per check with
+  // collectNamedDeclarations; a standalone caller such as the nukadoko
+  // harness passes none, so only this one file's own exports, folded in
+  // below, apply there).
+  externallyNamedDeclarations: ReadonlySet<ts.Node> = new Set(),
 ): LeakFinding[] {
   const boundaryRoots = typeof boundaryRoot === "string" ? [boundaryRoot] : boundaryRoot;
   const moduleSymbol = checker.getSymbolAtLocation(entrySf);
   if (moduleSymbol === undefined) return [];
   const exports = checker.getExportsOfModule(moduleSymbol);
-  const exportedNames = new Set(exports.map((s) => s.name));
+
+  // This surface's own exports (resolved through an aliased or chained
+  // re-export, e.g. `export { type Violation as AViolation }`)
+  // union the caller's cross-module set. A candidate symbol with a
+  // declaration in this combined set already has a public name somewhere,
+  // under some name - not necessarily its own declared name.
+  const namedDeclarations = new Set<ts.Node>(externallyNamedDeclarations);
+  for (const exp of exports) {
+    const resolved = resolveAlias(checker, exp);
+    for (const decl of resolved.getDeclarations() ?? []) namedDeclarations.add(decl);
+  }
 
   const leaks: LeakFinding[] = [];
 
@@ -83,7 +157,10 @@ export function detectTypeLeaks(
     if (file === undefined) return undefined;
     // A sibling surface also gives consumers a public path to the declaration.
     if (file === entrySf.fileName || siblingSurfaceFiles.includes(file)) return undefined;
-    if (exportedNames.has(symbol.name)) return undefined; // has its own public name
+    // Has a public name somewhere - this surface's own re-export (any
+    // name, any alias depth) or another declared module's surface.
+    const declarations = symbol.getDeclarations();
+    if (declarations?.some((d) => namedDeclarations.has(d))) return undefined;
     // TS file names are always forward-slash; boundaryRoot comes from
     // node:path's own join/dirname, which uses the platform separator on
     // Windows - a plain startsWith would then read every declaration as
@@ -103,9 +180,25 @@ export function detectTypeLeaks(
     // counts - that's still real, still worth a name - checked against
     // every declared module's own boundary, not just the leaking
     // module's own.
+    //
+    // A root-based glob ("**") makes a module's
+    // own directory the project root itself, which contains the project's
+    // real node_modules - a dependency's own type would then read as
+    // "inside the boundary" by the plain prefix test above, when the
+    // consumer already has a name for it from the package it imported it
+    // from, not from this project's own boundary to keep. Checked as a
+    // node_modules SEGMENT in the path relative to the matched boundary
+    // root specifically (not the declaration's absolute path): the
+    // standalone nukadoko harness below intentionally passes a boundary
+    // root that itself sits under node_modules (a real npm-installed
+    // package's own source, used as a convenient real-world fixture, not a
+    // dependency of the thing being analyzed) - a declaration inside THAT
+    // root is still internal to it, since nothing in the path AFTER the
+    // root names a nested node_modules of its own.
     const isInsideAnyBoundary = boundaryRoots.some((root) => {
       const rel = relative(root, file);
-      return !(rel.startsWith("..") || rel === file); // rel === file: outside entirely (relative() returns the input unchanged across drives on Windows)
+      if (rel.startsWith("..") || rel === file) return false; // rel === file: outside entirely (relative() returns the input unchanged across drives on Windows)
+      return !rel.split(/[\\/]/).includes("node_modules");
     });
     if (!isInsideAnyBoundary) return undefined;
     return { file };
@@ -382,6 +475,12 @@ export function checkTypeLeaks(graph: {
   // see detectTypeLeaks' own comment on why a single, broad boundary was
   // measured wrong.
   const moduleBoundaries = [...graph.modules.values()].map((m) => m.dir);
+  // Every declaration named by ANY declared module's own surface, computed
+  // once for the whole check (not per module): a type a consumer can
+  // already import from module B is not a leak in module A's surface
+  // either - see collectNamedDeclarations' own header comment.
+  const allSurfaceFiles = [...graph.modules.values()].flatMap((m) => m.surfaceFiles);
+  const namedDeclarations = collectNamedDeclarations(graph.program, graph.checker, allSurfaceFiles);
 
   for (const [name, module] of graph.modules) {
     // A module's surface can be more than one file (a glob, not a single
@@ -392,7 +491,13 @@ export function checkTypeLeaks(graph: {
     for (const surfacePath of module.surfaceFiles) {
       const sf = graph.program.getSourceFile(surfacePath);
       if (sf === undefined) continue;
-      const findings = detectTypeLeaks(graph.checker, sf, moduleBoundaries, module.surfaceFiles.filter(p => p !== surfacePath));
+      const findings = detectTypeLeaks(
+        graph.checker,
+        sf,
+        moduleBoundaries,
+        module.surfaceFiles.filter(p => p !== surfacePath),
+        namedDeclarations,
+      );
       for (const [key, group] of groupByInternalType(findings, surfacePath)) {
         const existing = groups.get(key);
         if (existing === undefined) {
