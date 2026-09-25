@@ -38,3 +38,6 @@ spike/fixtures/generated-union/tsconfig.oneoff.json
 features/*.md
 
 coverage/
+
+# import-graph survey output (survey/README.md): per-run results, not source
+survey-out/
