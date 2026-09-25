@@ -175,7 +175,7 @@ test("uncovered extraction preserves the original serialized report", () => {
   const graph = { rootDir: "/project", outsideFiles: [file] } as ModuleGraph;
   const expected = [{ rule: "uncovered-module", path: file, line: 1, column: 1,
     evidence: "'/project/loose.ts' is in scope but matches no declared module",
-    because: "a file matching no declared module is unchecked, not passing (deptrac's --fail-on-uncovered)",
+    because: "a file matching no declared module is unchecked, not passing",
     do: 'add { name: "loose.ts", glob: "loose.ts", surface: "loose.ts" } to declaredModules in archstrict.config.ts, or add "loose.ts" to exclude if it is not module content; then run archstrict init' }];
   expect(JSON.stringify(checkUncoveredModules(graph, {}))).toBe(JSON.stringify(expected));
 });

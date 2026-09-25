@@ -27,7 +27,7 @@ export type Violation = {
   do: string;
 };
 
-const BECAUSE = "a file matching no declared module is unchecked, not passing (deptrac's --fail-on-uncovered)";
+const BECAUSE = "a file matching no declared module is unchecked, not passing";
 
 // `group` is the caller's own suggestion for this file (from
 // `suggestUncovered`/`groupForRelFile`) - a bare declaredModules entry with

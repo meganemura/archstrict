@@ -23,7 +23,7 @@ export type Violation = {
 };
 
 const BECAUSE =
-  "a rule that checks nothing must not look like a pass (ArchUnitTS's Empty Test Protection)";
+  "a rule that checks nothing must not look like a pass";
 
 function violation(config: Config, evidence: string, doText: string): Violation {
   return {

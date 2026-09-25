@@ -10,7 +10,7 @@ An import from outside a module reaches a file other than that module's surface 
 - do: `add a <surface> to <module>/ naming what it exports`, or `import from <module>/<surface> instead, or add the needed export there`. When the module's glob names a single file, there is no directory to add a surface file into: `set surface on '<module>' to match <file>, or stop importing it; this module is that file, not a directory` (or `import from <file> instead, or add the needed export there` when a surface file is already present).
 - `todoModule`: the module whose surface was bypassed (the import's target, not its source)
 
-### `friends` - a per-consumer exception (ArchUnit's "friend" idea)
+### `friends` - a per-consumer exception
 
 A module's `surface` is public to every importer equally, or private to all. `declaredModules[].friends` (`{ file, from, because }[]`) is narrower: `file` (relative to the module, may itself be a glob) is public to exactly the importers `from` (a project-relative glob) matches, private to everyone else. A real, motivating case: a large monorepo's own semi-private internal-utilities file documented two legitimate consumer classes (that package's own implementation code, plus a specific first-party group of other packages routed through one particular re-export) with different rules for each - a shape `surface` alone cannot express, since it only ever grants or denies visibility project-wide.
 
@@ -35,7 +35,7 @@ A known cycle can be exempted by naming any two of its modules in config's `igno
 
 A real file (not excluded) matches no `declaredModules` entry - the same fact `graph.outsideFiles` already tracks, reported here instead of silently skipped. Not freezable: the file belongs to no module, so there is no module directory to freeze it into - the only fix is a config change (declare a module for it, or exclude it).
 
-- because: "a file matching no declared module is unchecked, not passing (deptrac's --fail-on-uncovered)"
+- because: "a file matching no declared module is unchecked, not passing"
 - `path`: the file itself
 - do, for a lone file: `add { name: "sqlite.ts", glob: "src/sqlite.ts", surface: "sqlite.ts" } to declaredModules in archstrict.config.ts, or add "src/sqlite.ts" to exclude if it is not module content; then run archstrict init`
 - do, for a directory (this and every other uncovered file directly inside it): `add { name: "extra", glob: "src/extra/**" } to declaredModules in archstrict.config.ts, or add "src/extra/**" to exclude if it is not module content; then run archstrict init`
@@ -44,11 +44,11 @@ A file entry always names itself as `surface`: an entry without one makes that s
 
 ## 4. empty-rule-set
 
-A configured rule that structurally cannot match anything: zero `declaredModules` entries at all, a `classify` glob matching zero real files in scope, a `deprecated` entry whose actual edge count is exactly 0 (handed off from rule 5, which deliberately does not report that case itself), or an `edges` rule (`allowDeny`/`order`/`point`) whose own source/target combination never applies to any real edge in the graph. ArchUnitTS's own "Empty Test Protection": a rule that checks nothing must not look like a pass. `check`'s own `edgeRuleCoverage` field reports, per configured `edges` rule, how many real edges it actually evaluated - the same number this violation's own zero case reads off, exposed directly so authoring a new rule doesn't need a throwaway script against the graph to tell "0 violations, genuinely clean" from "0 violations, checked nothing" (a real, measured trap: writing an `edges` rule whose `targetNamespace` names a tag classify never assigns to anything in scope produces exactly this silent, meaningless "clean" pass - a workspace's own sibling-package imports were a concrete, previously-real instance of this, before this project's resolver learned to tell a workspace sibling apart from a genuine external dependency; see rule 7 below).
+A configured rule that structurally cannot match anything: zero `declaredModules` entries at all, a `classify` glob matching zero real files in scope, a `deprecated` entry whose actual edge count is exactly 0 (handed off from rule 5, which deliberately does not report that case itself), or an `edges` rule (`allowDeny`/`order`/`point`) whose own source/target combination never applies to any real edge in the graph. A rule that checks nothing must not look like a pass. `check`'s own `edgeRuleCoverage` field reports, per configured `edges` rule, how many real edges it actually evaluated - the same number this violation's own zero case reads off, exposed directly so authoring a new rule doesn't need a throwaway script against the graph to tell "0 violations, genuinely clean" from "0 violations, checked nothing" (a real, measured trap: writing an `edges` rule whose `targetNamespace` names a tag classify never assigns to anything in scope produces exactly this silent, meaningless "clean" pass - a workspace's own sibling-package imports were a concrete, previously-real instance of this, before this project's resolver learned to tell a workspace sibling apart from a genuine external dependency; see rule 7 below).
 
 **A zero from an `edges` rule you haven't seen fire is an untested hypothesis, not evidence.** `evaluated > 0` only proves the rule had real edges to judge, not that its `allow`/`deny`/`sequence`/`from`/`to` shape is the one you meant to write. Before trusting a clean pass on a newly-written rule, inject a real edge you expect it to forbid, confirm the violation actually fires, then revert - a positive control any rule-writer should apply before trusting a rule that reports zero.
 
-- because: "a rule that checks nothing must not look like a pass (ArchUnitTS's Empty Test Protection)"
+- because: "a rule that checks nothing must not look like a pass"
 - `path`: the config file, not a module
 - `do` (one of four, depending on which case fired):
   - zero `declaredModules` entries: `add at least one declaredModules entry in archstrict.config.ts`
@@ -89,14 +89,14 @@ An edge reaching a genuinely external target (a real npm package, a node builtin
 
 A node builtin also carries a second, shared `pkg:node` tag alongside its own bare-name tag (`pkg:fs` and `pkg:node`, for `node:fs`) - a rule targeting `pkg:node` alone bans every builtin at once (a real, common need for code that must never touch a Node API at all, a browser-runtime layer being the motivating case), without a rule author having to enumerate each specific builtin they currently know is imported and silently under-protecting against the next one nobody thought to add.
 
-**`allowDeny`** (`rule: "tag-boundary"`): a `source` tag's allow-or-deny list over one `targetNamespace` at a time (dependency-cruiser's own `mayImportFrom`/`forbid` generators, unified into one shape). A target sharing the source's own tag value is unconstrained by that rule - "the same group as source" is never restricted. An `exceptions` list (`{ from, to, because }[]`, glob pairs on the real file paths) overrides the rule either way for a specific edge - `allowDeny`'s own field only; `point` (below) has no `exceptions` of its own, since its `from`/`to` predicates are already as explicit as a rule gets.
+**`allowDeny`** (`rule: "tag-boundary"`): a `source` tag's allow-or-deny list over one `targetNamespace` at a time. A target sharing the source's own tag value is unconstrained by that rule - "the same group as source" is never restricted. An `exceptions` list (`{ from, to, because }[]`, glob pairs on the real file paths) overrides the rule either way for a specific edge - `allowDeny`'s own field only; `point` (below) has no `exceptions` of its own, since its `from`/`to` predicates are already as explicit as a rule gets.
 
 - because: whatever the `allowDeny` entry's own `because` gives (mandatory)
 - evidence: `'<specifier>' (from '<source tag>') reaches '<violating tag>'`
 - do: `remove this edge, or add '<value>' to '<source>'s allow list in archstrict.config.ts and record why`
 - `todoModule`: the edge's own source module
 
-**`order`** (`rule: "tag-order"`): a `tagNamespace`'s values must appear in `sequence`, in declared order, `direction: "downward-only"` meaning a source may depend on its own layer or an earlier one, never a later one (dependency-cruiser's own layer generator). `within` scopes the rule to edges sharing the same value in a second namespace (e.g. one `sequence` per `domain`) - a `within` value with no `sequence` entry at all is silently out of scope for that rule, not an error (a domain legitimately needing no internal layering); a `within` value that DOES have a `sequence` but doesn't list one of the two layer values classify actually assigned is a thrown config error (a real omission, not a design choice).
+**`order`** (`rule: "tag-order"`): a `tagNamespace`'s values must appear in `sequence`, in declared order, `direction: "downward-only"` meaning a source may depend on its own layer or an earlier one, never a later one. `within` scopes the rule to edges sharing the same value in a second namespace (e.g. one `sequence` per `domain`) - a `within` value with no `sequence` entry at all is silently out of scope for that rule, not an error (a domain legitimately needing no internal layering); a `within` value that DOES have a `sequence` but doesn't list one of the two layer values classify actually assigned is a thrown config error (a real omission, not a design choice).
 
 - because: whatever the `order` entry's own `because` gives (mandatory)
 - evidence: `'<specifier>' reaches '<target layer>' from '<source layer>' (<namespace> sequence: <a> -> <b> -> ...)`
@@ -112,7 +112,7 @@ A node builtin also carries a second, shared `pkg:node` tag alongside its own ba
 
 ## must-be-empty
 
-A directory a team decided must hold no code at all - archspec's own "empty component" idea (e.g. a project that keeps rich models and no service objects declares `app/services` must stay empty, an anti-pattern guard). Distinct from rule 4 (`empty-rule-set`): that rule flags a rule that structurally cannot match anything; this one flags a real file existing where config says none should. A violation is any file matching config's `mustBeEmpty` glob at all - zero matches is a clean pass, not silence. The glob is project-root-relative, the same convention every rule follows now that `check`/`todo` only ever build a declared-mode module graph.
+A directory a team decided must hold no code at all (e.g. a project that keeps rich models and no service objects declares `app/services` must stay empty, an anti-pattern guard). Distinct from rule 4 (`empty-rule-set`): that rule flags a rule that structurally cannot match anything; this one flags a real file existing where config says none should. A violation is any file matching config's `mustBeEmpty` glob at all - zero matches is a clean pass, not silence. The glob is project-root-relative, the same convention every rule follows now that `check`/`todo` only ever build a declared-mode module graph.
 
 - because: whatever `mustBeEmpty`'s own entry gives (mandatory, same as every other root-level rule with a reason to record)
 - `path`: the matching file itself; `line`/`column` are always `1`/`1` (no single line is "the" violation - the file's existence is)

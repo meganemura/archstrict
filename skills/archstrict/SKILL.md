@@ -5,7 +5,7 @@ description: Use when a project has an archstrict.config.ts, or when the user na
 
 # archstrict
 
-TypeScript module boundary checking: architecture linting, in the sense of ArchUnit (Java) and archspec (Ruby). Not tsc, not ESLint, not a type checker.
+TypeScript module boundary checking: architecture linting. It does not check types or code style.
 
 A module is one directory, or one file when its glob names that file, declared explicitly in `declaredModules` (never discovered from directory structure at runtime). A module shows the rest of the codebase one file, named by the root config's own `surface` field (default `index.ts`); anything a module does not export from that file is private, and an import that reaches past it into the module's internals is a violation. A module with no public-surface file present is entirely private. A file can also carry tags (`classify`/`classifyByDirectoryName`) independent of module membership, and a constraint engine (`edges`) checks edges between tags - domain/layer/plane boundaries generalized over tags instead of module names. Shape (scope, exclude, classify, declaredModules, edges, the surface file name) lives in one root file, `archstrict.config.ts`, written as a plain TypeScript value satisfying the generated `Config` type - never scattered per module.
 
