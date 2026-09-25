@@ -15,12 +15,13 @@ import type { Config } from "../src/config.js";
 // c -> a has 2 edges; c -> b has 1 edge (test/deprecated.test.ts's own
 // header has the detail).
 const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), "fixtures/public-surface");
+const declaredModules = ["a", "b", "c"].map((name) => ({ name, glob: `src/${name}/**` }));
 
 const declaredCount = gs.integers({ minValue: 0, maxValue: 6 });
 
 describe("checkDeprecatedEdges (property)", () => {
   test("classification (violation / suggestion / neither) matches the real count exactly", () => {
-    const graph = buildModuleGraph({ projectRoot: FIXTURE, modulesGlob: "src/*" });
+    const graph = buildModuleGraph({ projectRoot: FIXTURE, declaredModules });
     const actual = graph.crossModuleEdges.filter(
       (e) => e.fromModule === "c" && e.toModule === "a",
     ).length;

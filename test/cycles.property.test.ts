@@ -13,6 +13,7 @@ import { buildModuleGraph } from "../src/module-graph.js";
 import { checkCycles } from "../src/rules/cycles.js";
 
 const MODULE_NAMES = ["m1", "m2", "m3", "m4"] as const;
+const declaredModules = MODULE_NAMES.map((name) => ({ name, glob: `src/${name}/**` }));
 
 const edgeSpec = gs.record({
   from: gs.sampledFrom([...MODULE_NAMES]),
@@ -119,7 +120,7 @@ describe("checkCycles (property)", () => {
           const root = mkdtempSync(join(tmpdir(), "archstrict-cycles-"));
           try {
             writeProject(root, edges);
-            const graph = buildModuleGraph({ projectRoot: root, modulesGlob: "src/*" });
+            const graph = buildModuleGraph({ projectRoot: root, declaredModules });
             assert.equal(graph.unresolvedSpecifierCount, 0);
 
             const violations = checkCycles(graph);
@@ -141,7 +142,7 @@ describe("checkCycles (property)", () => {
               assert.ok(path.length >= 3); // at least a 2-module cycle plus the repeated start
               assert.equal(path[0], path.at(-1));
               assert.equal(v.todoModule, path[0]);
-              const filePairs = path.slice(0, -1).map((from, i) => `${from}/importer.ts -> ${path[i + 1]}/module.ts`);
+              const filePairs = path.slice(0, -1).map((from, i) => `src/${from}/importer.ts -> src/${path[i + 1]}/module.ts`);
               assert.equal(v.do, `break the cycle at ${filePairs[0]} (module ${path[0]} -> ${path[1]}), or merge the modules involved - real import chain: ${filePairs.join(", ")}`);
               const component = components.find((c) => c.includes(v.todoModule));
               assert.ok(component !== undefined);

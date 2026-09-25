@@ -185,7 +185,7 @@ function roleProject(run: (root: string, config: Config) => void) {
 }
 
 test("a healthy allow list stays valid when another source reaches the forbidden database value", () => roleProject((root, config) => {
-  const graph = buildModuleGraph({ projectRoot: root, declaredModules: config.declaredModules });
+  const graph = buildModuleGraph({ projectRoot: root, declaredModules: config.declaredModules! });
   expect(graph.edges.some(edge => edge.fromFile.endsWith("/other/index.ts") && edge.resolvedFile.endsWith("/db/index.ts"))).toBe(true);
   expect(graph.edges.some(edge => edge.fromFile.endsWith("/app/index.ts") && edge.resolvedFile.endsWith("/db/index.ts"))).toBe(false);
   expect(checkEmptyRuleSet(graph, config)).toEqual([]);
@@ -193,19 +193,19 @@ test("a healthy allow list stays valid when another source reaches the forbidden
 
 test("the source value does not prevent an exhaustive finding", () => roleProject((root, config) => {
   writeFileSync(join(root, "src/other/index.ts"), 'import "../app/index.js";');
-  const graph = buildModuleGraph({ projectRoot: root, declaredModules: config.declaredModules });
+  const graph = buildModuleGraph({ projectRoot: root, declaredModules: config.declaredModules! });
   expect(checkEmptyRuleSet(graph, config).map(v => v.rule)).toEqual(["exhaustive-allow-list"]);
 }));
 
 test("deny-only forward guards do not produce exhaustive findings", () => roleProject((root, config) => {
   config.edges = { allowDeny: [{ source: "role:app", targetNamespace: "role", deny: ["future"], because: "Prevent future access." }] };
-  const graph = buildModuleGraph({ projectRoot: root, declaredModules: config.declaredModules });
+  const graph = buildModuleGraph({ projectRoot: root, declaredModules: config.declaredModules! });
   expect(checkEmptyRuleSet(graph, config)).toEqual([]);
 }));
 
 test("zero evaluated edges produce only the existing coverage finding", () => roleProject((root, config) => {
   config.edges = { allowDeny: [{ source: "role:absent", targetNamespace: "role", allow: ["app", "infra", "shared", "db"], because: "test" }] };
-  const graph = buildModuleGraph({ projectRoot: root, declaredModules: config.declaredModules });
+  const graph = buildModuleGraph({ projectRoot: root, declaredModules: config.declaredModules! });
   expect(checkEmptyRuleSet(graph, config).map(v => v.rule)).toEqual(["empty-rule-set"]);
 }));
 
@@ -215,6 +215,6 @@ test.each(["type", "dynamic", "exception"] as const)("whole-graph values survive
   const rule = config.edges!.allowDeny![0]!;
   config.edges = { allowDeny: [{ ...rule, edgeType: "value", importForm: "static",
     exceptions: [{ from: "src/other/**", to: "src/db/**", because: "Other access is exempt." }] }] };
-  const graph = buildModuleGraph({ projectRoot: root, declaredModules: config.declaredModules });
+  const graph = buildModuleGraph({ projectRoot: root, declaredModules: config.declaredModules! });
   expect(checkEmptyRuleSet(graph, config)).toEqual([]);
 }));

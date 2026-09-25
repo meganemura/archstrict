@@ -27,12 +27,14 @@ export async function recommend(projectRoot: string, dir?: string, surface = DEF
   const config = existsSync(configPath) ? await loadConfig(configPath) : undefined;
   // A config supplies its own scope regardless of `dir` - unchanged from
   // before. Without one, `dir` means init's own directory argument (its
-  // same normalization and errors), not a glob: recommend walks in memory
-  // exactly what init would write.
-  const plan = config ? undefined : freshRun(projectRoot, normalizeDirArg(dir));
+  // same normalization rules), not a glob: recommend walks in memory
+  // exactly what init would write. Passing "recommend" as the verb keeps a
+  // bad argument's own error and `do:` naming the command that was
+  // actually run, not init.
+  const plan = config ? undefined : freshRun(projectRoot, normalizeDirArg(dir, "recommend"), "recommend");
   const declaredModules = config ? config.declaredModules! : plan!.declaredModules;
   const graph = config
-    ? buildModuleGraph({ projectRoot, declaredModules: config.declaredModules, exclude: config.exclude })
+    ? buildModuleGraph({ projectRoot, declaredModules: config.declaredModules!, exclude: config.exclude })
     : buildModuleGraph({ projectRoot, declaredModules: plan!.declaredModules, exclude: plan!.exclude, surface });
   // An empty directory has no files to import or be imported by within this graph.
   // It cannot form a real candidate pair, so reporting it would add noise rather than information.

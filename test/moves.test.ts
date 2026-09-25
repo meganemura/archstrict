@@ -27,7 +27,7 @@ function project(run: (root: string, config: Config, graph: ModuleGraph) => void
     declaredModules: names.map(name => ({ name, glob: `src/${name}/**` })),
     classify: names.filter(name => name !== "other").map(name => ({ glob: `src/${name}/**`, tags: [`role:${name}`] })),
     edges: { allowDeny: [{ source: "role:app", targetNamespace: "role", allow: ["allowed"], because: "App uses the allowed surface." }] } };
-  const graph = buildModuleGraph({ projectRoot: root, declaredModules: config.declaredModules });
+  const graph = buildModuleGraph({ projectRoot: root, declaredModules: config.declaredModules! });
   try {
     const result = run(root, config, graph);
     if (result instanceof Promise) return result.finally(() => rmSync(root, { recursive: true, force: true }));
@@ -103,7 +103,7 @@ test.each([{ allow: [] }, { allow: ["missing"] }])("no reachable surface omits r
 
 test("builtins omit the exception move", () => project((root, config) => {
   writeFileSync(join(root, "src/app/index.ts"), 'import "node:fs";');
-  const graph = buildModuleGraph({ projectRoot: root, declaredModules: config.declaredModules });
+  const graph = buildModuleGraph({ projectRoot: root, declaredModules: config.declaredModules! });
   const cfg = replaceRule(config, { targetNamespace: "pkg", allow: ["node"] });
   const moves = checkAllowDeny(graph, cfg)[0]!.moves!;
   expect(moves.some(move => move.kind === "exception")).toBe(false);
@@ -117,7 +117,7 @@ test.each(["source", "target"])("a literal star in the real %s path omits except
   if (side === "target") writeFileSync(join(root, "src/app/index.ts"), `import "../${name}/index.js";`);
   const cfg = { ...config, declaredModules: [...config.declaredModules!, { name, glob: `src/${name}/**` }],
     classify: [...config.classify!, { glob: `src/${name}/**`, tags: [side === "source" ? "role:app" : "role:forbidden"] }] };
-  const graph = buildModuleGraph({ projectRoot: root, declaredModules: cfg.declaredModules });
+  const graph = buildModuleGraph({ projectRoot: root, declaredModules: cfg.declaredModules! });
   const violation = checkAllowDeny(graph, cfg).find(v => side === "target" || v.path.includes("a*b"))!;
   expect(violation).toBeDefined();
   expect(violation.moves!.some(move => move.kind === "exception")).toBe(false);
@@ -174,13 +174,13 @@ test("an internal file tag cannot supply a reroute surface", () => project((root
     { glob: "src/allowed/index.ts", tags: ["role:private"] },
     { glob: "src/allowed/internal.ts", tags: ["role:allowed"] },
   ] };
-  const graph = buildModuleGraph({ projectRoot: root, declaredModules: cfg.declaredModules });
+  const graph = buildModuleGraph({ projectRoot: root, declaredModules: cfg.declaredModules! });
   expect(checkAllowDeny(graph, cfg)[0]!.moves!.some(move => move.kind === "reroute")).toBe(false);
 }));
 
 test("a widening that leaves another forbidden target tag is not verified", () => project((root, config) => {
   writeFileSync(join(root, "src/app/index.ts"), 'import "node:fs";');
-  const graph = buildModuleGraph({ projectRoot: root, declaredModules: config.declaredModules });
+  const graph = buildModuleGraph({ projectRoot: root, declaredModules: config.declaredModules! });
   const cfg = replaceRule(config, { targetNamespace: "pkg", allow: [] });
   const move = checkAllowDeny(graph, cfg)[0]!.moves!.find(move => move.kind === "widen-allow")!;
   expect(move.verified).toBe(false);

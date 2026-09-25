@@ -7,10 +7,11 @@ import { buildModuleGraph } from "../src/module-graph.js";
 import { checkCycles, checkStaleCycleExceptions } from "../src/rules/cycles.js";
 
 const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), "fixtures/cycles");
+const declaredModules = ["a", "b", "c", "d"].map((name) => ({ name, glob: `src/${name}/**` }));
 
 describe("checkCycles", () => {
   test("flags the a -> b -> c -> a cycle once, and leaves standalone d alone", () => {
-    const graph = buildModuleGraph({ projectRoot: FIXTURE, modulesGlob: "src/*" });
+    const graph = buildModuleGraph({ projectRoot: FIXTURE, declaredModules });
     expect(graph.unresolvedSpecifierCount).toBe(0);
 
     const violations = checkCycles(graph);
@@ -25,7 +26,7 @@ describe("checkCycles", () => {
   });
 
   test("a pair named in ignoredCycles exempts the a -> b -> c -> a cycle, in either order", () => {
-    const graph = buildModuleGraph({ projectRoot: FIXTURE, modulesGlob: "src/*" });
+    const graph = buildModuleGraph({ projectRoot: FIXTURE, declaredModules });
 
     expect(checkCycles(graph, { ignoredCycles: [["a", "b"]], configPath: "<test>" })).toHaveLength(0);
     expect(checkCycles(graph, { ignoredCycles: [["b", "a"]], configPath: "<test>" })).toHaveLength(0);
@@ -35,7 +36,7 @@ describe("checkCycles", () => {
   });
 
   test("checkStaleCycleExceptions flags a pair that names no real cycle, leaves a real one alone", () => {
-    const graph = buildModuleGraph({ projectRoot: FIXTURE, modulesGlob: "src/*" });
+    const graph = buildModuleGraph({ projectRoot: FIXTURE, declaredModules });
 
     const stale = checkStaleCycleExceptions(graph, { ignoredCycles: [["a", "d"]], configPath: "<test>" });
     expect(stale).toHaveLength(1);
@@ -49,10 +50,10 @@ describe("checkCycles", () => {
 
 
 test("do names every real import in the fixture cycle", () => {
-  const graph = buildModuleGraph({ projectRoot: FIXTURE, modulesGlob: "src/*" });
+  const graph = buildModuleGraph({ projectRoot: FIXTURE, declaredModules });
   const [violation] = checkCycles(graph);
-  expect(violation!.do).toBe("break the cycle at a/module.ts -> b/module.ts (module a -> b), or merge the modules involved - real import chain: a/module.ts -> b/module.ts, b/module.ts -> c/module.ts, c/module.ts -> a/module.ts");
-  expect(violation!.path).toBe(join(graph.rootDir, "a/module.ts"));
+  expect(violation!.do).toBe("break the cycle at src/a/module.ts -> src/b/module.ts (module a -> b), or merge the modules involved - real import chain: src/a/module.ts -> src/b/module.ts, src/b/module.ts -> src/c/module.ts, src/c/module.ts -> src/a/module.ts");
+  expect(violation!.path).toBe(join(graph.rootDir, "src/a/module.ts"));
   expect(violation!.line).toBe(1);
 });
 

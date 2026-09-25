@@ -164,10 +164,10 @@ export function detectTypeLeaks(
     // TS file names are always forward-slash; boundaryRoot comes from
     // node:path's own join/dirname, which uses the platform separator on
     // Windows - a plain startsWith would then read every declaration as
-    // outside the boundary there (the same class of bug moduleForFile in
-    // module-graph.ts already hit and fixed with the same relative()
-    // check). This also closes a prefix hole a plain startsWith has even
-    // on one platform: "src-other" starts with "src" as a string.
+    // outside the boundary there (the same class of bug module-graph.ts's
+    // own isWorkspaceSiblingResolution already hit and fixed with the same
+    // relative() check). This also closes a prefix hole a plain startsWith
+    // has even on one platform: "src-other" starts with "src" as a string.
     //
     // Under declared modules, "internal" means inside SOME declared
     // module's own directory - not the whole project root. A single,

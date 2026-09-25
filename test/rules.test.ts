@@ -236,7 +236,7 @@ describe("constraint projections", () => {
     const message = "order rule for 'layer' (within '(unscoped)') does not list 'missing' - every value classify assigns within that scope must appear in its sequence";
     await expect(rules(root, join(root, "src/app/new.ts"))).rejects.toThrow(message);
     writeFileSync(join(root, "src/app/main.ts"), 'import { value } from "./public/api.js"; export { value };');
-    const graph = buildModuleGraph({ projectRoot: root, declaredModules: cfg.declaredModules, exclude: cfg.exclude });
+    const graph = buildModuleGraph({ projectRoot: root, declaredModules: cfg.declaredModules!, exclude: cfg.exclude });
     expect(() => checkOrder(graph, cfg)).toThrow(message);
   }));
 
@@ -250,7 +250,7 @@ describe("constraint projections", () => {
     ] } };
     writeFileSync(cfg.configPath, `export default ${JSON.stringify(cfg)};`);
     writeFileSync(join(root, "src/app/main.ts"), 'import { value } from "../shared/index.js"; export { value };');
-    const graph = buildModuleGraph({ projectRoot: root, declaredModules: cfg.declaredModules, exclude: cfg.exclude });
+    const graph = buildModuleGraph({ projectRoot: root, declaredModules: cfg.declaredModules!, exclude: cfg.exclude });
     const result = await rules(root, join(root, "src/app/main.ts"));
     expect(result.pointConstraints).toHaveLength(2);
     const violations = checkPoint(graph, cfg);
@@ -287,7 +287,7 @@ test.each([
   };
   writeFileSync(cfg.configPath, `export default ${JSON.stringify(cfg)};`);
   writeFileSync(join(root, "src/app/main.ts"), 'import { value } from "../shared/index.js"; export { value };');
-  const graph = buildModuleGraph({ projectRoot: root, declaredModules: cfg.declaredModules, exclude: cfg.exclude });
+  const graph = buildModuleGraph({ projectRoot: root, declaredModules: cfg.declaredModules!, exclude: cfg.exclude });
   const violations = checkOrder(graph, cfg);
   expect(violations).toHaveLength(1);
   expect(violations[0]!.evidence).toBe(`'../shared/index.js' reaches 'layer:target' from 'layer:${first}' (layer sequence: ${first} -> target -> ${second})`);

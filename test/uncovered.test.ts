@@ -38,10 +38,4 @@ describe("checkUncoveredModules", () => {
 
     expect(checkUncoveredModules(graph, { declaredModules })).toHaveLength(0);
   });
-
-  test("v0-style discovery (no declaredModules) has no outsideFiles for a well-formed fixture, so nothing to flag", () => {
-    const graph = buildModuleGraph({ projectRoot: FIXTURE, modulesGlob: "src/*" });
-    expect(graph.outsideFiles).toHaveLength(0);
-    expect(checkUncoveredModules(graph, {})).toHaveLength(0);
-  });
 });

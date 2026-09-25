@@ -31,7 +31,9 @@ export async function fix(projectRoot: string, file?: string, dryRun = false): P
   const focus = file === undefined ? undefined : resolve(projectRoot, file);
   if (focus !== undefined && !existsSync(focus)) return result;
   const config = await loadConfig(resolve(projectRoot, "archstrict.config.ts"));
-  const options = { projectRoot, declaredModules: config.declaredModules, exclude: config.exclude };
+  // loadConfig already guarantees declaredModules is a well-shaped array
+  // (assertDeclaredModulesShapeValid) - see check.ts's own comment.
+  const options = { projectRoot, declaredModules: config.declaredModules!, exclude: config.exclude };
   const warm = createWarmGraph();
   let graph = warm.refresh(options);
   const evaluate = () => applyTodo(graph, config, runRules(graph, config));

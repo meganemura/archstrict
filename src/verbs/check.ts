@@ -439,7 +439,7 @@ export async function check(projectRoot: string, focusFile?: string, options: Ch
   // dist/, etc.) out of scope entirely; `init` writes one by default.
   const graph = (options.buildGraph ?? buildModuleGraph)({
     projectRoot,
-    declaredModules: config.declaredModules,
+    declaredModules: config.declaredModules!,
     exclude: config.exclude,
   });
   const evaluated = runRules(graph, config);

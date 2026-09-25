@@ -5,6 +5,7 @@ import { buildModuleGraph } from "../src/module-graph.js";
 import { checkPublicSurfaceBypass } from "../src/rules/public-surface.js";
 
 const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), "fixtures/public-surface");
+const declaredModules = ["a", "b", "c"].map((name) => ({ name, glob: `src/${name}/**` }));
 
 describe("checkPublicSurfaceBypass", () => {
   test("flags a bypass of a's public.ts, and every import into b (no public.ts)", () => {
@@ -12,7 +13,7 @@ describe("checkPublicSurfaceBypass", () => {
     // tool's default ("index.ts") - the surface file name is configurable
     // (a project names its own), and this test exercises the rule itself,
     // not that default.
-    const graph = buildModuleGraph({ projectRoot: FIXTURE, modulesGlob: "src/*", surface: "public.ts" });
+    const graph = buildModuleGraph({ projectRoot: FIXTURE, declaredModules, surface: "public.ts" });
 
     // Sanity: module resolution actually worked (a nodenext moduleResolution
     // change that broke .ts-extension resolution would otherwise show up as
@@ -45,7 +46,7 @@ describe("checkPublicSurfaceBypass", () => {
   });
 
   test("modules missing entirely from the graph are counted, not silently absent", () => {
-    const graph = buildModuleGraph({ projectRoot: FIXTURE, modulesGlob: "src/*" });
+    const graph = buildModuleGraph({ projectRoot: FIXTURE, declaredModules });
     expect(graph.outsideFiles).toEqual([]);
     expect(graph.unsupportedSyntaxCount).toBe(0);
     expect([...graph.modules.keys()].sort()).toEqual(["a", "b", "c"]);

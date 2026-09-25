@@ -57,12 +57,6 @@ test("the built check CLI includes the count in JSON", () => project((root, put)
   expect(JSON.parse(output).nonTsSourceFiles).toBe(2);
 }));
 
-test("discovery counts only files under its modules root", () => project((root, put) => {
-  put("outside.mjs", "export {};");
-  put("src/app/plugin.js", "export {};");
-  expect(prepareGraph({ projectRoot: root, modulesGlob: "src/*" }).nonTsSourceFileCount).toBe(1);
-}));
-
 test("counts exactly the generated JavaScript files outside excluded directories", async () => {
   await hegel.testAsync(tc => project((root, put) => {
     const files = tc.draw(gen.arrays(gen.tuples(
@@ -70,9 +64,7 @@ test("counts exactly the generated JavaScript files outside excluded directories
       gen.sampledFrom(["src/app", "src/ignored", "src/app/node_modules/pkg", "src/app/dist"]),
     )));
     for (const [i, [extension, directory]] of files.entries()) put(`${directory}/file${i}${extension}`, "");
-    const declared = tc.draw(gen.booleans());
-    const scope = declared ? { declaredModules } : { modulesGlob: "src/*" };
-    const graph = prepareGraph({ projectRoot: root, ...scope, exclude: [declared ? "src/ignored/**" : "ignored/**"] });
+    const graph = prepareGraph({ projectRoot: root, declaredModules, exclude: ["src/ignored/**"] });
     const expected = files.filter(([extension, directory]) =>
       [".js", ".mjs", ".cjs"].includes(extension) && directory === "src/app").length;
     expect(graph.nonTsSourceFileCount).toBe(expected);

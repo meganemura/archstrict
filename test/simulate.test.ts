@@ -59,7 +59,7 @@ function facts(graph: graphs.ModuleGraph, root: string) {
 }
 async function cold(root: string) {
   const config = await loadConfig(join(root, "archstrict.config.ts"));
-  const graph = graphs.buildModuleGraph({ projectRoot: root, declaredModules: config.declaredModules, exclude: config.exclude });
+  const graph = graphs.buildModuleGraph({ projectRoot: root, declaredModules: config.declaredModules!, exclude: config.exclude });
   return { graph, result: applyTodo(graph, config, runRules(graph, config)) };
 }
 function delta(before: AnyViolation[], after: AnyViolation[]) {

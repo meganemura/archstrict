@@ -59,12 +59,13 @@ describe("checkPublicSurfaceBypass against declared modules (not index.ts discov
   });
 });
 
-// Rules 2 and 6 are pure predicates over a ModuleGraph - they don't know or
-// care whether the graph came from v0 discovery or v1 declaration. The
-// same real fixtures those rules' own dedicated tests use, rebuilt via
-// declaredModules instead of modulesGlob, must produce identical results.
+// Rules 2 and 6 are pure predicates over a ModuleGraph, exercised elsewhere
+// against a flat declaredModules set with one entry per directory
+// (test/cycles.test.ts, test/type-leak.test.ts). Rebuilding the same real
+// fixtures here, through the module names and per-directory globs those
+// dedicated tests already use, must produce identical results.
 describe("checkCycles against a declared-module graph", () => {
-  test("flags the same a -> b -> c -> a cycle the modulesGlob-built graph does", () => {
+  test("flags the same a -> b -> c -> a cycle the dedicated cycles test does", () => {
     const graph = buildModuleGraph({
       projectRoot: CYCLES_FIXTURE,
       declaredModules: ["a", "b", "c", "d"].map((name) => ({
@@ -106,7 +107,7 @@ describe("config.exclude", () => {
 });
 
 describe("checkTypeLeaks against a declared-module graph", () => {
-  test("flags the same single, aggregated leak the modulesGlob-built graph does", () => {
+  test("flags the same single, aggregated leak the dedicated type-leak test does", () => {
     const graph = buildModuleGraph({
       projectRoot: TYPE_LEAK_FIXTURE,
       declaredModules: [{ name: "m", glob: "src/m/**", surface: "public.ts" }],

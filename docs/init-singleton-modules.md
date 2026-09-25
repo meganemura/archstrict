@@ -103,15 +103,15 @@ for a file that has since fallen outside every declared module (only the
 
 `init --json` and `recommend`'s own directory argument landed in a later
 change: `recommend [dir]` without a config now runs this same walk in
-memory (no file is written) instead of a single-level `modulesGlob`
+memory (no file is written) instead of a single-level modules-glob
 discovery, so its own proposed globs always agree with what `init` would
 write for the same tree. `init --json` reports one object on success
 (`configPath`, `typesPath`, `configWritten`, `opened`, `moduleNames`,
 `hiddenDirs`, `noiseDirs`, `uncovered`, `notes`, `do`) and `{ error, do }`
 on failure, the same convention `check --json` and `todo --json` already
-follow. The old single-level discovery path itself still exists in the
-codebase - no user-facing command calls it anymore, but deleting it, and
-converting its own test call sites, is separate, later work.
+follow. A later change removed the old single-level discovery path
+entirely, once no user-facing command called it anymore: `declaredModules`
+is now the only way a module is ever bounded.
 
 Rule 6 (type-leak) can still report a finding for a singleton file whose
 own export structurally exposes another module's own internal

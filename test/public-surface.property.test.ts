@@ -14,6 +14,7 @@ import { buildModuleGraph } from "../src/module-graph.js";
 import { checkPublicSurfaceBypass } from "../src/rules/public-surface.js";
 
 const MODULE_NAMES = ["m1", "m2", "m3", "m4"] as const;
+const declaredModules = MODULE_NAMES.map((name) => ({ name, glob: `src/${name}/**` }));
 
 type EdgeSpec = { from: string; to: string; hitsPublicTs: boolean };
 
@@ -99,7 +100,7 @@ describe("checkPublicSurfaceBypass (property)", () => {
           const root = mkdtempSync(join(tmpdir(), "archstrict-public-surface-"));
           try {
             writeProject(root, hasPublicTs, edges);
-            const graph = buildModuleGraph({ projectRoot: root, modulesGlob: "src/*", surface: "public.ts" });
+            const graph = buildModuleGraph({ projectRoot: root, declaredModules, surface: "public.ts" });
             assert.equal(graph.unresolvedSpecifierCount, 0);
 
             const violations = checkPublicSurfaceBypass(graph);

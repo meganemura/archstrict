@@ -99,11 +99,9 @@ export function freezeOrPrune(
     // violation's realpath'd `.path` into a "../../private/..." relative
     // path instead of the module's own file - the same reasoning
     // check.ts's applyTodo already applies passing graph.rootDir. This
-    // equivalence (graph.rootDir === realpathSync(projectRoot)) holds
-    // because both todo() and check() build their graph from
-    // declaredModules only; it is not true of the (dead, v0) modulesGlob
-    // discovery path, where rootDir names a glob's root subdirectory
-    // instead.
+    // equivalence (graph.rootDir === realpathSync(projectRoot)) always
+    // holds: module-graph.ts's own prepareGraph sets rootDir to the
+    // realpath'd project root for every graph it builds.
     //
     // Beyond keeping a freshly-read entry consistent with a freshly-frozen
     // one, this also makes pruning self-healing: the prune branch below
@@ -157,7 +155,7 @@ export async function todo(projectRoot: string): Promise<TodoResult> {
   // scope now.
   const graph = buildModuleGraph({
     projectRoot,
-    declaredModules: config.declaredModules,
+    declaredModules: config.declaredModules!,
     exclude: config.exclude,
   });
   const result = runRules(graph, config);

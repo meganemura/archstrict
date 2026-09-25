@@ -4,10 +4,11 @@ import { dirname, join } from "node:path";
 import { buildModuleGraph } from "../src/module-graph.js";
 
 const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), "fixtures/package-resolution");
+const declaredModules = [{ name: "consumer", glob: "src/consumer/**" }];
 
 describe("buildModuleGraph (package-specifier resolution)", () => {
   test("a bare package specifier resolves through the workspace's own package.json exports, not left unresolved", () => {
-    const graph = buildModuleGraph({ projectRoot: FIXTURE, modulesGlob: "src/*" });
+    const graph = buildModuleGraph({ projectRoot: FIXTURE, declaredModules });
 
     expect(graph.unresolvedSpecifierCount).toBe(0);
 
@@ -26,7 +27,7 @@ describe("buildModuleGraph (package-specifier resolution)", () => {
     // ambient-module lookup, a different mechanism entirely (measured
     // directly). Treating that as "unresolved" would flag nearly every
     // real project's own node:fs/node:path imports as unanalyzable.
-    const graph = buildModuleGraph({ projectRoot: FIXTURE, modulesGlob: "src/*" });
+    const graph = buildModuleGraph({ projectRoot: FIXTURE, declaredModules });
 
     expect(graph.unresolvedSpecifierCount).toBe(0);
 

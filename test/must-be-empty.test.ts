@@ -44,32 +44,9 @@ describe("checkMustBeEmpty", () => {
 });
 
 describe("runRules wiring (check.ts)", () => {
-  test("a real fixture's own file matching mustBeEmpty surfaces through the full check pipeline", () => {
-    const graph = buildModuleGraph({ projectRoot: FIXTURE, modulesGlob: "src/*", surface: "public.ts" });
-    // Glob is relative to graph.rootDir, not the project root - this test
-    // builds a v0-discovery graph directly (modulesGlob, not
-    // declaredModules), where rootDir IS the modules root (here,
-    // ".../src"), so "b/**" names module b, not "src/b/**". The CLI cutover
-    // resolved the inconsistency this comment used to flag between v0 and
-    // declared-mode rootDir: check/todo only ever build a declared-mode
-    // graph now (rootDir == the project root always), so a real project's
-    // mustBeEmpty globs are consistently project-root-relative. Only this
-    // low-level unit test still exercises v0 discovery directly, to prove
-    // runRules doesn't hardcode either convention.
-    const config: Config = {
-      configPath: "<test>",
-      because: "test config",
-      mustBeEmpty: [{ glob: "b/**", because: "b must stay empty in this test" }],
-    };
-
-    const result = runRules(graph, config);
-    const mustBeEmptyViolations = result.violations.filter((v) => v.rule === "must-be-empty");
-    expect(mustBeEmptyViolations).toHaveLength(1);
-    expect(mustBeEmptyViolations[0]!.path).toBe("b/module.ts");
-  });
-
   test("no mustBeEmpty declared: no violations, no crash", () => {
-    const graph = buildModuleGraph({ projectRoot: FIXTURE, modulesGlob: "src/*", surface: "public.ts" });
+    const declaredModules = ["a", "b", "c"].map((name) => ({ name, glob: `src/${name}/**` }));
+    const graph = buildModuleGraph({ projectRoot: FIXTURE, declaredModules, surface: "public.ts" });
     const config: Config = {
       configPath: "<test>",
       because: "test config",

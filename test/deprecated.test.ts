@@ -9,6 +9,7 @@ import type { Config } from "../src/config.js";
 // c -> a has 2 edges (widget via public.ts, secret via internal.ts);
 // c -> b has 1 edge (gadget).
 const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), "fixtures/public-surface");
+const declaredModules = ["a", "b", "c"].map((name) => ({ name, glob: `src/${name}/**` }));
 
 function baseConfig(deprecated: Config["deprecated"]): Config {
   return { configPath: "<test>", deprecated, because: "test config" };
@@ -16,7 +17,7 @@ function baseConfig(deprecated: Config["deprecated"]): Config {
 
 describe("checkDeprecatedEdges", () => {
   test("an exact count match is neither a violation nor a suggestion", () => {
-    const graph = buildModuleGraph({ projectRoot: FIXTURE, modulesGlob: "src/*" });
+    const graph = buildModuleGraph({ projectRoot: FIXTURE, declaredModules });
     const config = baseConfig([{ from: "c", to: "a", count: 2, because: "migrating off a" }]);
 
     const { violations, suggestions } = checkDeprecatedEdges(graph, config);
@@ -25,7 +26,7 @@ describe("checkDeprecatedEdges", () => {
   });
 
   test("an increased count is a violation", () => {
-    const graph = buildModuleGraph({ projectRoot: FIXTURE, modulesGlob: "src/*" });
+    const graph = buildModuleGraph({ projectRoot: FIXTURE, declaredModules });
     const config = baseConfig([{ from: "c", to: "a", count: 1, because: "migrating off a" }]);
 
     const { violations, suggestions } = checkDeprecatedEdges(graph, config);
@@ -36,7 +37,7 @@ describe("checkDeprecatedEdges", () => {
   });
 
   test("a decreased but nonzero count is a suggestion, not a violation", () => {
-    const graph = buildModuleGraph({ projectRoot: FIXTURE, modulesGlob: "src/*" });
+    const graph = buildModuleGraph({ projectRoot: FIXTURE, declaredModules });
     const config = baseConfig([{ from: "c", to: "a", count: 5, because: "migrating off a" }]);
 
     const { violations, suggestions } = checkDeprecatedEdges(graph, config);
@@ -47,7 +48,7 @@ describe("checkDeprecatedEdges", () => {
   });
 
   test("a count fallen to zero is reported by rule 4, not rule 5", () => {
-    const graph = buildModuleGraph({ projectRoot: FIXTURE, modulesGlob: "src/*" });
+    const graph = buildModuleGraph({ projectRoot: FIXTURE, declaredModules });
     const config = baseConfig([{ from: "a", to: "b", count: 3, because: "no real edge a -> b exists" }]);
 
     const { violations, suggestions } = checkDeprecatedEdges(graph, config);
@@ -59,14 +60,14 @@ describe("checkDeprecatedEdges", () => {
   });
 
   test("a deprecated entry naming a nonexistent module is a config error", () => {
-    const graph = buildModuleGraph({ projectRoot: FIXTURE, modulesGlob: "src/*" });
+    const graph = buildModuleGraph({ projectRoot: FIXTURE, declaredModules });
     const config = baseConfig([{ from: "c", to: "ghost", count: 1, because: "test" }]);
 
     expect(() => checkDeprecatedEdges(graph, config)).toThrow(/does not exist/);
   });
 
   test("rule 4 and rule 5 agree: a nonexistent module throws from both, not one reporting it as a stale edge", () => {
-    const graph = buildModuleGraph({ projectRoot: FIXTURE, modulesGlob: "src/*" });
+    const graph = buildModuleGraph({ projectRoot: FIXTURE, declaredModules });
     const config = baseConfig([{ from: "ghost", to: "a", count: 1, because: "test" }]);
 
     expect(() => checkDeprecatedEdges(graph, config)).toThrow(/does not exist/);

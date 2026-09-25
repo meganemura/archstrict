@@ -66,7 +66,7 @@ test("real rule 7 violations are forbidden by the source path's projection", asy
         writeFileSync(join(root, "src", name, "index.ts"), imports.join("\n") + "\nexport const value = 1; export type Shape = { value: number };\n");
       }
       writeFileSync(cfg.configPath, `export default ${JSON.stringify(cfg)};`);
-      const graph = buildModuleGraph({ projectRoot: root, declaredModules: cfg.declaredModules, exclude: cfg.exclude });
+      const graph = buildModuleGraph({ projectRoot: root, declaredModules: cfg.declaredModules!, exclude: cfg.exclude });
       assert.equal(graph.edges.length, count * (count - 1));
       const violations = [...checkAllowDeny(graph, cfg), ...checkOrder(graph, cfg), ...checkPoint(graph, cfg)];
       const projected = new Map<string, RulesResult>();

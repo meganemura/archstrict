@@ -74,7 +74,7 @@ test("adding a real target outside allow removes the exhaustive finding", () => 
           { glob: "src/target.ts", tags: values.map(value => `role:${value}`) },
           { glob: "src/new.ts", tags: ["role:new"] }],
         edges: { allowDeny: [{ source: "role:app", targetNamespace: "role", allow: values, because: "test" }] } };
-      const findings = () => checkEmptyRuleSet(buildModuleGraph({ projectRoot: root, declaredModules: config.declaredModules }), config)
+      const findings = () => checkEmptyRuleSet(buildModuleGraph({ projectRoot: root, declaredModules: config.declaredModules! }), config)
         .filter(v => v.rule === "exhaustive-allow-list");
       assert.equal(findings().length, 1);
       writeFileSync(join(root, "src/new.ts"), 'export const value = 2;');

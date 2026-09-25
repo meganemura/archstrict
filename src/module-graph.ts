@@ -1,8 +1,9 @@
-// Responsibility: discover modules under a glob, build a TypeScript program
-// over them, and resolve every import/export/dynamic-import edge to its
-// target module. This is shared infrastructure: every rule (public-surface
-// bypass, cycles, uncovered modules, deprecated edges) and every verb reads
-// the same graph rather than each re-walking the program.
+// Responsibility: build every declared module's own file membership, build a
+// TypeScript program over them, and resolve every import/export/dynamic-
+// import edge to its target module. This is shared infrastructure: every
+// rule (public-surface bypass, cycles, uncovered modules, deprecated edges)
+// and every verb reads the same graph rather than each re-walking the
+// program.
 // Boundary: no rule logic here. A rule is a predicate over this graph's
 // edges and modules; this module only builds the graph and says what it
 // could not analyze (unresolved specifiers, unsupported syntax, files
@@ -23,11 +24,10 @@
 import ts from "typescript";
 import { createHash } from "node:crypto";
 import { readEdgeCache, writeEdgeCache, type EdgeCache } from "./edge-cache.js";
-import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { builtinModules } from "node:module";
 import { compileGlob, mostSpecificMatch } from "./classify.js";
-import { ReportError } from "./report-error.js";
 
 // A node builtin (`fs`, `node:fs`, ...) never has a real resolvedModule:
 // ts.resolveModuleName looks for an actual file, but @types/node's ambient
@@ -92,11 +92,9 @@ export type Module = {
   rootIsFile: boolean;
   files: string[];
   // The module's public surface: the files other modules may import from.
-  // Under v0 discovery this is at most one file (the configured `surface`
-  // name, e.g. "index.ts", if present - an empty array otherwise). Under a
-  // declared module (v1), `surface` is itself a glob, so this can be more
-  // than one file (Prisma's package.json `exports` has subpaths) - sorted,
-  // for a deterministic message when a rule names "the" surface file.
+  // `surface` is itself a glob, so this can be more than one file (Prisma's
+  // package.json `exports` has subpaths) - sorted, for a deterministic
+  // message when a rule names "the" surface file.
   surfaceFiles: string[];
   // This module's own configured surface name/glob (or array of them) -
   // rule 1's own message used to name the graph's global default here
@@ -116,12 +114,12 @@ export type Module = {
   friends: { fileGlob: string; from: string; because: string }[];
 };
 
-// A module declared directly in config (v1), replacing v0's index.ts-
-// presence discovery - measured wrong (NestJS's and Drizzle's own barrel
-// index.ts files are not operated as enforced boundaries; real code in
-// both bypasses them routinely). `surface` is a glob resolved relative to
-// `glob`'s own literal base directory (moduleGlobBaseDir below), not the
-// project root - matching v0's own convention that `surface` names a file
+// A module declared directly in config - a barrel index.ts's mere presence
+// is never taken as evidence of an enforced boundary (measured wrong:
+// NestJS's and Drizzle's own barrel index.ts files are not operated as
+// enforced boundaries; real code in both bypasses them routinely). `surface`
+// is a glob resolved relative to `glob`'s own literal base directory
+// (moduleGlobBaseDir below), not the project root - so it names a file
 // relative to the module's own directory.
 export type DeclaredModule = {
   name: string;
@@ -157,10 +155,10 @@ export type ModuleGraph = {
   // the graph so a rule can name it in a message without needing the whole
   // Config passed in just for this one string.
   surface: string;
-  // The modules root directory (e.g. "<projectRoot>/src") - rule 6 (type
-  // leak) needs it as the boundary a declaration must fall inside to count
-  // as internal (a dependency's own types, under node_modules, are not this
-  // project's boundary to keep).
+  // The realpath'd project root - rule 6 (type leak) needs it as the
+  // boundary a declaration must fall inside to count as internal (a
+  // dependency's own types, under node_modules, are not this project's
+  // boundary to keep).
   rootDir: string;
   // The program and checker built over every module file - shared here so
   // a rule needing type information (rule 6) does not build its own
@@ -175,85 +173,20 @@ export type BuildOptions = {
   // with that list, without a second, manually constructed prepared object.
   fileListOverride?: (realFiles: string[]) => string[];
   projectRoot: string;
-  // v0 discovery path - e.g. "src/*" (only single-level globs). Ignored
-  // when `declaredModules` is given.
-  modulesGlob?: string;
-  surface?: string; // the public-surface file name, default "index.ts" - v0 discovery only
-  // v1 declaration path - takes priority over `modulesGlob` when present.
-  declaredModules?: readonly DeclaredModule[];
-  // Glob patterns excluded from the declared-mode file scan entirely -
-  // config.exclude (v1 only; v0 discovery has no equivalent, since its
-  // scope is already narrowed to one modules root). A file matching any
-  // one pattern is invisible to every rule, not just uncounted: it is not
-  // a module member, not a source of edges, not a target either.
+  surface?: string; // the global default public-surface file name, default "index.ts"
+  declaredModules: readonly DeclaredModule[];
+  // Glob patterns excluded from the file scan entirely - config.exclude. A
+  // file matching any one pattern is invisible to every rule, not just
+  // uncounted: it is not a module member, not a source of edges, not a
+  // target either.
   exclude?: readonly string[];
 };
 
 export const DEFAULT_SURFACE = "index.ts";
 
-// v0's `modules` glob is always one directory level ("src/*"): a fixed
-// prefix directory ("src") whose immediate children are modules. Anything
-// deeper, or a non-"*" glob, is out of scope for v0 (spec's flat preset).
-function parseModulesGlob(modulesGlob: string): { root: string } {
-  const parts = modulesGlob.split("/");
-  if (parts.length !== 2 || parts[1] !== "*") {
-    throw new ReportError(
-      `unsupported modules glob '${modulesGlob}': v0 supports only a single-level glob like 'src/*'`,
-      "archstrict init src/*",
-    );
-  }
-  return { root: parts[0]! };
-}
-
-function discoverModules(projectRoot: string, glob: string, surface: string): Map<string, Module> {
-  const { root } = parseModulesGlob(glob);
-  const rootDir = join(projectRoot, root);
-  // init is the one verb that runs before anything else exists in a
-  // project, so a missing modules root is the likely first-run path, not
-  // an edge case. A raw ENOENT from readdirSync doesn't name the glob or
-  // what was expected there.
-  if (!ts.sys.directoryExists(rootDir)) {
-    throw new ReportError(
-      `modules glob '${glob}' names '${rootDir}', which does not exist`,
-      `create ${root} (with at least one .ts file) and run archstrict init ${glob}`,
-    );
-  }
-  const modules = new Map<string, Module>();
-  // ts.sys has no direct "list immediate subdirectories" call; use node:fs.
-  for (const name of readdirSync(rootDir).sort()) {
-    const dir = join(rootDir, name);
-    if (!statSync(dir).isDirectory()) continue;
-    const surfacePath = join(dir, surface);
-    modules.set(name, {
-      name,
-      dir,
-      files: [],
-      surfaceFiles: ts.sys.fileExists(surfacePath) ? [surfacePath] : [],
-      surfaceName: surface,
-      rootIsFile: false, // v0 discovery only ever records directories
-      friends: [], // v0 discovery has no declaredModules entry to carry a friends list
-    });
-  }
-  return modules;
-}
-
-function moduleForFile(
-  filePath: string,
-  projectRoot: string,
-  glob: string,
-): string | undefined {
-  const { root } = parseModulesGlob(glob);
-  const rel = relative(join(projectRoot, root), filePath);
-  if (rel.startsWith("..")) return undefined; // not under the modules root at all
-  const [first, ...rest] = rel.split(sep);
-  if (first === undefined || rest.length === 0) return undefined; // a loose file directly under the modules root
-  return first;
-}
-
 // The literal directory prefix a glob names before its first wildcard,
 // trailing slash stripped - "packages/x/**" -> "packages/x". `surface` is
-// resolved relative to this, the same way v0's `surface` is relative to a
-// discovered module's own directory.
+// resolved relative to this.
 // Exported: init's own fresh-run walk and a re-run's anchor computation
 // both need the same literal-prefix rule a declared module's glob already
 // follows, so a directory group's glob (e.g. "src/extra/**") and a
@@ -300,9 +233,8 @@ export function toProjectRelativePosix(filePath: string, projectRoot: string): s
 // Recursively lists every .ts file under `projectRoot`, excluding
 // node_modules, dist, and every config.exclude glob - the candidate set
 // declared-module membership and surface matching both filter from.
-// Declared modules can live anywhere under the project, not one fixed
-// single-level root the way v0's discovery does, so there is no narrower
-// directory to start from.
+// Declared modules can live anywhere under the project, so there is no
+// narrower directory to start from than the project root itself.
 // True when a `resolvedFileName` TS itself flagged `isExternalLibraryImport`
 // (per that field's own contract: "comes from node_modules") is actually a
 // workspace's own sibling package - a package manager symlinks a sibling
@@ -583,7 +515,7 @@ function buildDeclaredModules(
     if (name === undefined) continue;
     // Only surfaceFiles is populated here - `files` (every file, not just
     // the surface) is populated once, in buildModuleGraph's shared walk
-    // loop, the same way v0 discovery populates it - not duplicated here.
+    // loop - not duplicated here.
     // surfaceFiles is the UNION of every configured surface glob's own
     // matches - a real package can publish more than one real, equally
     // public entry point at once.
@@ -686,28 +618,11 @@ export function prepareGraph(options: BuildOptions) {
   const { configPath: rootConfigPath, options: compilerOptions } = loadCompilerOptions(projectRoot);
   const compilerOptionsForFile = makeCompilerOptionsForFile(compilerOptions, rootConfigPath);
 
-  let modules: Map<string, Module>;
-  let rootDir: string;
-  let rootNames: string[];
-  let resolveModuleForFile: (filePath: string) => string | undefined;
-
-  if (declaredModules !== undefined) {
-    rootDir = projectRoot;
-    rootNames = listAnalyzedFiles(projectRoot, exclude, declaredModules, surface);
-    if (options.fileListOverride) rootNames = options.fileListOverride(rootNames);
-    modules = buildDeclaredModules(projectRoot, declaredModules, rootNames, surface);
-    resolveModuleForFile = (filePath) => moduleForDeclaredFile(filePath, projectRoot, declaredModules);
-  } else {
-    const modulesGlob = options.modulesGlob;
-    if (modulesGlob === undefined) {
-      throw new ReportError("buildModuleGraph needs either modulesGlob or declaredModules", "archstrict init");
-    }
-    modules = discoverModules(projectRoot, modulesGlob, surface);
-    const { root } = parseModulesGlob(modulesGlob);
-    rootDir = join(projectRoot, root);
-    rootNames = ts.sys.readDirectory(rootDir, [".ts"]).filter((f) => !f.endsWith(".d.ts"));
-    resolveModuleForFile = (filePath) => moduleForFile(filePath, projectRoot, modulesGlob);
-  }
+  const rootDir = projectRoot;
+  let rootNames = listAnalyzedFiles(projectRoot, exclude, declaredModules, surface);
+  if (options.fileListOverride) rootNames = options.fileListOverride(rootNames);
+  const modules = buildDeclaredModules(projectRoot, declaredModules, rootNames, surface);
+  const resolveModuleForFile = (filePath: string) => moduleForDeclaredFile(filePath, projectRoot, declaredModules);
 
   const nonTsSourceFileCount = countNonTsSourceFiles(rootDir, exclude);
   return { projectRoot, surface, rootDir, rootNames, modules, resolveModuleForFile, compilerOptions, compilerOptionsForFile, nonTsSourceFileCount };
@@ -866,7 +781,7 @@ function hash(value: unknown): string {
 const ARCHSTRICT_VERSION: string = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
 
 function cacheMetadata(projectRoot: string, options: BuildOptions): Record<string, number | null> {
-  const packages = [join(projectRoot, "package.json"), ...(options.declaredModules ?? [])
+  const packages = [join(projectRoot, "package.json"), ...options.declaredModules
     .map((dm) => join(projectRoot, moduleGlobBaseDir(dm.glob), "package.json"))];
   const lock = ["package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lock"]
     .map((name) => join(projectRoot, name)).find((path) => existsSync(path));
@@ -877,7 +792,7 @@ function cacheMetadata(projectRoot: string, options: BuildOptions): Record<strin
 export function graphBuildFingerprint(options: BuildOptions, prepared: ReturnType<typeof prepareGraph>) {
   const { projectRoot, rootNames, compilerOptions, compilerOptionsForFile } = prepared;
   const tsconfigHash = hash({ root: compilerOptions, files: rootNames.map((file) => [file, compilerOptionsForFile(file)]) });
-  const buildOptionsHash = hash({ declaredModules: options.declaredModules, modulesGlob: options.modulesGlob,
+  const buildOptionsHash = hash({ declaredModules: options.declaredModules,
     exclude: options.exclude, surface: prepared.surface });
   const metadata = cacheMetadata(projectRoot, options);
   return { tsconfigHash, buildOptionsHash, metadata, archstrictVersion: ARCHSTRICT_VERSION };

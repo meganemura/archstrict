@@ -174,6 +174,17 @@ test("CLI rejects invalid arguments and discovery errors with exit one", () => f
   }
 }));
 
+test("a bad directory argument's error and do: name recommend, not init", async () => fixture(async (root) => {
+  let thrown: unknown;
+  try {
+    await recommend(root, "src/*x");
+  } catch (error) {
+    thrown = error;
+  }
+  expect((thrown as { message: string }).message).toBe("recommend takes a directory name, not the glob 'src/*x'");
+  expect((thrown as { do: string }).do).toBe("archstrict recommend");
+}));
+
 test("an empty tree gives no .ts file to declare, same as init", () => fixture((root) => {
   // mkdirSync(root, "src") in fixture() leaves src/ present but empty, and
   // no other .ts file exists anywhere - the same zero-candidate case

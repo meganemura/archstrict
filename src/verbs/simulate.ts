@@ -93,7 +93,9 @@ export async function simulate(projectRoot: string, changes: readonly Change[]):
   }
   // The baseline must reflect disk, while every after-side rule uses the proposed config.
   const afterConfig = proposedSource === undefined ? beforeConfig : await loadConfig(configPath, proposedSource);
-  const options = { projectRoot, declaredModules: beforeConfig.declaredModules, exclude: beforeConfig.exclude };
+  // loadConfig already guarantees declaredModules is a well-shaped array
+  // (assertDeclaredModulesShapeValid) - see check.ts's own comment.
+  const options = { projectRoot, declaredModules: beforeConfig.declaredModules!, exclude: beforeConfig.exclude };
   const prepared = prepareGraph(options);
   const baseline = buildPreparedGraph(prepared);
   const before = applyTodo(baseline, beforeConfig, runRules(baseline, beforeConfig));
@@ -111,7 +113,7 @@ export async function simulate(projectRoot: string, changes: readonly Change[]):
   // files as roots. Adjust the input list and let preparation derive the
   // metadata again, without changes to the baseline's module objects.
   const simulatedPrepared = prepareGraph({
-    projectRoot, declaredModules: afterConfig.declaredModules, exclude: afterConfig.exclude,
+    projectRoot, declaredModules: afterConfig.declaredModules!, exclude: afterConfig.exclude,
     fileListOverride: realFiles => [...new Set([
       ...realFiles.filter(file => !deleted.has(file)),
       ...[...added].filter(file => isEligibleSourceFile(file, projectRoot, afterConfig.exclude ?? [],

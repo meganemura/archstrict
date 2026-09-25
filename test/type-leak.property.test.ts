@@ -19,6 +19,7 @@ import { buildModuleGraph } from "../src/module-graph.js";
 import { checkTypeLeaks } from "../src/rules/type-leak.js";
 
 const PROPERTY_COUNT = 4;
+const declaredModules = [{ name: "m", glob: "src/m/**" }];
 
 // Each property is drawn to reference an internal-only type directly, or
 // through one of the shapes the definition names as requiring a walk (a
@@ -111,7 +112,7 @@ describe("checkTypeLeaks (property)", () => {
         const root = mkdtempSync(join(tmpdir(), "archstrict-type-leak-"));
         try {
           writeProject(root, kinds);
-          const graph = buildModuleGraph({ projectRoot: root, modulesGlob: "src/*", surface: "public.ts" });
+          const graph = buildModuleGraph({ projectRoot: root, declaredModules, surface: "public.ts" });
           assert.equal(graph.unresolvedSpecifierCount, 0);
 
           const violations = checkTypeLeaks(graph);

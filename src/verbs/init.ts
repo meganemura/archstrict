@@ -146,20 +146,28 @@ function findNoiseDirs(projectRoot: string, keptOpen: string): string[] {
 // section below), but a syntactically invalid one is still an error, not
 // silently ignored. Returns "" for "no container" (the project root
 // alone), and undefined when no argument was given at all.
-export function normalizeDirArg(raw: string | undefined): string | undefined {
+//
+// `verb` names the command in every message and `do:` line - "init" by
+// default, so init's own text stays byte-identical. recommend reuses this
+// same walk for its own directory argument (no config yet, so no
+// declaredModules to fall back on) and passes "recommend" instead, so a
+// bad argument there is never told to run a command that isn't the one
+// the reader typed.
+export function normalizeDirArg(raw: string | undefined, verb = "init"): string | undefined {
   if (raw === undefined) return undefined;
   if (raw === "." || raw === "./" || raw === "*") return "";
+  const doVerb = `archstrict ${verb}`;
   const stripped = raw.replace(/\/\*$/, "").replace(/\/+$/, "");
-  if (/[*?[\]{}]/.test(stripped)) fail(`init takes a directory name, not the glob '${raw}'`, DO_INIT);
-  if (stripped.includes("/")) fail(`init takes one top-level directory name, not '${raw}'`, DO_INIT);
+  if (/[*?[\]{}]/.test(stripped)) fail(`${verb} takes a directory name, not the glob '${raw}'`, doVerb);
+  if (stripped.includes("/")) fail(`${verb} takes one top-level directory name, not '${raw}'`, doVerb);
   if (stripped.startsWith(".")) {
     fail(
-      `init does not open the hidden directory '${stripped}': the exclude that init writes skips hidden directories`,
-      DO_INIT,
+      `${verb} does not open the hidden directory '${stripped}': the exclude that init writes skips hidden directories`,
+      doVerb,
     );
   }
   if (stripped === "node_modules" || stripped === "dist") {
-    fail(`init does not open '${stripped}': check never analyzes it`, DO_INIT);
+    fail(`${verb} does not open '${stripped}': check never analyzes it`, doVerb);
   }
   return stripped;
 }
@@ -348,12 +356,14 @@ export type Config = {
 // name every group - module-candidates.ts owns the grouping/naming rule
 // itself, this only decides which files and anchors it sees.
 // Exported so recommend's own no-config path can build a graph from the
-// same groups and globs init would write, without writing any file - the
-// v0 path it replaced (a single-level `modulesGlob` such as "src/*") could
-// disagree with init about which files exist and how they group.
+// same groups and globs init would write, without writing any file - a
+// second, independent walk could disagree with init about which files
+// exist and how they group. `verb` names the command in every error and
+// `do:` line here too, the same reason normalizeDirArg takes it.
 export function freshRun(
   projectRoot: string,
   dir: string | undefined,
+  verb = "init",
 ): {
   opened: string;
   rootLabel: string | undefined;
@@ -380,7 +390,7 @@ export function freshRun(
     if (holds) {
       opened = want;
     } else if (explicit) {
-      fail(`'${want}' is not a top-level directory that holds a .ts file check analyzes`, DO_INIT);
+      fail(`'${want}' is not a top-level directory that holds a .ts file check analyzes`, `archstrict ${verb}`);
     } else {
       rootLabel = isRealDirectory(join(projectRoot, want))
         ? `top level; ${want}/ holds no .ts file`
@@ -405,8 +415,8 @@ export function freshRun(
     fail(
       `found no .ts file to declare as a module in ${projectRoot} (init skips node_modules/, dist/, hidden directories, and noise directories)`,
       openable !== undefined
-        ? `archstrict init ${openable}`
-        : "add a .ts source file outside those directories, then run archstrict init",
+        ? `archstrict ${verb} ${openable}`
+        : `add a .ts source file outside those directories, then run archstrict ${verb}`,
     );
   }
 

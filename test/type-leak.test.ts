@@ -8,10 +8,11 @@ import { buildModuleGraph } from "../src/module-graph.js";
 import { checkTypeLeaks } from "../src/rules/type-leak.js";
 
 const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), "fixtures/type-leak");
+const declaredModules = [{ name: "m", glob: "src/m/**" }];
 
 describe("checkTypeLeaks", () => {
   test("every detection path (structural, through a re-export, through a type argument, inferred-return, generic-parameter, through an optional array) finds the same never-exported internal type, and they collapse into one violation naming every referencing export - not a re-exported type, an annotated plain return, or an anonymous literal", () => {
-    const graph = buildModuleGraph({ projectRoot: FIXTURE, modulesGlob: "src/*", surface: "public.ts" });
+    const graph = buildModuleGraph({ projectRoot: FIXTURE, declaredModules, surface: "public.ts" });
     expect(graph.unresolvedSpecifierCount).toBe(0);
 
     const violations = checkTypeLeaks(graph);
@@ -53,7 +54,7 @@ describe("checkTypeLeaks", () => {
   });
 
   test("a module with no surface has nothing to check - no entry point to walk", () => {
-    const graph = buildModuleGraph({ projectRoot: FIXTURE, modulesGlob: "src/*", surface: "nonexistent.ts" });
+    const graph = buildModuleGraph({ projectRoot: FIXTURE, declaredModules, surface: "nonexistent.ts" });
     expect(checkTypeLeaks(graph)).toHaveLength(0);
   });
 });
@@ -137,7 +138,8 @@ describe("checkTypeLeaks (a consumer already has a name from another declared mo
   );
 
   test("a type declared in ANOTHER module's own surface file is not a leak, but a type in that module's internal file (never re-exported) still is", () => {
-    const graph = buildModuleGraph({ projectRoot: CROSS_MODULE_FIXTURE, modulesGlob: "src/*", surface: "index.ts" });
+    const crossModuleDeclaredModules = ["a", "b", "c"].map((name) => ({ name, glob: `src/${name}/**` }));
+    const graph = buildModuleGraph({ projectRoot: CROSS_MODULE_FIXTURE, declaredModules: crossModuleDeclaredModules, surface: "index.ts" });
     expect(graph.unresolvedSpecifierCount).toBe(0);
 
     const violations = checkTypeLeaks(graph);
