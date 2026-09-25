@@ -108,6 +108,150 @@ repositories each, and (for hexagonal specifically) every one under 3,000
 stars. A proposal built on one of these five should say plainly that the
 evidence for it is thin.
 
+## A second sample: the 200 most-starred TypeScript repositories
+
+The first survey found repositories through code search for the vocabulary of
+dedicated boundary tools, so it can only measure frequency among repositories
+that already adopted one. A second survey, done on 2026-09-25, instead
+sampled by popularity: the 200 most-starred public TypeScript repositories on
+GitHub, independent of which tool (if any) each one uses. Four of the 200
+already appeared in the first survey's own table (all four enforce a
+boundary); the other 196 were checked by fetching each repository's full file
+tree and reading every file that looked like a boundary-tool config, a
+general lint config, or a hand-written checker script by name (files under
+`scripts/`, `tools/`, or a lint-configuration directory whose name mentions a
+boundary, a layer, a restriction, or an architecture check), plus the root
+package manifest and build config.
+
+**What counted.** A repository counts as enforcing a boundary when at least
+one rule names two areas of the project and forbids or allows an edge
+between them, or confines an external package or capability to one named
+area - the same bar as the first survey. A cycle-detection-only rule, a
+package-hygiene rule with a named single replacement everywhere, a
+deprecation-only rule, or a build system's own per-target dependency
+declarations with no layer table do not count on their own.
+
+**Headline.** 52 of the 200 repositories (26%) enforce a boundary this way;
+47 (24%) after setting aside five repositories whose only rule is a
+load-path rule (see the new LOAD pattern below). About three quarters do
+not.
+
+Enforcement rises sharply with codebase size, counted by `.ts`/`.tsx` file
+count (excluding generated declaration files):
+
+| TypeScript files | Enforces a boundary |
+|---|---|
+| under 100 | 0 of 18 |
+| 100 to 999 | 6 of 82 |
+| 1,000 to 4,999 | 24 of 67 |
+| 5,000 or more | 18 of 29 |
+
+The median enforcing repository has about 3,000 TypeScript files; the median
+non-enforcing repository has about 400. Several very large, popular
+repositories in the sample enforce nothing found by this method at all -
+star count and popularity do not predict enforcement; size does.
+
+**The tool mix inverts.** In the first survey, dedicated tag-and-constraint
+tools (a monorepo tool's own tag graph, a dependency-graph analysis tool, a
+path-restriction rule, a boundary-specific linter plugin) carried almost
+every rule. In this sample, those same tools carry only about an eighth of
+the 48 enforcing repositories combined; a general-purpose linter's built-in
+"forbid importing this path" rule carries about three fifths, and a checker
+the project wrote for itself - its own script, its own rule table, its own
+message text - carries most of the rest. One repository's own hand-written
+checker reimplements a monorepo tool's tag-constraint idea from scratch,
+including a hard-coded tag map and an allow-list per tag, without adopting
+the tool itself.
+
+**Per-pattern counts, both samples side by side.** Sample 1's denominator
+below is 82 repositories, from the first survey's own repository-level
+table. The method section above instead counts 72 configuration files with
+a project-chosen rule, from a per-tool pass over the same
+search results; the two numbers come from two different passes over the
+same underlying search, and the per-pattern counts below use the
+repository-level table's own 82. Sample 2's denominator is 48
+repositories. A repository can count toward more than one pattern in
+either sample.
+
+| Pattern | Sample 1 (of 82) | Sample 2 (of 48) |
+|---|---|---|
+| Public-entry-only | 17 | **22** |
+| Layered order | **34** | 10 |
+| Runtime/platform environments | 23 | 13 |
+| Feature isolation with a shared kernel | 20 | 2 |
+| Leaf / pure kernel | 16 | 7 |
+| External package confined to one area | 13 | 14 |
+| Type-only exception | 5 | 10 |
+| Test code kept out of production | 9 | 4 |
+| Scope/domain isolation | 9 | 2 |
+| Barrel-inverse | 5 | 3 |
+| App vs lib | 5 | 2 |
+| Hexagonal / clean | 5 | 2 |
+| Two tag axes combined | 7 | 1 |
+| Host/plugin inversion | 5 | 4 |
+| Load-path isolation | no category in sample 1 | 8 |
+| Edition split | no category in sample 1 | 2 |
+| Composition root | no category in sample 1 | 2 |
+| Friend list | no category in sample 1 | 1 |
+| Entry-graph budget | no category in sample 1 | 1 |
+
+**What the difference means.** The two samples measure different
+populations, not the same population twice. Sample 1's method can only find
+a repository that already picked a dedicated boundary tool and used its own
+vocabulary: a tag, an element type, a zone. That selection over-represents
+configurations built on a scaffold meant to make a layer ladder or a
+feature-isolation rule cheap to write - those are exactly the shapes a
+dedicated tool's own vocabulary makes easy to write. Sample 2, ordered by
+popularity alone, shows what large, established codebases enforce
+regardless of tooling choice. That turns out to be, overwhelmingly, a
+generic "forbid this import path" rule or a hand-written script, aimed at
+one entry point or one runtime split rather than a whole layer stack. Read
+the layered-order and feature-isolation counts in the first survey as
+evidence about repositories that adopted a layering tool. They are not
+evidence that layering is the most common shape among popular TypeScript
+codebases in general.
+
+Sample 2 also surfaces a reason for a rule that sample 1's own method could
+not have found under its own name: cost. Several repositories forbid a
+statically-imported heavy or side-effecting module purely to keep it off an
+eager load path (bundle size, startup time), not for an architectural
+reason at all. The first survey's own search terms had no way to single
+this reason out from an ordinary external-package rule.
+
+**An independent baseline mechanism.** Three unrelated large repositories in
+the second sample each built their own mechanism, separately, for a rule
+that fails only when the count of known violations grows past a committed
+baseline, or a grow-only list of accepted exceptions that may only get
+longer, never shorter by editing it directly. None of the three call it by
+the same name, and nothing suggests one copied another. This is an
+observation about a real, independently-arrived-at idea for managing
+existing boundary debt over time, not a documented convention any tool
+ships - and it is the same shape, arrived at from a different direction, as
+archstrict's own per-module todo file: a frozen list that can only shrink.
+
+**Tags from sources other than a directory name (observations, not counted
+patterns).** Two repositories in the second sample derive a file's tag from
+something other than its path: one reads a runtime tag off a fixed filename
+suffix (a file whose name ends a certain way is browser-only, another
+ending marks it Node-only, another marks a web-worker file) - archstrict
+already expresses this today, since a `classify` glob can match a literal
+suffix directly. The other reads a tag from a field in a package's own
+manifest, independent of any path at all; archstrict does not read package
+manifests for tags today, so this is noted as an observation, not a
+supported mechanism.
+
+**Limits.** This sample counts declared rules only, not the real import
+graph: it says nothing about how often a rule actually fires, whether the
+codebase's real edges already comply, or whether a project keeps its
+boundary by convention with no rule enforcing it at all (invisible to this
+method either way). A rule living under an unexpected file name, inside a
+CI configuration file, or inside a shared configuration package more than a
+few directories deep could be missed; the "no rule found" count is a lower
+bound, not a proof of absence. Per-package export maps and TypeScript
+project references were not read as a source of boundary evidence in this
+sample. As with the first survey, a count here is a frequency within this
+sample, not a share of all public TypeScript code.
+
 ## The decision: a reference for agents, not a preset
 
 archstrict does not ship a `--preset` flag, and `init`/`recommend` never
