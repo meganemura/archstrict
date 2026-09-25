@@ -14,6 +14,7 @@ import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { buildModuleGraph, toProjectRelativePosix, type ModuleGraph } from "../module-graph.js";
 import type { Config } from "../config.js";
+import { ReportError } from "../report-error.js";
 import { fingerprintOf, readTodo, writeTodo } from "../todo-store.js";
 import { loadConfig, runRules, type AnyViolation } from "./check.js";
 
@@ -52,6 +53,28 @@ function markerPath(projectRoot: string): string {
   return join(projectRoot, ".archstrict-todo-initialized");
 }
 
+// An uncovered-module violation has no todoModule (module-graph.ts's
+// outsideFiles matches no declared module at all, so there is no module
+// directory to freeze it into - see isFreezable's own comment) - it can
+// never be frozen, first run or later. If the first run happens while one
+// exists, it freezes every OTHER current violation and writes the marker,
+// after which "never add again" permanently forecloses freezing the file
+// once it's later declared: check would stay at exit 1 forever (measured
+// on two real repository shapes: 12 and 52 such violations). Refusing the
+// first run outright - no marker, no todo file - keeps the freeze
+// available until every file is actually covered. A later (prune-only) run
+// is unaffected: pruning only ever shrinks, so an uncovered file already
+// past the first run does not block it.
+function refuseIfUncovered(violations: AnyViolation[]): void {
+  const uncovered = violations.filter((v) => v.rule === "uncovered-module");
+  if (uncovered.length === 0) return;
+  const noun = uncovered.length === 1 ? "file matches" : "files match";
+  throw new ReportError(
+    `todo's first run refuses: ${uncovered.length} ${noun} no declared module`,
+    "add each to declaredModules or exclude in archstrict.config.ts, then run archstrict todo",
+  );
+}
+
 export function freezeOrPrune(
   projectRoot: string,
   graph: ModuleGraph,
@@ -61,6 +84,8 @@ export function freezeOrPrune(
   const strict = new Set(config.strict ?? []);
   const freezable = violations.filter(isFreezable);
   const firstRun = !existsSync(markerPath(projectRoot));
+
+  if (firstRun) refuseIfUncovered(violations);
 
   let added = 0;
   let pruned = 0;

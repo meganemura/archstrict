@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -404,6 +404,49 @@ describe("cli", () => {
       const json = JSON.parse(out);
       expect(json.error).toContain("missing required field");
       expect(json.do).toContain("archstrict check");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("todo's first run refuses while an uncovered-module violation exists: text and --json both carry the error and do", () => {
+    const root = mkdtempSync(join(tmpdir(), "archstrict-cli-todo-uncovered-"));
+    try {
+      mkdirSync(join(root, "src", "app"), { recursive: true });
+      writeFileSync(join(root, "src", "app", "index.ts"), "export const app = 1;\n");
+      writeFileSync(join(root, "src", "extra.ts"), "export const extra = 1;\n"); // matches no declared module
+      writeFileSync(
+        join(root, "archstrict.config.ts"),
+        `export default { declaredModules: [{ name: "app", glob: "src/app/**", surface: "index.ts" }], exclude: ["archstrict.config.ts"], because: "test" };\n`,
+      );
+
+      let errOut = "";
+      let exitCode = 0;
+      try {
+        execFileSync("node", [CLI_PATH, "todo"], { cwd: root, encoding: "utf8" });
+      } catch (e) {
+        const err = e as { status: number; stderr: string };
+        exitCode = err.status;
+        errOut = err.stderr;
+      }
+      expect(exitCode).toBe(1);
+      expect(errOut).toBe(
+        "archstrict: todo's first run refuses: 1 file matches no declared module\n" +
+          "do: add each to declaredModules or exclude in archstrict.config.ts, then run archstrict todo\n",
+      );
+      expect(existsSync(join(root, ".archstrict-todo-initialized"))).toBe(false);
+
+      let jsonOut = "";
+      try {
+        jsonOut = execFileSync("node", [CLI_PATH, "todo", "--json"], { cwd: root, encoding: "utf8" });
+      } catch (e) {
+        jsonOut = (e as { stdout: string }).stdout;
+      }
+      expect(JSON.parse(jsonOut)).toEqual({
+        error: "todo's first run refuses: 1 file matches no declared module",
+        do: "add each to declaredModules or exclude in archstrict.config.ts, then run archstrict todo",
+      });
+      expect(existsSync(join(root, ".archstrict-todo-initialized"))).toBe(false);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

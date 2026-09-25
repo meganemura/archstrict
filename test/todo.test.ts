@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { init } from "../src/verbs/init.js";
 import { check } from "../src/verbs/check.js";
 import { todo } from "../src/verbs/todo.js";
+import { ReportError } from "../src/report-error.js";
 
 function withTempProject(fn: (root: string) => void | Promise<void>): Promise<void> {
   const root = mkdtempSync(join(tmpdir(), "archstrict-todo-"));
@@ -375,6 +376,72 @@ describe("todo", () => {
 
       const result = await check(root);
       expect(result.violations.some((v) => v.rule === "stale-todo")).toBe(true);
+    });
+  });
+
+  test("first run with an uncovered file refuses: exit via ReportError, exact message and do, no marker, no todo file", async () => {
+    await withTempProject(async (root) => {
+      mkdirSync(join(root, "src", "app"), { recursive: true });
+      writeFileSync(join(root, "src", "app", "index.ts"), "export const app = 1;\n");
+      writeFileSync(join(root, "src", "extra.ts"), "export const extra = 1;\n"); // matches no declared module
+      writeFileSync(
+        join(root, "archstrict.config.ts"),
+        `export default { declaredModules: [{ name: "app", glob: "src/app/**", surface: "index.ts" }], exclude: ["archstrict.config.ts"], because: "test" };\n`,
+      );
+
+      await expect(todo(root)).rejects.toMatchObject({
+        message: "todo's first run refuses: 1 file matches no declared module",
+        do: "add each to declaredModules or exclude in archstrict.config.ts, then run archstrict todo",
+      });
+      await expect(todo(root)).rejects.toBeInstanceOf(ReportError);
+
+      expect(existsSync(join(root, ".archstrict-todo-initialized"))).toBe(false);
+      expect(existsSync(join(root, "src", "app", "archstrict.todo.json"))).toBe(false);
+    });
+  });
+
+  test("declaring the previously-uncovered file lets the first run succeed and freeze", async () => {
+    await withTempProject(async (root) => {
+      mkdirSync(join(root, "src", "app"), { recursive: true });
+      writeFileSync(join(root, "src", "app", "index.ts"), "export const app = 1;\n");
+      writeFileSync(join(root, "src", "extra.ts"), "export const extra = 1;\n");
+      writeFileSync(
+        join(root, "archstrict.config.ts"),
+        `export default { declaredModules: [{ name: "app", glob: "src/app/**", surface: "index.ts" }], exclude: ["archstrict.config.ts"], because: "test" };\n`,
+      );
+
+      await expect(todo(root)).rejects.toBeInstanceOf(ReportError);
+
+      // Declare the file that made the first run refuse.
+      writeFileSync(
+        join(root, "archstrict.config.ts"),
+        `export default { declaredModules: [` +
+          `{ name: "app", glob: "src/app/**", surface: "index.ts" }, ` +
+          `{ name: "extra", glob: "src/extra.ts", surface: "index.ts" }` +
+          `], exclude: ["archstrict.config.ts"], because: "test" };\n`,
+      );
+
+      const result = await todo(root);
+      expect(result.firstRun).toBe(true);
+      expect(existsSync(join(root, ".archstrict-todo-initialized"))).toBe(true);
+
+      const after = await check(root);
+      expect(after.violations.some((v) => v.rule === "uncovered-module")).toBe(false);
+    });
+  });
+
+  test("a later (prune-only) run is unaffected by an uncovered-module violation", async () => {
+    await withTempProject(async (root) => {
+      writeBypassProject(root);
+      await init(root);
+      await todo(root); // past the first run, marker written
+
+      // Introduce a new top-level file that init never declared, so it
+      // is uncovered - after the first run, this must not block todo.
+      writeFileSync(join(root, "src", "extra.ts"), "export const extra = 1;\n");
+
+      const result = await todo(root);
+      expect(result.firstRun).toBe(false);
     });
   });
 });
