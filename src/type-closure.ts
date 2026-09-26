@@ -61,10 +61,6 @@ type ImportUse = { specifier: string; qualifier?: string[] };
 type DeclInfo = {
   refs: Reference[];
   imports: ImportUse[];
-  // True when some part of this declaration has no type annotation at
-  // all (an initializer, a return type, a parameter default) - the
-  // inference-fallback rule below only applies when this is set.
-  infer: boolean;
 };
 
 type ImportBinding = { specifier: string; importedName: string };
@@ -158,7 +154,7 @@ function bindingNames(name: ts.BindingName, out: string[]): string[] {
 }
 
 function newInfo(): DeclInfo {
-  return { refs: [], imports: [], infer: false };
+  return { refs: [], imports: [] };
 }
 
 // A dynamic `import(...)` call's own string-literal argument, or
@@ -182,9 +178,11 @@ function collect(node: ts.Node, info: DeclInfo, inferring: boolean): void {
     const dynamicSpecifier = dynamicImportSpecifier(n);
     // A dynamic `import(...)` reached while inferring (an unannotated
     // declaration's own value walk) can resolve to any type its target
-    // module exports - the same reasoning R5's own "reach every import
-    // binding of the file" fallback already uses for a static import,
-    // applied to the one import shape a value expression can hold.
+    // module exports - the same reasoning the inference rule below uses
+    // for a static reference, applied to the one import shape a value
+    // expression can hold. Always reaches the target whole: this closure
+    // decides only which FILE needs loading, never which member of it a
+    // caller happens to reach.
     if (dynamicSpecifier !== undefined && inferHere) info.imports.push({ specifier: dynamicSpecifier });
 
     if (ts.isTypeReferenceNode(n)) {
@@ -239,13 +237,13 @@ function collect(node: ts.Node, info: DeclInfo, inferring: boolean): void {
     // signature (parameters, type parameters, return type) - its body is
     // never inferred, since the annotation already fixes what the
     // checker needs. An unannotated one has its body walked in inferring
-    // mode instead (the fallback rule).
+    // mode instead (the inference rule, below).
     if (isFunctionLikeWithBody(n) || ts.isConstructorDeclaration(n) || ts.isSetAccessorDeclaration(n)) {
       n.typeParameters?.forEach((p) => visit(p, inferHere));
       n.parameters.forEach((p) => visit(p, inferHere));
       if (ts.isMethodDeclaration(n) && n.name !== undefined && ts.isComputedPropertyName(n.name)) visit(n.name, inferHere);
       if (n.type !== undefined) visit(n.type, inferHere);
-      else if (n.body !== undefined && isFunctionLikeWithBody(n)) { info.infer = true; visit(n.body, true); }
+      else if (n.body !== undefined && isFunctionLikeWithBody(n)) visit(n.body, true);
       return;
     }
     if (ts.isBindingElement(n)) {
@@ -258,7 +256,7 @@ function collect(node: ts.Node, info: DeclInfo, inferring: boolean): void {
       if (n.name !== undefined && ts.isComputedPropertyName(n.name)) visit(n.name, inferHere);
       else if (n.name !== undefined && !ts.isIdentifier(n.name)) visit(n.name, inferHere);
       if (n.type !== undefined) visit(n.type, inferHere);
-      else if (n.initializer !== undefined) { info.infer = true; visit(n.initializer, true); }
+      else if (n.initializer !== undefined) visit(n.initializer, true);
       return;
     }
     ts.forEachChild(n, (child) => visit(child, inferHere));
@@ -343,7 +341,7 @@ function summarize(inputs: TypeClosureInputs, summaries: Summaries, file: string
     if (ts.isExportAssignment(statement)) {
       const info = newInfo();
       const seg = segmentsOf(statement.expression);
-      if (seg !== undefined) info.refs.push(seg); else { info.infer = true; collect(statement.expression, info, true); }
+      if (seg !== undefined) info.refs.push(seg); else collect(statement.expression, info, true);
       if (statement.isExportEquals === true) { summary.exportEquals = true; summary.exportEqualsInfo = info; }
       else summary.defaultInfo = info;
       continue;
@@ -412,6 +410,16 @@ export function buildTypeClosure(inputs: TypeClosureInputs): TypeClosureResult {
   // rules/type-leak.ts's own ReportUnresolvedReference) is a separate
   // pass over the real Program, not this syntactic walk; a net built from
   // the same rules it is meant to catch a gap in could never fire.
+  //
+  // The inference rule reaches only the identifiers the declaration's
+  // initializer or body references, resolved the same way every other
+  // reference is - `collect` (above) already recorded every one of them
+  // into `info.refs` while walking an unannotated declaration's own
+  // value position, so the loop below needs no separate step for it.
+  // Reaching every import binding of the file instead doubles rule 6's
+  // own Program on a 23,000-file codebase, with no change in findings:
+  // every identifier that can shape an inferred type already appears in
+  // the expression itself.
   function processInfo(file: string, info: DeclInfo): void {
     for (const ref of info.refs) reachRef(file, ref);
     for (const use of info.imports) {
@@ -419,21 +427,6 @@ export function buildTypeClosure(inputs: TypeClosureInputs): TypeClosureResult {
       if (target === undefined) continue;
       if (use.qualifier !== undefined) reachExport(target, use.qualifier[0]!, use.qualifier.slice(1));
       else reachWhole(target);
-    }
-    // The inference fallback: an unannotated declaration's own inferred
-    // type can structurally be almost anything the file imports (the
-    // checker itself works this out; this closure cannot without
-    // checking types, which is the whole thing it exists to avoid doing
-    // twice). Reaching every import binding of the file is a deliberate
-    // safety margin over a narrower "only the identifiers the expression
-    // references" rule. On five real codebases both forms gave the same
-    // findings as a whole-project Program, but only the wider form also
-    // covered a reference hidden inside a namespace re-export before a
-    // rule for it existed. The cost is more files in the Program, not a
-    // different answer.
-    if (info.infer) {
-      const s = summarize(inputs, summaries, file);
-      for (const name of s.imports.keys()) reachRef(file, [name]);
     }
   }
 

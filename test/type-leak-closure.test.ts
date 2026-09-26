@@ -277,7 +277,7 @@ describe("an external dependency graph (a real installed package, @types/node, a
 // on a 5-level lazy-route chain, entirely through dynamic imports (no
 // static import anywhere), so the closure's own round bound sees this in
 // its very first round: every hop's own file already joins the closure
-// through R5's own inference rule, and rule 6's own safety net never has
+// through the inference rule, and rule 6's own safety net never has
 // anything left to add.
 describe("a dynamic import chain (lazy routes)", () => {
   test("a 5-level lazy-route chain never falls back and never needs a second round", () => {
@@ -313,6 +313,81 @@ describe("a dynamic import chain (lazy routes)", () => {
       // own `ensureProgram`) never fires here.
       expect(graph.programNotes).toEqual([]);
       expect(keysOf(violations)).toEqual(wholeProgramFindings(graph, root, modules));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+// A dynamic import's own result handed to a generic helper (never
+// destructured, never called directly) still needs its target's own
+// exports loaded whole - this closure decides only which FILE needs
+// loading, never which member of it a caller happens to reach.
+describe("a dynamic import passed on to a generic helper", () => {
+  test("reaches the target whole, matching a whole-project Program", () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "archstrict-passed-on-")));
+    try {
+      writeFileSync(join(root, "tsconfig.json"), JSON.stringify({
+        compilerOptions: { target: "esnext", module: "nodenext", moduleResolution: "nodenext", strict: true, skipLibCheck: true, noEmit: true },
+      }));
+      writeFileSync(join(root, "package.json"), '{"type":"module"}\n');
+      mkdirSync(join(root, "src/m"), { recursive: true });
+      writeFileSync(join(root, "src/m/secret.ts"), "export interface Secret { value: number }\n");
+      writeFileSync(join(root, "src/m/other-secret.ts"), "export interface OtherSecret { value: number }\n");
+      writeFileSync(join(root, "src/m/hop.ts"),
+        'import type { Secret } from "./secret.js";\n' +
+        'import type { OtherSecret } from "./other-secret.js";\n' +
+        "export const make: Secret = { value: 1 };\n" +
+        "export const other: OtherSecret = { value: 1 };\n");
+      writeFileSync(join(root, "src/m/index.ts"),
+        "async function helper<T>(p: Promise<T>): Promise<T> {\n  return p;\n}\n" +
+        "export function passOn() {\n  return helper(import(\"./hop.js\"));\n}\n");
+      const modules: DeclaredModule[] = [{ name: "m", glob: "src/m/**" }];
+      const graph = buildModuleGraph({ projectRoot: root, declaredModules: modules });
+      expect(graph.unresolvedSpecifierCount).toBe(0);
+      const violations = checkTypeLeaks(graph);
+      expect(violations.length).toBeGreaterThan(0);
+      expect(keysOf(violations)).toEqual(wholeProgramFindings(graph, root, modules));
+      const closureFiles = graph.program.getRootFileNames();
+      expect(closureFiles.some((f) => f.endsWith("secret.ts"))).toBe(true);
+      expect(closureFiles.some((f) => f.endsWith("other-secret.ts"))).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+// The inference rule's own narrowing: an unannotated declaration that
+// calls one imported function (makeSecret) and never mentions a second,
+// unrelated import at all - it reaches only the identifiers its own body
+// references, so the unrelated file never joins the closure Program.
+describe("an unannotated declaration referencing only one of two imports", () => {
+  test("excludes the unreferenced import's own file from the closure Program", () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "archstrict-referenced-")));
+    try {
+      writeFileSync(join(root, "tsconfig.json"), JSON.stringify({
+        compilerOptions: { target: "esnext", module: "nodenext", moduleResolution: "nodenext", strict: true, skipLibCheck: true, noEmit: true },
+      }));
+      writeFileSync(join(root, "package.json"), '{"type":"module"}\n');
+      mkdirSync(join(root, "src/m"), { recursive: true });
+      writeFileSync(join(root, "src/m/secret.ts"), "export interface Secret { value: number }\n");
+      writeFileSync(join(root, "src/m/maker.ts"),
+        'import type { Secret } from "./secret.js";\n' +
+        "export function makeSecret(): Secret {\n  return { value: 1 };\n}\n");
+      writeFileSync(join(root, "src/m/unrelated.ts"), "export interface Unrelated { value: number }\n");
+      writeFileSync(join(root, "src/m/index.ts"),
+        'import { makeSecret } from "./maker.js";\n' +
+        'import type { Unrelated } from "./unrelated.js";\n' +
+        "export function wrap() {\n  return makeSecret();\n}\n");
+      const modules: DeclaredModule[] = [{ name: "m", glob: "src/m/**" }];
+      const graph = buildModuleGraph({ projectRoot: root, declaredModules: modules });
+      expect(graph.unresolvedSpecifierCount).toBe(0);
+      const violations = checkTypeLeaks(graph);
+      expect(keysOf(violations)).toEqual(wholeProgramFindings(graph, root, modules));
+      const closureFiles = graph.program.getRootFileNames();
+      expect(closureFiles.some((f) => f.endsWith("maker.ts"))).toBe(true);
+      expect(closureFiles.some((f) => f.endsWith("secret.ts"))).toBe(true);
+      expect(closureFiles.some((f) => f.endsWith("unrelated.ts"))).toBe(false);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
