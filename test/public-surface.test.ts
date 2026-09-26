@@ -1,6 +1,8 @@
 import { describe, expect, test } from "vitest";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { buildModuleGraph } from "../src/module-graph.js";
 import { checkPublicSurfaceBypass } from "../src/rules/public-surface.js";
 
@@ -50,5 +52,35 @@ describe("checkPublicSurfaceBypass", () => {
     expect(graph.outsideFiles).toEqual([]);
     expect(graph.unsupportedSyntaxCount).toBe(0);
     expect([...graph.modules.keys()].sort()).toEqual(["a", "b", "c"]);
+  });
+
+  // `import("./x").Y` in type position reaches past a module's surface the
+  // same as any other import - a project could otherwise read internal
+  // types through it while every value import stays clean.
+  test("an import(...) type reaching past a surface is reported; one reaching the surface itself is not", () => {
+    const root = mkdtempSync(join(tmpdir(), "archstrict-import-type-bypass-"));
+    try {
+      writeFileSync(join(root, "tsconfig.json"), JSON.stringify({
+        compilerOptions: { target: "esnext", module: "nodenext", moduleResolution: "nodenext", strict: true, skipLibCheck: true, noEmit: true },
+      }));
+      mkdirSync(join(root, "src/a"), { recursive: true });
+      mkdirSync(join(root, "src/b"), { recursive: true });
+      writeFileSync(join(root, "src/a/index.ts"), "export type Public = { value: number };\n");
+      writeFileSync(join(root, "src/a/internal.ts"), "export type Secret = { value: number };\n");
+      writeFileSync(join(root, "src/b/bypass.ts"), 'export type Leaked = import("../a/internal.ts").Secret;\n');
+      writeFileSync(join(root, "src/b/clean.ts"), 'export type Ok = import("../a/index.ts").Public;\n');
+      const graph = buildModuleGraph({
+        projectRoot: root,
+        declaredModules: [{ name: "a", glob: "src/a/**" }, { name: "b", glob: "src/b/**" }],
+      });
+      expect(graph.unresolvedSpecifierCount).toBe(0);
+
+      const violations = checkPublicSurfaceBypass(graph);
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.evidence).toContain("'../a/internal.ts'");
+      expect(violations[0]?.path.endsWith("bypass.ts")).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

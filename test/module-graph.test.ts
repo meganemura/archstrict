@@ -51,7 +51,7 @@ describe("buildModuleGraph (package-specifier resolution)", () => {
 // SourceFile differs (Program-owned vs. this file's own per-file parse).
 // Equal output on many small, generated projects is the equivalence
 // module-graph.ts's own header claims.
-const IMPORT_KINDS = ["value", "type", "export", "dynamic", "builtin", "missing", "require"] as const;
+const IMPORT_KINDS = ["value", "type", "export", "dynamic", "import-type", "builtin", "missing", "require"] as const;
 
 function renderImport(kind: typeof IMPORT_KINDS[number], target: number): string {
   switch (kind) {
@@ -59,6 +59,10 @@ function renderImport(kind: typeof IMPORT_KINDS[number], target: number): string
     case "type": return `import type { T } from "./f${target}.js";`;
     case "export": return `export { v as e${target} } from "./f${target}.js";`;
     case "dynamic": return `void import("./f${target}.js");`;
+    // `import("./x").Y` in type position: no runtime import, but a real
+    // type dependency on the target file (see module-graph.ts's own
+    // walkFileImports for why this must be an edge, not merely syntax).
+    case "import-type": return `type T${target} = import("./f${target}.js").T;`;
     case "builtin": return 'import "node:fs";';
     case "missing": return 'import "missing-package-does-not-exist";';
     case "require": return `require("./f${target}.js");`;

@@ -1,5 +1,5 @@
 // Responsibility: build every declared module's own file membership and
-// resolve every import/export/dynamic-import edge to its target module.
+// resolve every import/export/dynamic-import/import-type edge to its target module.
 // This is shared infrastructure: every rule (public-surface bypass,
 // cycles, uncovered modules, deprecated edges) and every verb reads the
 // same graph rather than each re-walking the source.
@@ -796,8 +796,8 @@ export function scriptKindForFile(fileName: string): ts.ScriptKind {
   return fileName.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
 }
 
-// The per-file half of the edge walk: every import/export/dynamic-import
-// specifier syntax recognizes, plus a count of syntax it doesn't
+// The per-file half of the edge walk: every import/export/dynamic-import/
+// import-type specifier syntax recognizes, plus a count of syntax it doesn't
 // (require(), import x = require(...)) - no resolution, no Program, no
 // module graph. Kept separate from buildPreparedGraph's own resolution
 // loop below so warm-graph.ts can memoize exactly this part.
@@ -824,6 +824,19 @@ export function walkFileImports(sf: ts.SourceFile): FileImportWalk {
     ) {
       specifier = node.arguments[0];
       isDynamic = true;
+    } else if (
+      ts.isImportTypeNode(node) &&
+      ts.isLiteralTypeNode(node.argument) &&
+      ts.isStringLiteral(node.argument.literal)
+    ) {
+      // `import("./x").Y` in a type position: a real type dependency on
+      // the target file, not syntax that merely mentions a module name.
+      // Recorded as type-only (never dynamic - "dynamic" here means the
+      // runtime `import()` expression, which this is not) so rule 1
+      // (public-surface bypass) and the edge constraints see it; without
+      // this, `import("../b/internal.js").T` reached past a surface unseen.
+      specifier = node.argument.literal;
+      isTypeOnly = true;
     } else if (
       ts.isImportEqualsDeclaration(node) &&
       ts.isExternalModuleReference(node.moduleReference)
@@ -1106,7 +1119,7 @@ export function buildModuleGraphForRules(options: BuildOptions): ModuleGraph {
   if (rootNames.every((file) => existsSync(file) && statSync(file).mtimeMs === mtimes[file])) {
     // rootNames order (a directory scan) - this write never builds a
     // Program at all (see buildPreparedGraph's own header for why).
-    writeEdgeCache(path, { schema: 2, tsconfigHash, archstrictVersion: ARCHSTRICT_VERSION, buildOptionsHash, metadata, files,
+    writeEdgeCache(path, { schema: 3, tsconfigHash, archstrictVersion: ARCHSTRICT_VERSION, buildOptionsHash, metadata, files,
       sourceOrder: rootNames.filter((file) => Object.hasOwn(files, file)),
       unsupportedSyntaxCount: graph.unsupportedSyntaxCount, unresolvedSpecifiers: graph.unresolvedSpecifiers });
   }
