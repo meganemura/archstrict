@@ -307,9 +307,23 @@ export type RunRulesOptions = {
   // has no file scope, and its `before`/`after` diff needs every rule
   // evaluated on both sides.
   skipTypeLeak?: boolean;
+  // Called right after rule 6 and before every other rule. check() uses
+  // it to drop rule 6's Program there, so the Program and the other
+  // rules' violations never sit in memory together: on a large codebase
+  // each alone fits Node's default heap, but the two together do not.
+  afterTypeLeak?: () => void;
 };
 
 export function runRules(graph: ModuleGraph, config: Config, options: RunRulesOptions = {}): CheckResult {
+  // null (not 0, not an empty array's own .length) when this rule did not
+  // run: "not evaluated" and "evaluated, found none" are different facts,
+  // and CheckResult.typeLeaks's own comment is the field this distinction
+  // exists for. Rule 6 runs first so that its Program can be released
+  // (options.afterTypeLeak) before the other rules build their own
+  // violations; its findings still go last in the report.
+  const typeLeaks = options.skipTypeLeak ? undefined : checkTypeLeaks(graph);
+  options.afterTypeLeak?.();
+
   const violations: AnyViolation[] = [
     ...checkPublicSurfaceBypass(graph),
     ...checkCycles(graph, config),
@@ -323,12 +337,6 @@ export function runRules(graph: ModuleGraph, config: Config, options: RunRulesOp
   ];
   const deprecated = checkDeprecatedEdges(graph, config);
   violations.push(...deprecated.violations);
-
-  // null (not 0, not an empty array's own .length) when this rule did not
-  // run: "not evaluated" and "evaluated, found none" are different facts,
-  // and CheckResult.typeLeaks's own comment is the field this distinction
-  // exists for.
-  const typeLeaks = options.skipTypeLeak ? undefined : checkTypeLeaks(graph);
   if (typeLeaks !== undefined) violations.push(...typeLeaks);
 
   let modulesWithoutSurface = 0;
@@ -531,21 +539,20 @@ export async function check(projectRoot: string, focusFile?: string, options: Ch
   // ts.Program is never built just to throw its answer away. Plain
   // `check` (no focusFile) always evaluates it.
   const skipTypeLeak = focusFile !== undefined && !focusesSurfaceFile(graph, focusFile);
-  const evaluated = runRules(graph, config, { skipTypeLeak });
-  // Read before releasing below - `releaseProgram` clears it back to
-  // empty along with the Program itself, since a later access on this
-  // same graph would build a fresh one and might not need the fallback a
-  // first build did.
-  const programNotes = graph.programNotes;
-  // Rule 6 is the last rule that can touch `graph.program`/`graph.checker`
-  // (runRules' own ordering keeps it last) - release it now, right after,
-  // before todo suppression and checkConfigMeaning's own (unrelated) work,
-  // rather than let it sit in memory for the rest of this call for no
-  // further use. A no-op only when rule 6 never ran at all (skipTypeLeak):
-  // when it did run, checkTypeLeaks always reads `graph.program` and
-  // `graph.checker` up front (collectNamedDeclarations's own two
-  // arguments), even for a project with no type-leak-eligible module.
-  graph.releaseProgram();
+  // Rule 6 is the only rule that touches `graph.program`/`graph.checker`,
+  // and runRules runs it first - release the Program right after it, so
+  // the other rules never run beside it. The notes are read before the
+  // release, which clears them along with the Program (a later access on
+  // this graph would build a fresh one and might not need the fallback a
+  // first build did). A no-op when rule 6 never ran (skipTypeLeak).
+  let programNotes: readonly string[] = [];
+  const evaluated = runRules(graph, config, {
+    skipTypeLeak,
+    afterTypeLeak: () => {
+      programNotes = [...graph.programNotes];
+      graph.releaseProgram();
+    },
+  });
   if (skipTypeLeak) evaluated.typeLeaksSkippedFile = focusFile;
   if (programNotes.length > 0) evaluated.notes = [...programNotes];
   evaluated.violations.push(...await checkConfigMeaning(config, options.prove ?? false, options.prover));
