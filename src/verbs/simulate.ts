@@ -121,19 +121,35 @@ export async function simulate(projectRoot: string, changes: readonly Change[]):
         afterConfig.declaredModules!, afterConfig.surface ?? DEFAULT_SURFACE)),
     ])],
   });
-  const graph = buildPreparedGraph(simulatedPrepared, {
-    host, oldProgram: baseline.program,
-    resolutionCache: ts.createModuleResolutionCache(projectRoot, host.getCanonicalFileName, simulatedPrepared.compilerOptions),
-  });
+  // `baseline.program` is a lazy getter, but `before` above already forces
+  // it: runRules always evaluates rule 6 (type-leak) here, with no file
+  // scope to skip it by (unlike check.ts's own `check <file>`). Passing it
+  // as oldProgram costs nothing extra beyond that - it accelerates this
+  // second Program build by reusing the baseline's own unaffected
+  // SourceFiles.
+  //
+  // No `resolutionCache` override here, deliberately: buildPreparedGraph's
+  // own per-options caching already gives each file's own nearest tsconfig
+  // (compilerOptionsForFile) its own cache. One shared cache across every
+  // file, keyed by the root options alone, could return a resolution
+  // cached under one tsconfig's `paths`/`baseUrl` for a specifier text
+  // that means something different under another file's own tsconfig.
+  const graph = buildPreparedGraph(simulatedPrepared, { host, oldProgram: baseline.program });
+  // graph.edges above already came from this same `host` (buildPreparedGraph's
+  // own per-file walk reads through it, then drops each SourceFile once
+  // walked - it never keeps one around to inspect). Forcing `graph.program`
+  // here is the one place left to actually look at a real SourceFile's own
+  // text, so this check validates the SAME host the edges were already
+  // built through, using the Program as the only surviving place to see it.
   const sources = new Map(graph.program.getSourceFiles().map(source => [source.fileName, source]));
   const simulatedRoots = new Set(simulatedPrepared.rootNames);
   // A changed file can be ineligible as a root but still enter the Program
   // through another file's import. An "if and only if" membership check
   // would reject that valid case. Check three narrower properties instead:
   // each changed root must appear, each deleted path must stay absent,
-  // and each changed file that appears must contain the overlay text.
-  // The text check catches a host override that silently reads stale disk
-  // content, even when Program membership looks correct.
+  // and each changed file that appears must contain the overlay text - the
+  // text check is what actually catches the host silently reading stale
+  // disk content, a case simulatedRoots membership alone would miss.
   for (const [file, content] of contents) {
     const source = sources.get(file);
     if (content === null ? source !== undefined :

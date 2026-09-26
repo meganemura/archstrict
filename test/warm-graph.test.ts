@@ -6,9 +6,20 @@ import * as gen from "@hegeldev/hegel/generators";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync, statSync, utimesSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import ts from "typescript";
 import * as graphs from "../src/module-graph.js";
 import type { ModuleGraph, BuildOptions } from "../src/module-graph.js";
 import { createWarmGraph } from "../src/warm-graph.js";
+
+// A real ES module namespace object's own exports are read-only -
+// vi.spyOn cannot redefine `ts.createSourceFile` directly. Wrapped here so
+// a test can tell a real per-file cache hit (warm-graph.ts's own reuse
+// mechanism - see its own header) from a cache miss.
+vi.mock("typescript", async (importOriginal) => {
+  const actual = await importOriginal<{ default: typeof ts }>();
+  return { ...actual, default: { ...actual.default,
+    createSourceFile: vi.fn((...args: Parameters<typeof ts.createSourceFile>) => actual.default.createSourceFile(...args)) } };
+});
 
 function project(run: (root: string, options: BuildOptions) => void) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "archstrict-warm-")));
@@ -35,45 +46,53 @@ function facts(graph: ModuleGraph) {
     surface: graph.surface, rootDir: graph.rootDir };
 }
 
-test("untouched SourceFiles retain object identity across edits and zero-change refreshes", () => project((root, options) => {
+test("an unchanged file's own parsed imports are reused across edits and zero-change refreshes", () => project((root, options) => {
   const warm = createWarmGraph();
-  const before = warm.refresh(options);
+  const parses = vi.mocked(ts.createSourceFile);
   const a = join(root, "src/a/index.ts"), b = join(root, "src/b/index.ts");
+  warm.refresh(options);
+  expect(parses.mock.calls.map(call => call[0])).toEqual(expect.arrayContaining([a, b]));
+  parses.mockClear();
   update(a, 'import "node:fs";');
   const after = warm.refresh(options);
-  expect(after.program).not.toBe(before.program);
-  expect(after.program.getSourceFile(b) === before.program.getSourceFile(b)).toBe(true);
-  expect(after.program.getSourceFile(a)).not.toBe(before.program.getSourceFile(a));
-  expect(warm.refresh(options).program.getSourceFile(b) === after.program.getSourceFile(b)).toBe(true);
+  // b did not change - its own cached import record is reused, so it is not re-parsed; a did, and is.
+  expect(parses.mock.calls.some(call => call[0] === b)).toBe(false);
+  expect(parses.mock.calls.some(call => call[0] === a)).toBe(true);
+  parses.mockClear();
+  warm.refresh(options);
+  expect(parses).not.toHaveBeenCalled(); // a zero-change refresh reuses every file's own cached record
   expect(facts(after)).toEqual(facts(graphs.buildModuleGraph(options)));
 }));
 
-test("changed tsconfig options take the full cold-build path", () => project((root, options) => {
-  const spy = vi.spyOn(graphs, "buildModuleGraph");
-  try {
-    const warm = createWarmGraph();
-    const before = warm.refresh(options);
-    warm.refresh(options);
-    expect(spy).toHaveBeenCalledTimes(1);
-    update(join(root, "tsconfig.json"), '{"compilerOptions":{"noLib":true,"types":[],"strict":true}}');
-    const after = warm.refresh(options);
-    expect(spy).toHaveBeenCalledTimes(2);
-    expect(after.program.getSourceFile(join(root, "src/b/index.ts"))).not.toBe(before.program.getSourceFile(join(root, "src/b/index.ts")));
-  } finally { spy.mockRestore(); }
+test("changed tsconfig options discard the per-file cache and re-parse every file", () => project((root, options) => {
+  const b = join(root, "src/b/index.ts");
+  const parses = vi.mocked(ts.createSourceFile);
+  const warm = createWarmGraph();
+  warm.refresh(options);
+  parses.mockClear();
+  warm.refresh(options);
+  expect(parses).not.toHaveBeenCalled(); // same fingerprint: every file's own cached record is reused
+  update(join(root, "tsconfig.json"), '{"compilerOptions":{"noLib":true,"types":[],"strict":true}}');
+  parses.mockClear();
+  warm.refresh(options);
+  // b's own text never changed, but a new tsconfig can parse differently
+  // (a changed jsx/module setting) - the fingerprint change discards the
+  // whole cache, so even b is re-parsed.
+  expect(parses.mock.calls.some(call => call[0] === b)).toBe(true);
 }));
 
-test("changed architecture config takes the full cold-build path", () => project((root, options) => {
-  const spy = vi.spyOn(graphs, "buildModuleGraph");
-  try {
-    const warm = createWarmGraph();
-    const before = warm.refresh(options);
-    warm.refresh(options);
-    expect(spy).toHaveBeenCalledTimes(1);
-    update(join(root, "archstrict.config.ts"), 'export default { because: "changed" };');
-    const after = warm.refresh(options);
-    expect(spy).toHaveBeenCalledTimes(2);
-    expect(after.program.getSourceFile(join(root, "src/b/index.ts"))).not.toBe(before.program.getSourceFile(join(root, "src/b/index.ts")));
-  } finally { spy.mockRestore(); }
+test("changed architecture config discards the per-file cache and re-parses every file", () => project((root, options) => {
+  const b = join(root, "src/b/index.ts");
+  const parses = vi.mocked(ts.createSourceFile);
+  const warm = createWarmGraph();
+  warm.refresh(options);
+  parses.mockClear();
+  warm.refresh(options);
+  expect(parses).not.toHaveBeenCalled();
+  update(join(root, "archstrict.config.ts"), 'export default { because: "changed" };');
+  parses.mockClear();
+  warm.refresh(options);
+  expect(parses.mock.calls.some(call => call[0] === b)).toBe(true);
 }));
 
 test("checker remains a lazy getter after a warm refresh", () => project((_root, options) => {
@@ -120,6 +139,8 @@ test("every edit in generated sequences preserves cold facts and exercises all r
       if (kind === "delete-non-root") expect(previous.edges.some(edge => edge.specifier === gone)).toBe(true);
       if (kind === "resolve-missing") expect(previous.unresolvedSpecifiers).toContain(pending);
       if (kind === "shadow") expect(previous.edges.find(edge => edge.specifier === shadow)?.resolvedFile).toBe(join(root, "deps", `shadow${i}`, "index.d.ts"));
+      const parses = vi.mocked(ts.createSourceFile);
+      parses.mockClear();
       switch (kind) {
         case "imports": update(join(root, "src/a/index.ts"), `${imports.join("\n")}\nimport "node:path";\n// ${i}`); break;
         case "add-root": writeFileSync(join(root, "src/a", `new${i}.ts`), 'import "../b/index.js";'); break;
@@ -131,11 +152,17 @@ test("every edit in generated sequences preserves cold facts and exercises all r
         case "shadow": writeFileSync(join(root, "deps", `shadow${i}.d.ts`), 'export interface T { value: boolean }'); break;
       }
       const current = warm.refresh(options);
-      expect(facts(current)).toEqual(facts(graphs.buildModuleGraph(options)));
       if (["delete-non-root", "resolve-missing", "shadow"].includes(kind)) {
+        // watch.ts's own text never changed on this edit - only a file it
+        // resolves to did - so its cached import record is reused, not
+        // re-parsed, even though the edge it produces can resolve
+        // differently now. Checked before the reference buildModuleGraph
+        // call below, which always parses every file fresh and would
+        // otherwise contaminate this same, shared spy.
         const watchPath = join(root, "src/a/watch.ts");
-        expect(current.program.getSourceFile(watchPath) === previous.program.getSourceFile(watchPath)).toBe(true);
+        expect(parses.mock.calls.some(call => call[0] === watchPath)).toBe(false);
       }
+      expect(facts(current)).toEqual(facts(graphs.buildModuleGraph(options)));
       if (kind === "delete-non-root") {
         expect(current.edges.some(edge => edge.specifier === gone)).toBe(false);
         expect(current.unresolvedSpecifiers).toContain(gone);

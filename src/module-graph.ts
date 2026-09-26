@@ -1,13 +1,26 @@
-// Responsibility: build every declared module's own file membership, build a
-// TypeScript program over them, and resolve every import/export/dynamic-
-// import edge to its target module. This is shared infrastructure: every
-// rule (public-surface bypass, cycles, uncovered modules, deprecated edges)
-// and every verb reads the same graph rather than each re-walking the
-// program.
+// Responsibility: build every declared module's own file membership and
+// resolve every import/export/dynamic-import edge to its target module.
+// This is shared infrastructure: every rule (public-surface bypass,
+// cycles, uncovered modules, deprecated edges) and every verb reads the
+// same graph rather than each re-walking the source.
 // Boundary: no rule logic here. A rule is a predicate over this graph's
 // edges and modules; this module only builds the graph and says what it
 // could not analyze (unresolved specifiers, unsupported syntax, files
 // outside the modules glob) as counts, never as silence.
+//
+// Edges never require a whole-project ts.Program. A per-file
+// ts.createSourceFile (parsed, walked for its own imports/exports, then
+// dropped) does the same work a Program's own getSourceFiles() walk did,
+// at a fraction of the memory: a Program's own parsed SourceFile/Node
+// trees are what dominate memory on a codebase of tens of thousands of
+// files, and archstrict's own edge records are a rounding error beside
+// them (measured directly: dropping the Program after the edge walk on a
+// 21,000-file tree returned the heap to a few tens of megabytes). A
+// ts.Program is still built - lazily, only when a rule that needs real
+// type information (rule 6, type-leak; search; fix; simulate) actually
+// asks for `program` or `checker` - and can be released again once that
+// rule is done with it (`releaseProgram`), rather than held for the rest
+// of a run that no longer needs it.
 //
 // Every edge is tagged `isTypeOnly`. Decisions a downstream rule must not
 // reopen: rule 1 (public-surface bypass) counts a type-only edge the same
@@ -163,9 +176,19 @@ export type ModuleGraph = {
   rootDir: string;
   // The program and checker built over every module file - shared here so
   // a rule needing type information (rule 6) does not build its own
-  // second program over the same files.
-  program: ts.Program;
-  checker: ts.TypeChecker;
+  // second program over the same files. Lazy: building either one parses
+  // and binds every file in the program, the memory cost this module's
+  // own edge build exists to avoid paying unconditionally (see this
+  // module's own header) - so nothing on the edge path may touch either
+  // getter, and a caller that never needs type information never pays for
+  // a Program at all.
+  readonly program: ts.Program;
+  readonly checker: ts.TypeChecker;
+  // Drops the memoized Program (and, with it, the checker) once a caller
+  // that needed one (rule 6, search, fix) is done with it, so it does not
+  // sit in memory for the rest of a run that has no further use for it. A
+  // later access to `program`/`checker` builds a fresh one.
+  releaseProgram(): void;
 };
 
 export type BuildOptions = {
@@ -740,16 +763,140 @@ export function buildModuleGraph(options: BuildOptions): ModuleGraph {
   return buildPreparedGraph(prepareGraph(options));
 }
 
+// One import/export/dynamic-import specifier found while walking a single
+// file, before resolution - resolution needs the file's own nearest
+// compiler options and a live host, neither of which this record carries,
+// so it is a pure, resolution-independent fact about the file's own
+// syntax. warm-graph.ts caches exactly this shape (keyed by file path and
+// mtime) to skip re-parsing an unchanged file while still resolving every
+// specifier afresh on each refresh.
+export type ImportRecord = {
+  specifier: string;
+  fromPosition: Position;
+  isTypeOnly: boolean;
+  isDynamic: boolean;
+};
+
+export type FileImportWalk = {
+  imports: ImportRecord[];
+  unsupportedSyntaxCount: number;
+};
+
+// TypeScript's own default (ensureScriptKind, applied when a caller of
+// ts.createSourceFile omits scriptKind) already maps every analyzed
+// extension this way - .tsx to TSX, everything else (.ts/.mts/.cts) to
+// plain TS, since ts.ScriptKind itself has no separate Mts/Cts member.
+// Made explicit here rather than left to that implicit default: this
+// project's per-file parse is deliberate about which of TypeScript's own
+// two source dialects (JSX-capable or not) it invokes, not a place that
+// should silently follow whatever TypeScript's own default happens to be
+// this version. Exported: warm-graph.ts's own per-file cache parses a
+// file the same way, outside this module's own buildPreparedGraph.
+export function scriptKindForFile(fileName: string): ts.ScriptKind {
+  return fileName.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+}
+
+// The per-file half of the edge walk: every import/export/dynamic-import
+// specifier syntax recognizes, plus a count of syntax it doesn't
+// (require(), import x = require(...)) - no resolution, no Program, no
+// module graph. Kept separate from buildPreparedGraph's own resolution
+// loop below so warm-graph.ts can memoize exactly this part.
+export function walkFileImports(sf: ts.SourceFile): FileImportWalk {
+  const imports: ImportRecord[] = [];
+  let unsupportedSyntaxCount = 0;
+
+  ts.forEachChild(sf, function walk(node) {
+    let specifier: ts.Expression | undefined;
+    let isTypeOnly = false;
+    let isDynamic = false;
+
+    if (ts.isImportDeclaration(node)) {
+      specifier = node.moduleSpecifier;
+      isTypeOnly = isEffectivelyTypeOnlyImport(node.importClause);
+    } else if (ts.isExportDeclaration(node) && node.moduleSpecifier !== undefined) {
+      specifier = node.moduleSpecifier;
+      isTypeOnly = isEffectivelyTypeOnlyExport(node);
+    } else if (
+      ts.isCallExpression(node) &&
+      node.expression.kind === ts.SyntaxKind.ImportKeyword &&
+      node.arguments[0] !== undefined &&
+      ts.isStringLiteral(node.arguments[0])
+    ) {
+      specifier = node.arguments[0];
+      isDynamic = true;
+    } else if (
+      ts.isImportEqualsDeclaration(node) &&
+      ts.isExternalModuleReference(node.moduleReference)
+    ) {
+      // `import x = require("./y")`: a CommonJS-only form, outside the
+      // ESM scope this project analyzes.
+      unsupportedSyntaxCount++;
+    } else if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === "require"
+    ) {
+      unsupportedSyntaxCount++;
+    }
+
+    if (specifier !== undefined && ts.isStringLiteral(specifier)) {
+      const start = specifier.getStart(sf);
+      const { line, character } = sf.getLineAndCharacterOfPosition(start);
+      imports.push({
+        specifier: specifier.text,
+        fromPosition: { line: line + 1, column: character + 1 },
+        isTypeOnly,
+        isDynamic,
+      });
+    }
+
+    ts.forEachChild(node, walk);
+  });
+
+  return { imports, unsupportedSyntaxCount };
+}
+
 export type GraphBuildOverrides = {
   host?: ts.CompilerHost;
   oldProgram?: ts.Program;
   resolutionCache?: ts.ModuleResolutionCache;
+  // warm-graph.ts's own per-file, mtime-keyed cache of walkFileImports'
+  // result - supplied so a refresh can skip re-parsing an unchanged file.
+  // Returning undefined means "this file has no readable content" (the
+  // same case the default, host.readFile-based walk below treats as: the
+  // file is skipped entirely, exactly as a Program that failed to read a
+  // root file simply omits it from getSourceFiles()).
+  fileWalk?: (fileName: string) => FileImportWalk | undefined;
 };
 
 export function buildPreparedGraph(prepared: ReturnType<typeof prepareGraph>, overrides: GraphBuildOverrides = {}): ModuleGraph {
   const { projectRoot, surface, rootDir, rootNames, modules, resolveModuleForFile, compilerOptions, compilerOptionsForFile } = prepared;
-  const program = ts.createProgram({ rootNames, options: compilerOptions, host: overrides.host, oldProgram: overrides.oldProgram });
   const host = overrides.host ?? ts.createCompilerHost(compilerOptions);
+  const languageVersion = compilerOptions.target ?? ts.ScriptTarget.ESNext;
+
+  const defaultFileWalk = (fileName: string): FileImportWalk | undefined => {
+    const text = host.readFile(fileName);
+    if (text === undefined) return undefined;
+    return walkFileImports(ts.createSourceFile(fileName, text, languageVersion, false, scriptKindForFile(fileName)));
+  };
+  const fileWalk = overrides.fileWalk ?? defaultFileWalk;
+
+  // One ts.ModuleResolutionCache per distinct compiler-options object
+  // (a monorepo can have many, one per leaf tsconfig - see
+  // compilerOptionsForFile's own comment), unless the caller supplies one
+  // cache to use for every file regardless of its own options
+  // (overrides.resolutionCache - simulate.ts's own single-cache-per-run
+  // convention, kept as-is here).
+  const resolutionCaches = new Map<ts.CompilerOptions, ts.ModuleResolutionCache>();
+  const resolutionCacheFor = (options: ts.CompilerOptions): ts.ModuleResolutionCache | undefined => {
+    if (overrides.resolutionCache !== undefined) return overrides.resolutionCache;
+    let cache = resolutionCaches.get(options);
+    if (cache === undefined) {
+      cache = ts.createModuleResolutionCache(host.getCurrentDirectory(), host.getCanonicalFileName, options);
+      resolutionCaches.set(options, cache);
+    }
+    return cache;
+  };
 
   const outsideFiles: string[] = [];
   const edges: Edge[] = [];
@@ -757,119 +904,95 @@ export function buildPreparedGraph(prepared: ReturnType<typeof prepareGraph>, ov
   let unresolvedSpecifierCount = 0;
   const unresolvedSpecifiers: string[] = [];
 
-  // program.getSourceFiles() includes every file TS pulled in (lib.d.ts,
-  // node_modules ambient types, ...), not just rootNames - this membership
-  // test ran as an Array.includes per program file before, an O(files)
-  // linear scan repeated for every one of those files: O(files^2) overall
-  // on a large codebase. A Set built once turns it into one O(1) lookup
-  // per file.
-  const rootNameSet = new Set(rootNames);
-  for (const sf of program.getSourceFiles()) {
-    if (!rootNameSet.has(sf.fileName)) continue; // lib.d.ts, node_modules, etc.
-    const fromModule = resolveModuleForFile(sf.fileName);
+  // Walked in rootNames order (listAnalyzedFiles' own directory-scan
+  // order), not program.getSourceFiles()'s dependency order - there is no
+  // Program to walk here. Every edges/modules-membership/outsideFiles
+  // consumer that cares about a stable order sorts at its own site rather
+  // than leaning on this order (see each rule's own comment where that
+  // applies); this loop makes no ordering promise beyond "rootNames order".
+  for (const fileName of rootNames) {
+    const walked = fileWalk(fileName);
+    if (walked === undefined) continue; // unreadable: invisible, matching a Program that never got a SourceFile for it either
+
+    const fromModule = resolveModuleForFile(fileName);
     if (fromModule === undefined) {
-      outsideFiles.push(sf.fileName);
+      outsideFiles.push(fileName);
       continue;
     }
-    modules.get(fromModule)?.files.push(sf.fileName);
+    modules.get(fromModule)?.files.push(fileName);
+    unsupportedSyntaxCount += walked.unsupportedSyntaxCount;
 
-    ts.forEachChild(sf, function walk(node) {
-      let specifier: ts.Expression | undefined;
-      let isTypeOnly = false;
-      let isDynamic = false;
+    const options = compilerOptionsForFile(fileName);
+    const cache = resolutionCacheFor(options);
 
-      if (ts.isImportDeclaration(node)) {
-        specifier = node.moduleSpecifier;
-        isTypeOnly = isEffectivelyTypeOnlyImport(node.importClause);
-      } else if (ts.isExportDeclaration(node) && node.moduleSpecifier !== undefined) {
-        specifier = node.moduleSpecifier;
-        isTypeOnly = isEffectivelyTypeOnlyExport(node);
-      } else if (
-        ts.isCallExpression(node) &&
-        node.expression.kind === ts.SyntaxKind.ImportKeyword &&
-        node.arguments[0] !== undefined &&
-        ts.isStringLiteral(node.arguments[0])
-      ) {
-        specifier = node.arguments[0];
-        isDynamic = true;
-      } else if (
-        ts.isImportEqualsDeclaration(node) &&
-        ts.isExternalModuleReference(node.moduleReference)
-      ) {
-        // `import x = require("./y")`: out of scope for v0 (spec targets
-        // ESM-only projects; the 15-repo survey found none using this).
-        unsupportedSyntaxCount++;
-      } else if (
-        ts.isCallExpression(node) &&
-        ts.isIdentifier(node.expression) &&
-        node.expression.text === "require"
-      ) {
-        unsupportedSyntaxCount++;
+    for (const imp of walked.imports) {
+      const builtin = builtinModuleName(imp.specifier);
+
+      if (builtin !== undefined) {
+        // No real resolvedFile exists for a builtin - the specifier
+        // itself (normalized to the bare, "node:"-stripped name) stands
+        // in for one, matching every other external edge's convention of
+        // a stable, human-readable identifier rather than a filesystem
+        // path that doesn't exist.
+        edges.push({
+          fromFile: fileName,
+          fromModule,
+          fromPosition: imp.fromPosition,
+          specifier: imp.specifier,
+          isTypeOnly: imp.isTypeOnly,
+          isDynamic: imp.isDynamic,
+          resolvedFile: `node:${builtin}`,
+          toModule: undefined,
+          externalPackage: builtin,
+        });
+        continue;
       }
 
-      if (specifier !== undefined && ts.isStringLiteral(specifier)) {
-        const start = specifier.getStart(sf);
-        const { line, character } = sf.getLineAndCharacterOfPosition(start);
-        const builtin = builtinModuleName(specifier.text);
-
-        if (builtin !== undefined) {
-          // No real resolvedFile exists for a builtin - the specifier
-          // itself (normalized to the bare, "node:"-stripped name) stands
-          // in for one, matching every other external edge's convention of
-          // a stable, human-readable identifier rather than a filesystem
-          // path that doesn't exist.
-          edges.push({
-            fromFile: sf.fileName,
-            fromModule,
-            fromPosition: { line: line + 1, column: character + 1 },
-            specifier: specifier.text,
-            isTypeOnly,
-            isDynamic,
-            resolvedFile: `node:${builtin}`,
-            toModule: undefined,
-            externalPackage: builtin,
-          });
-        } else {
-          // Resolved regardless of a leading "." - a bare specifier
-          // (`@internal/a`, `lodash`) is resolved the same way a relative
-          // one is; TS's own resolver already follows a workspace
-          // package's package.json `exports` under nodenext, so the only
-          // thing gating that path before was this project's own code,
-          // not TypeScript.
-          const resolved = ts.resolveModuleName(specifier.text, sf.fileName, compilerOptionsForFile(sf.fileName), host, overrides.resolutionCache);
-          const resolvedModule = resolved.resolvedModule;
-          if (resolvedModule === undefined) {
-            unresolvedSpecifierCount++;
-            unresolvedSpecifiers.push(specifier.text);
-          } else {
-            const resolvedFile = resolvedModule.resolvedFileName;
-            const toModule = resolveModuleForFile(resolvedFile);
-            const externalPackage =
-              resolvedModule.isExternalLibraryImport && !isWorkspaceSiblingResolution(resolvedFile, projectRoot)
-                ? (resolvedModule.packageId?.name ?? specifier.text.replace(/^node:/, ""))
-                : undefined;
-            edges.push({
-              fromFile: sf.fileName,
-              fromModule,
-              fromPosition: { line: line + 1, column: character + 1 },
-              specifier: specifier.text,
-              isTypeOnly,
-              isDynamic,
-              resolvedFile,
-              toModule,
-              externalPackage,
-            });
-          }
-        }
+      // Resolved regardless of a leading "." - a bare specifier
+      // (`@internal/a`, `lodash`) is resolved the same way a relative
+      // one is; TS's own resolver already follows a workspace
+      // package's package.json `exports` under nodenext, so the only
+      // thing gating that path before was this project's own code,
+      // not TypeScript.
+      const resolved = ts.resolveModuleName(imp.specifier, fileName, options, host, cache);
+      const resolvedModule = resolved.resolvedModule;
+      if (resolvedModule === undefined) {
+        unresolvedSpecifierCount++;
+        unresolvedSpecifiers.push(imp.specifier);
+        continue;
       }
-
-      ts.forEachChild(node, walk);
-    });
+      const resolvedFile = resolvedModule.resolvedFileName;
+      const toModule = resolveModuleForFile(resolvedFile);
+      const externalPackage =
+        resolvedModule.isExternalLibraryImport && !isWorkspaceSiblingResolution(resolvedFile, projectRoot)
+          ? (resolvedModule.packageId?.name ?? imp.specifier.replace(/^node:/, ""))
+          : undefined;
+      edges.push({
+        fromFile: fileName,
+        fromModule,
+        fromPosition: imp.fromPosition,
+        specifier: imp.specifier,
+        isTypeOnly: imp.isTypeOnly,
+        isDynamic: imp.isDynamic,
+        resolvedFile,
+        toModule,
+        externalPackage,
+      });
+    }
   }
 
   const crossModuleEdges = edges.filter(
     (e) => e.toModule !== undefined && e.toModule !== e.fromModule,
   );
+
+  // Built only on first access to `program`/`checker`, and dropped again
+  // by `releaseProgram` - see this module's own header and the
+  // `ModuleGraph.program`/`releaseProgram` field comments for why.
+  let program: ts.Program | undefined;
+  const ensureProgram = (): ts.Program => {
+    program ??= ts.createProgram({ rootNames, options: compilerOptions, host: overrides.host, oldProgram: overrides.oldProgram });
+    return program;
+  };
 
   return {
     modules,
@@ -882,9 +1005,14 @@ export function buildPreparedGraph(prepared: ReturnType<typeof prepareGraph>, ov
     unresolvedSpecifiers,
     surface,
     rootDir,
-    program,
+    get program() {
+      return ensureProgram();
+    },
     get checker() {
-      return program.getTypeChecker();
+      return ensureProgram().getTypeChecker();
+    },
+    releaseProgram() {
+      program = undefined;
     },
   };
 }
@@ -929,6 +1057,12 @@ export function buildModuleGraphForRules(options: BuildOptions): ModuleGraph {
     const edges: Edge[] = [];
     const outsideFiles: string[] = [];
     for (const file of cached.sourceOrder) {
+      // A file the walk could not read is invisible on a cold build too
+      // (module-graph.ts's own per-file walk: an unreadable file joins
+      // neither a module's own `files` nor `outsideFiles`) - its cache
+      // entry carries no edges either way, but membership must still
+      // skip it to replay that same invisibility, not just its edges.
+      if (cached.files[file]!.unreadable) continue;
       const owner = resolveModuleForFile(file);
       if (owner === undefined) outsideFiles.push(file);
       else modules.get(owner)?.files.push(file);
@@ -939,6 +1073,10 @@ export function buildModuleGraphForRules(options: BuildOptions): ModuleGraph {
       }
     }
     let fullGraph: ModuleGraph | undefined;
+    // Building the full graph just to reach its Program re-walks every
+    // file for edges this branch already has cached - wasteful, but
+    // `program`/`checker` are each still lazy getters on the result, so
+    // that cost is paid only if a caller actually touches one of them.
     const full = () => fullGraph ??= buildModuleGraph(options);
     return { modules, edges, outsideFiles,
       nonTsSourceFileCount: prepared.nonTsSourceFileCount,
@@ -949,15 +1087,27 @@ export function buildModuleGraphForRules(options: BuildOptions): ModuleGraph {
       surface: prepared.surface, rootDir: prepared.rootDir,
       get program() { return full().program; },
       get checker() { return full().checker; },
+      releaseProgram() { fullGraph?.releaseProgram(); fullGraph = undefined; },
     };
   }
   const graph = buildPreparedGraph(prepared);
-  const files: EdgeCache["files"] = Object.fromEntries(rootNames.map((file) => [file, { mtimeMs: mtimes[file]!, edges: [] }]));
+  // Every rootName the walk actually read - the union of every module's
+  // own `files` and `outsideFiles` - never includes a file the host
+  // could not read (buildPreparedGraph's own per-file walk treats that
+  // file as invisible, joining neither list). A rootName missing from
+  // this set gets `unreadable: true` below, so a cache hit can replay
+  // that same invisibility instead of treating a stale cache format's
+  // silent inclusion as membership.
+  const readFiles = new Set([...[...graph.modules.values()].flatMap((m) => m.files), ...graph.outsideFiles]);
+  const files: EdgeCache["files"] = Object.fromEntries(rootNames.map((file) =>
+    [file, { mtimeMs: mtimes[file]!, edges: [], ...(readFiles.has(file) ? {} : { unreadable: true as const }) }]));
   for (const edge of graph.edges) files[edge.fromFile]!.edges.push(edge);
   // Do not label an analysis with mtimes from a concurrent edit.
   if (rootNames.every((file) => existsSync(file) && statSync(file).mtimeMs === mtimes[file])) {
-    writeEdgeCache(path, { schema: 1, tsconfigHash, archstrictVersion: ARCHSTRICT_VERSION, buildOptionsHash, metadata, files,
-      sourceOrder: graph.program.getSourceFiles().map((sf) => sf.fileName).filter((file) => Object.hasOwn(files, file)),
+    // rootNames order (a directory scan) - this write never builds a
+    // Program at all (see buildPreparedGraph's own header for why).
+    writeEdgeCache(path, { schema: 2, tsconfigHash, archstrictVersion: ARCHSTRICT_VERSION, buildOptionsHash, metadata, files,
+      sourceOrder: rootNames.filter((file) => Object.hasOwn(files, file)),
       unsupportedSyntaxCount: graph.unsupportedSyntaxCount, unresolvedSpecifiers: graph.unresolvedSpecifiers });
   }
   return graph;

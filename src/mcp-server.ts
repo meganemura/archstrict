@@ -37,7 +37,7 @@ function stringField(args: Record<string, unknown>, field: string): string {
 
 export function createArchstrictMcpServer(projectRoot: string): Server {
   // One server spans many calls in the same process, unlike a one-shot CLI invocation.
-  // Retain parsed SourceFiles across refresh calls; a new holder per call would lose that reuse.
+  // Retain each file's import records across refresh calls; a new holder per call would lose that reuse.
   const warm = createWarmGraph();
   const server = new Server({ name: "archstrict", version: "0.0.0" }, { capabilities: { tools: {} } });
   server.setRequestHandler(ListToolsRequestSchema, () => ({ tools }));

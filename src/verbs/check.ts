@@ -95,8 +95,24 @@ export type CheckResult = {
   // is in the thousands.
   unresolvedSpecifierBreakdown: { prefix: string; count: number }[];
   unsupportedSyntax: number;
-  typeLeaks: number; // how many type-leak violations rule 6 found — 0 is a result, not silence
-  todo: number; // how many violations were suppressed by a frozen todo entry
+  // How many type-leak violations rule 6 found - 0 means it ran and found
+  // none, a result, not silence. null means rule 6 did not run at all
+  // this call (a `check <file>` scoped to a file that is not any
+  // module's own surface - see check()'s own `skipTypeLeak`): "not
+  // evaluated" is a different fact than "evaluated, found none", and the
+  // two must never share one number.
+  typeLeaks: number | null;
+  // The file named in the `check <file>` call that made `typeLeaks` null,
+  // for formatText's own message - undefined whenever typeLeaks isn't
+  // null (JSON.stringify omits an undefined field, the same convention
+  // an Edge's own optional fields already follow).
+  typeLeaksSkippedFile?: string;
+  // How many violations were suppressed by a frozen todo entry, counting
+  // only the rules that actually ran this call - a rule this call skipped
+  // (rule 6, on a scoped non-surface-file run) contributes 0 here for its
+  // own frozen entries too, since their real status (still a violation,
+  // or fixed) is unknown this run, not "suppressed".
+  todo: number;
   violations: AnyViolation[];
   suggestions: DeprecatedSuggestion[];
   // How many real edges each configured allowDeny/order/point rule
@@ -273,7 +289,20 @@ function unresolvedSpecifierBreakdown(specifiers: string[]): { prefix: string; c
     .map(([prefix, count]) => ({ prefix, count }));
 }
 
-export function runRules(graph: ModuleGraph, config: Config): CheckResult {
+export type RunRulesOptions = {
+  // Set by check() when a `check <file>` run named a file that is not any
+  // module's own surface file: rule 6's own violations are always
+  // reported at a surface-file path (checkTypeLeaks below groups every
+  // finding under `group.path = surfacePath`), so a report scoped to a
+  // non-surface file can never contain one - running it at all would only
+  // force a whole-project ts.Program into existence for a rule whose
+  // answer the scoped report throws away. simulate.ts never sets this: it
+  // has no file scope, and its `before`/`after` diff needs every rule
+  // evaluated on both sides.
+  skipTypeLeak?: boolean;
+};
+
+export function runRules(graph: ModuleGraph, config: Config, options: RunRulesOptions = {}): CheckResult {
   const violations: AnyViolation[] = [
     ...checkPublicSurfaceBypass(graph),
     ...checkCycles(graph, config),
@@ -288,8 +317,12 @@ export function runRules(graph: ModuleGraph, config: Config): CheckResult {
   const deprecated = checkDeprecatedEdges(graph, config);
   violations.push(...deprecated.violations);
 
-  const typeLeaks = checkTypeLeaks(graph);
-  violations.push(...typeLeaks);
+  // null (not 0, not an empty array's own .length) when this rule did not
+  // run: "not evaluated" and "evaluated, found none" are different facts,
+  // and CheckResult.typeLeaks's own comment is the field this distinction
+  // exists for.
+  const typeLeaks = options.skipTypeLeak ? undefined : checkTypeLeaks(graph);
+  if (typeLeaks !== undefined) violations.push(...typeLeaks);
 
   let modulesWithoutSurface = 0;
   for (const m of graph.modules.values()) {
@@ -305,7 +338,7 @@ export function runRules(graph: ModuleGraph, config: Config): CheckResult {
     unresolvedSpecifiers: graph.unresolvedSpecifierCount,
     unresolvedSpecifierBreakdown: unresolvedSpecifierBreakdown(graph.unresolvedSpecifiers),
     unsupportedSyntax: graph.unsupportedSyntaxCount,
-    typeLeaks: typeLeaks.length,
+    typeLeaks: typeLeaks === undefined ? null : typeLeaks.length,
     todo: 0,
     violations,
     suggestions: deprecated.suggestions,
@@ -357,7 +390,19 @@ function isFreezable(v: AnyViolation): v is AnyViolation & { todoModule: string 
 // such a module's todo, which let existing entries sit there unnoticed
 // forever — the same shape packwerk's own `enforce_dependencies: strict`
 // refuses.
-export function applyTodo(graph: ModuleGraph, config: Config, result: CheckResult): CheckResult {
+export type ApplyTodoOptions = {
+  // check() sets this to ["type-leak"] on a `check <file>` run scoped to a
+  // non-surface file, the same run that told runRules to skip rule 6
+  // entirely (RunRulesOptions.skipTypeLeak's own comment). Without this,
+  // every OTHER module's frozen type-leak entries - unrelated to the
+  // scoped file, never evaluated this run - would read as unmatched and
+  // get reported as stale-todo, when their real status (still a leak, or
+  // fixed) is simply unknown this run, not "gone".
+  skipStaleCheckForRules?: readonly string[];
+};
+
+export function applyTodo(graph: ModuleGraph, config: Config, result: CheckResult, options: ApplyTodoOptions = {}): CheckResult {
+  const skipStaleCheckForRules = new Set(options.skipStaleCheckForRules ?? []);
   const strict = new Set(config.strict ?? []);
   const remaining: AnyViolation[] = [];
   const matchedByModule = new Map<string, Set<string>>();
@@ -409,6 +454,7 @@ export function applyTodo(graph: ModuleGraph, config: Config, result: CheckResul
     const matched = matchedByModule.get(name) ?? new Set<string>();
     for (const entry of entries) {
       if (matched.has(entry.fingerprint)) continue;
+      if (skipStaleCheckForRules.has(entry.rule)) continue;
       remaining.push({
         rule: "stale-todo",
         path: module.dir,
@@ -430,6 +476,34 @@ export function hasBlockingViolations(result: CheckResult): boolean {
   return result.violations.some((v) => v.rule !== "config-meaning");
 }
 
+// True when `file` is (a real, existing path to) some module's own
+// surface file - the only kind of path rule 6's own violations are ever
+// reported at (checkTypeLeaks groups every finding under
+// `group.path = surfacePath`). Never forces graph.program: surfaceFiles
+// is plain module metadata, built before anything touches the lazy
+// program/checker getters. A file that does not exist reads as "not a
+// surface file" here (false) rather than throwing - the real, existing
+// ReportError for that case is filterToFile's own, thrown later at its
+// usual point once `focusFile` is given.
+function focusesSurfaceFile(graph: ModuleGraph, file: string): boolean {
+  let target: string;
+  try {
+    target = realpathSync(resolve(file));
+  } catch {
+    return false;
+  }
+  for (const module of graph.modules.values()) {
+    for (const surfacePath of module.surfaceFiles) {
+      try {
+        if (realpathSync(surfacePath) === target) return true;
+      } catch {
+        // A configured surface glob can name a path that doesn't exist yet; not a match either way.
+      }
+    }
+  }
+  return false;
+}
+
 export async function check(projectRoot: string, focusFile?: string, options: CheckOptions = {}): Promise<CheckResult> {
   const configPath = resolve(projectRoot, "archstrict.config.ts");
   const config = await loadConfig(configPath);
@@ -444,9 +518,25 @@ export async function check(projectRoot: string, focusFile?: string, options: Ch
     exclude: config.exclude,
     surface: config.surface,
   });
-  const evaluated = runRules(graph, config);
+  // A `check <file>` scoped to a file that isn't any module's own
+  // surface can never surface a rule-6 violation (filterToFile below
+  // would filter it out regardless) - skip the rule so a whole-project
+  // ts.Program is never built just to throw its answer away. Plain
+  // `check` (no focusFile) always evaluates it.
+  const skipTypeLeak = focusFile !== undefined && !focusesSurfaceFile(graph, focusFile);
+  const evaluated = runRules(graph, config, { skipTypeLeak });
+  // Rule 6 is the last rule that can touch `graph.program`/`graph.checker`
+  // (runRules' own ordering keeps it last) - release it now, right after,
+  // before todo suppression and checkConfigMeaning's own (unrelated) work,
+  // rather than let it sit in memory for the rest of this call for no
+  // further use. A no-op only when rule 6 never ran at all (skipTypeLeak):
+  // when it did run, checkTypeLeaks always reads `graph.program` and
+  // `graph.checker` up front (collectNamedDeclarations's own two
+  // arguments), even for a project with no type-leak-eligible module.
+  graph.releaseProgram();
+  if (skipTypeLeak) evaluated.typeLeaksSkippedFile = focusFile;
   evaluated.violations.push(...await checkConfigMeaning(config, options.prove ?? false, options.prover));
-  const result = applyTodo(graph, config, evaluated);
+  const result = applyTodo(graph, config, evaluated, { skipStaleCheckForRules: skipTypeLeak ? ["type-leak"] : [] });
   return focusFile === undefined ? result : filterToFile(result, focusFile);
 }
 
@@ -494,7 +584,9 @@ export function formatText(result: CheckResult): string {
     lines.push(`  top unresolved prefixes: ${breakdown}`);
   }
   lines.push(`unsupported syntax: ${result.unsupportedSyntax}`);
-  lines.push(`type leaks: ${result.typeLeaks}`);
+  lines.push(result.typeLeaks === null
+    ? `type leaks: not checked (${result.typeLeaksSkippedFile} is not a module surface file)`
+    : `type leaks: ${result.typeLeaks}`);
   lines.push(`todo: ${result.todo}`);
   // A do: line only when there is a concrete next action - a clean
   // check has none, and telling the reader to re-run the command that

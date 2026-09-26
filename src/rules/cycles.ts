@@ -148,19 +148,40 @@ function lopsidedDo(pair: LopsidedPair, rootDir: string): string {
   return `remove the ${pair.minorityEdges.length} import(s) from ${pair.minorityFrom} to ${pair.minorityTo} (${pair.minorityTo} imports ${pair.minorityFrom} ${pair.majorityCount} times, so ${pair.minorityFrom} -> ${pair.minorityTo} is likely the unintended direction): ${fileEdges}`;
 }
 
+// Smaller (fromFile, line, column) wins, by plain code-unit path compare -
+// a total order independent of which edge the walk happened to visit
+// first, so the SAME representative edge is picked for a given (from, to)
+// module pair regardless of walk order (module-graph.ts's own edge build
+// makes no promise about that order - see its own header).
+function isEarlierEdge(a: Edge, b: Edge): boolean {
+  if (a.fromFile !== b.fromFile) return a.fromFile < b.fromFile;
+  if (a.fromPosition.line !== b.fromPosition.line) return a.fromPosition.line < b.fromPosition.line;
+  return a.fromPosition.column < b.fromPosition.column;
+}
+
 function buildAdjacency(graph: ModuleGraph): Map<string, ModuleEdge[]> {
-  const adjacency = new Map<string, ModuleEdge[]>();
-  const seenPairs = new Set<string>();
+  const representativeByPair = new Map<string, { from: string; to: string; edge: Edge }>();
   for (const edge of graph.crossModuleEdges) {
     if (edge.isTypeOnly) continue; // decision above: type-only edges don't count for cycles
     const to = edge.toModule!;
     const pairKey = `${edge.fromModule}->${to}`;
-    if (seenPairs.has(pairKey)) continue; // one representative edge per (from, to) pair is enough
-    seenPairs.add(pairKey);
-    const list = adjacency.get(edge.fromModule) ?? [];
-    list.push({ to, edge });
-    adjacency.set(edge.fromModule, list);
+    const existing = representativeByPair.get(pairKey);
+    if (existing === undefined || isEarlierEdge(edge, existing.edge)) {
+      representativeByPair.set(pairKey, { from: edge.fromModule, to, edge });
+    }
   }
+  const adjacency = new Map<string, ModuleEdge[]>();
+  for (const { from, to, edge } of representativeByPair.values()) {
+    const list = adjacency.get(from) ?? [];
+    list.push({ to, edge });
+    adjacency.set(from, list);
+  }
+  // Sorted by target module name - shortestCycleFrom's own BFS explores
+  // each node's neighbors in this list's order, so a tie between two
+  // equally short paths must also not depend on edge walk order. The
+  // reported cycle (which module, which file, which line) must be the
+  // same every run on the same graph, not an accident of file walk order.
+  for (const list of adjacency.values()) list.sort((a, b) => (a.to < b.to ? -1 : a.to > b.to ? 1 : 0));
   return adjacency;
 }
 

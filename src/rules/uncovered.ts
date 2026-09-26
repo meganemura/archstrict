@@ -57,10 +57,16 @@ export function checkUncoveredModules(
 ): Violation[] {
   const relFiles = graph.outsideFiles.map((file) => toProjectRelativePosix(file, graph.rootDir));
   const groups = suggestUncovered(relFiles, config.declaredModules ?? []);
+  // `graph.outsideFiles` follows the edge build's own walk order (rootNames
+  // order - a directory scan, not a promise about reading order across
+  // files), not a promise about output order - sorted here by path so
+  // this rule's own output stays stable regardless of it.
   return graph.outsideFiles.map((file, i) => {
     const group = groupForRelFile(relFiles[i]!, groups);
     // Every file in `relFiles` was grouped by the same call, so a match
     // always exists - `suggestUncovered` never drops a file it was given.
     return uncoveredViolationFor(file, graph.rootDir, group!);
-  });
+  // Code-unit order (`<`/`>`), not localeCompare: a locale-aware compare
+  // can order the same two paths differently on different machines.
+  }).sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
 }

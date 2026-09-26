@@ -6,13 +6,21 @@ import { randomUUID } from "node:crypto";
 import type { Edge } from "./module-graph.js";
 
 export type EdgeCache = {
-  schema: 1;
+  // sourceOrder is rootNames order (a directory scan), not a Program's
+  // own dependency order - there is no Program on this build's own edge
+  // path. readEdgeCache's own schema check below rejects any other
+  // schema value, forcing a cache miss (and a fresh write) for one.
+  schema: 2;
   tsconfigHash: string;
   archstrictVersion: string;
   buildOptionsHash: string;
   metadata: Record<string, number | null>;
-  files: Record<string, { mtimeMs: number; edges: Edge[] }>;
-  // Program order can differ from directory order, including files with no edges.
+  // `unreadable: true` marks a root file the walk could not read - it
+  // carries no edges (there was nothing to walk), and a replay must
+  // treat it as invisible (joining neither a module's own `files` nor
+  // `outsideFiles`), the same as a cold build's own per-file walk does.
+  files: Record<string, { mtimeMs: number; edges: Edge[]; unreadable?: true }>;
+  // Directory-scan order, including a file with no edges.
   sourceOrder: string[];
   unsupportedSyntaxCount: number;
   unresolvedSpecifiers: string[];
@@ -34,14 +42,15 @@ function isEdge(value: unknown): value is Edge {
 export function readEdgeCache(path: string): EdgeCache | undefined {
   try {
     const value: unknown = JSON.parse(readFileSync(path, "utf8"));
-    if (!record(value) || value.schema !== 1 ||
+    if (!record(value) || value.schema !== 2 ||
         !["tsconfigHash", "archstrictVersion", "buildOptionsHash"].every((k) => typeof value[k] === "string") ||
         !record(value.metadata) || !Object.values(value.metadata).every((n) => n === null || typeof n === "number" && Number.isFinite(n)) ||
         !record(value.files) || !strings(value.sourceOrder) || !strings(value.unresolvedSpecifiers) ||
         !Number.isInteger(value.unsupportedSyntaxCount) || Number(value.unsupportedSyntaxCount) < 0) return undefined;
     for (const [file, entry] of Object.entries(value.files)) {
       if (!record(entry) || typeof entry.mtimeMs !== "number" || !Number.isFinite(entry.mtimeMs) ||
-          !Array.isArray(entry.edges) || !entry.edges.every((edge) => isEdge(edge) && edge.fromFile === file)) return undefined;
+          !Array.isArray(entry.edges) || !entry.edges.every((edge) => isEdge(edge) && edge.fromFile === file) ||
+          (entry.unreadable !== undefined && entry.unreadable !== true)) return undefined;
     }
     if (value.sourceOrder.length !== Object.keys(value.files).length ||
         new Set(value.sourceOrder).size !== value.sourceOrder.length ||

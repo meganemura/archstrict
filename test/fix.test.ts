@@ -8,6 +8,16 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSyn
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
+// A real ES module namespace object's own exports are read-only -
+// vi.spyOn cannot redefine `ts.createSourceFile` directly. Only this
+// file's one test that needs to observe parse calls uses the spy this
+// mock installs; every other call here still runs the real
+// implementation, unchanged.
+vi.mock("typescript", async (importOriginal) => {
+  const actual = await importOriginal<{ default: typeof ts }>();
+  return { ...actual, default: { ...actual.default,
+    createSourceFile: vi.fn((...args: Parameters<typeof ts.createSourceFile>) => actual.default.createSourceFile(...args)) } };
+});
 import { fix, formatFixText, type FixResult } from "../src/verbs/fix.js";
 import { check } from "../src/verbs/check.js";
 import * as writes from "../src/verbs/agents.js";
@@ -70,7 +80,14 @@ test("names and specifiers are grouped and sorted before appending", () => proje
   expect(readFileSync(surface, "utf8")).toBe(before + lines.join("\n") + "\n");
 }));
 
-test("multiple surfaces share one warm core and preserve unchanged SourceFile identity", () => project(async ({ root, put }) => {
+// One warm core spans every refresh fix() makes across two surfaces' own
+// fixes (createWarmGraph called once), and re-parses only what actually
+// changed on disk between refreshes - never the unrelated, untouched
+// internal.ts, whose own parsed import list warm-graph.ts's own per-file
+// cache reuses by mtime (see warm-graph.ts's own header: it holds that
+// small, syntactic cache and nothing else - no ts.Program, no parsed AST,
+// across refresh calls).
+test("multiple surfaces share one warm core and reuse the unchanged file's own parsed imports", () => project(async ({ root, put }) => {
   put("src/other/internal.ts", 'export interface Other { value: number }\nexport function other(): Other { return { value: 1 }; }');
   put("src/other/index.ts", 'export { other } from "./internal.js";\n');
   const original = warmGraphs.createWarmGraph;
@@ -79,17 +96,24 @@ test("multiple surfaces share one warm core and preserve unchanged SourceFile id
     const warm = original();
     return { refresh(options) { const graph = warm.refresh(options); refreshes.push(graph); return graph; } };
   });
-  const cold = vi.spyOn(graphs, "buildModuleGraph");
+  const internal = join(root, "src/app/internal.ts");
+  const parses = vi.mocked(ts.createSourceFile);
   const result = await fix(root);
   expect(result.fixed).toHaveLength(2);
   expect(result.reverted).toEqual([]);
   expect(factory).toHaveBeenCalledTimes(1);
-  expect(cold).toHaveBeenCalledTimes(1);
   expect(refreshes).toHaveLength(3);
-  const internal = join(root, "src/app/internal.ts");
-  expect(refreshes[0]!.program.getSourceFile(internal)).toBeDefined();
-  expect(refreshes[1]!.program.getSourceFile(internal)).toBe(refreshes[0]!.program.getSourceFile(internal));
-  expect(refreshes[2]!.program.getSourceFile(internal)).toBe(refreshes[0]!.program.getSourceFile(internal));
+  // This spy only sees archstrict's own per-file edge walk (the exported
+  // `ts.createSourceFile` binding this mock replaces): internal.ts never
+  // changes across the whole run, so that walk parses it once, on the
+  // first refresh, and reuses the cached record on the other two. Rule 6
+  // (type-leak) still forces a fresh ts.Program on every refresh here (no
+  // oldProgram is held across calls - warm-graph.ts's own header), and
+  // that Program reparses every file, internal.ts included, through
+  // TypeScript's own internal parsing path each time - a cost this spy
+  // cannot see, because it never calls back through this exported
+  // binding.
+  expect(parses.mock.calls.filter(call => call[0] === internal)).toHaveLength(1);
 }));
 
 test("same-name declarations block the whole file before any write", () => project(async ({ root, put, surface }) => {

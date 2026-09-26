@@ -160,6 +160,19 @@ export function isExemptedByGlobPair(
   );
 }
 
+// `graph.edges` follows the edge build's own walk order (rootNames order -
+// a directory scan, not a promise about reading order across files), not
+// a promise about output order - checkAllowDeny/checkOrder/checkPoint
+// (not their own compute* helpers, which return each match's own
+// ruleIndex/coverage bookkeeping alongside it, order and all) sort by
+// this before returning their own violations, so that output stays
+// stable regardless of it. Code-unit order (`<`/`>`), not localeCompare:
+// a locale-aware compare can order the same two paths differently on
+// different machines.
+function byPosition<T extends { path: string; line: number; column: number }>(a: T, b: T): number {
+  return (a.path < b.path ? -1 : a.path > b.path ? 1 : 0) || a.line - b.line || a.column - b.column;
+}
+
 export type AllowDenyMatch = { violation: ConstraintViolation; edge: Edge; ruleIndex: number; violatingTag: string };
 
 export function computeAllowDeny(
@@ -262,7 +275,7 @@ export function checkAllowDeny(graph: ModuleGraph, config: Config): ConstraintVi
   return computeAllowDeny(graph, config).matches.map(match => {
     const moves = computeMoves(match.violation, graph, config, match);
     return moves?.length ? { ...match.violation, moves } : match.violation;
-  });
+  }).sort(byPosition);
 }
 
 // Two different things, confirmed distinct by running against Prisma's own
@@ -364,7 +377,7 @@ function computeOrder(
 }
 
 export function checkOrder(graph: ModuleGraph, config: Config): ConstraintViolation[] {
-  return computeOrder(graph, config).violations;
+  return computeOrder(graph, config).violations.sort(byPosition);
 }
 
 // Unlike allowDeny/order (which have an "applicable but allowed" middle
@@ -423,7 +436,7 @@ function computePoint(
 }
 
 export function checkPoint(graph: ModuleGraph, config: Config): ConstraintViolation[] {
-  return computePoint(graph, config).violations;
+  return computePoint(graph, config).violations.sort(byPosition);
 }
 
 export function checkConstraints(graph: ModuleGraph, config: Config): ConstraintViolation[] {

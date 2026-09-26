@@ -33,7 +33,11 @@ export function checkMustBeEmpty(files: readonly string[], config: Pick<Config, 
   const violations: Violation[] = [];
   for (const entry of entries) {
     const glob = compileGlob(entry.glob);
-    for (const file of files) {
+    // `files` is not a promise about order (module membership is built
+    // walking rootNames order - a directory scan, not a promise about
+    // reading order across files) - sorted here so two files matching the
+    // same entry come out in a stable order regardless of it.
+    for (const file of [...files].sort()) {
       if (!glob.test(file)) continue;
       violations.push({
         rule: "must-be-empty",

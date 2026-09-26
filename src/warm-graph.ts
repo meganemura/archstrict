@@ -1,66 +1,74 @@
-// Responsibility: reuse parsed and bound SourceFiles while resolving every import afresh on each refresh.
-// An unchanged importer can lose a target, gain a previously missing target, or resolve to a new preferred target.
-// SourceFile identity therefore cannot establish that its resolved edges are still correct.
-// Boundary: no process, socket, daemon, or CLI integration; this object holds no resolved edges.
-// Reuse does not establish the cost of type queries or end-to-end checks.
+// Responsibility: across repeated refresh calls in one long-lived process
+// (the MCP server's check tool, and fix's apply-and-recheck loop), skip re-parsing a file whose
+// content hasn't changed while resolving every specifier afresh - a
+// resolution answer can go stale even when the importing file itself has
+// not (an unrelated file elsewhere gaining, losing, or reordering a
+// preferred target).
+// Boundary: no process, socket, daemon, or CLI integration; this object
+// holds no resolved edges, no ts.Program, and no parsed AST of any kind
+// across calls - only each file's own small, syntactic import list. A
+// refresh whose graph a caller then asks for `program`/`checker` (an MCP
+// `check` call, unless it is scoped to a non-surface file; also search,
+// fix)
+// builds a whole-project ts.Program fresh, every time, and drops it again
+// at the end of that one refresh - a real, paid cost each time rule 6
+// runs, kept bounded (module-graph.ts's own header: a whole-project
+// Program's own parsed SourceFile/Node trees are what dominate memory on
+// a large codebase) by never carrying that Program into the next refresh.
 import ts from "typescript";
 import { statSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { buildModuleGraph, buildPreparedGraph, prepareGraph, graphBuildFingerprint,
-  type BuildOptions, type ModuleGraph } from "./module-graph.js";
+import { buildPreparedGraph, prepareGraph, graphBuildFingerprint, scriptKindForFile, walkFileImports,
+  type BuildOptions, type FileImportWalk, type ModuleGraph } from "./module-graph.js";
 
 function mtime(path: string): number | undefined {
   try { return statSync(path).mtimeMs; }
   catch { return undefined; }
 }
 
-function cachingHost(program: ts.Program): ts.CompilerHost {
-  const host = ts.createCompilerHost(program.getCompilerOptions());
-  const cache = new Map<string, { mtimeMs: number; sourceFile: ts.SourceFile }>();
-  for (const sourceFile of program.getSourceFiles()) {
-    const mtimeMs = mtime(sourceFile.fileName);
-    if (mtimeMs !== undefined) cache.set(resolve(sourceFile.fileName), { mtimeMs, sourceFile });
-  }
-  const getSourceFile = host.getSourceFile.bind(host);
-  // The absolute path identifies the file; mtimeMs detects content changes without a read or hash of its contents.
-  // A missing mtime cannot validate cached content. The underlying host must handle a deleted or inaccessible file with its normal behavior.
-  host.getSourceFile = (fileName, ...args) => {
-    const path = resolve(fileName);
-    const mtimeMs = mtime(path);
-    if (mtimeMs === undefined) return getSourceFile(fileName, ...args);
-    const cached = cache.get(path);
-    if (cached?.mtimeMs === mtimeMs) return cached.sourceFile;
-    const sourceFile = getSourceFile(fileName, ...args);
-    if (sourceFile !== undefined) cache.set(path, { mtimeMs, sourceFile });
-    return sourceFile;
-  };
-  return host;
-}
-
 export function createWarmGraph(): { refresh(options: BuildOptions): ModuleGraph } {
-  let held: { host: ts.CompilerHost; program: ts.Program; options: BuildOptions; fingerprint: string } | undefined;
+  // Keyed by absolute file path; holds the file's own syntactic import
+  // list (never its AST - see this module's own header) plus the mtime
+  // it was parsed at. A cache hit skips ts.createSourceFile and the
+  // import walk entirely; resolution still runs for every import record,
+  // hit or miss (module-graph.ts's own buildPreparedGraph does that part,
+  // outside this cache).
+  const cache = new Map<string, { mtimeMs: number; walk: FileImportWalk }>();
+  let fingerprint: string | undefined;
   return {
     refresh(options) {
       const prepared = prepareGraph(options);
       // The CLI reads config afresh before each edge-cache lookup. This holder instead retains state across refresh calls.
       // The config mtime therefore provides a separate signal that the architecture config changed since the previous refresh.
-      const fingerprint = JSON.stringify({ ...graphBuildFingerprint(options, prepared),
+      const currentFingerprint = JSON.stringify({ ...graphBuildFingerprint(options, prepared),
         configMtime: mtime(join(prepared.projectRoot, "archstrict.config.ts")) });
-      // A changed fingerprint can mean new compiler options, package metadata, or module declarations, so the old host's assumptions are no longer valid.
-      // Discard that host rather than patch it. Seed a new host from the cold Program to reuse only the newly established state.
-      if (held === undefined || held.fingerprint !== fingerprint) {
-        held = undefined;
-        const graph = buildModuleGraph(options);
-        held = { host: cachingHost(graph.program), program: graph.program, options, fingerprint };
-        return graph;
+      // A changed fingerprint can mean new compiler options or package
+      // metadata - a parse cached under the old options (module kind,
+      // jsx setting, ...) is not safe to reuse under the new ones.
+      if (fingerprint !== currentFingerprint) {
+        cache.clear();
+        fingerprint = currentFingerprint;
       }
-      // An importer can keep the same SourceFile while its target disappears, becomes available, or gives way to a preferred target.
-      // Parsed source reuse remains valid, but a held resolution answer can become stale. A fresh cache prevents that error on every refresh.
-      const resolutionCache = ts.createModuleResolutionCache(prepared.projectRoot,
-        held.host.getCanonicalFileName.bind(held.host), prepared.compilerOptions);
-      const graph = buildPreparedGraph(prepared, { host: held.host, oldProgram: held.program, resolutionCache });
-      held = { ...held, program: graph.program, options };
-      return graph;
+      const host = ts.createCompilerHost(prepared.compilerOptions);
+      const languageVersion = prepared.compilerOptions.target ?? ts.ScriptTarget.ESNext;
+      const fileWalk = (fileName: string): FileImportWalk | undefined => {
+        const path = resolve(fileName);
+        const mtimeMs = mtime(path);
+        if (mtimeMs === undefined) return undefined;
+        const cached = cache.get(path);
+        if (cached?.mtimeMs === mtimeMs) return cached.walk;
+        const text = host.readFile(fileName);
+        if (text === undefined) return undefined;
+        const sf = ts.createSourceFile(fileName, text, languageVersion, false, scriptKindForFile(fileName));
+        const walk = walkFileImports(sf);
+        cache.set(path, { mtimeMs, walk });
+        return walk;
+      };
+      // No oldProgram, no held host reused as a Program-building host
+      // across calls: this refresh's graph builds its own Program (if
+      // anything asks for `program`/`checker` at all) from scratch, and
+      // that Program is this refresh's own business alone.
+      return buildPreparedGraph(prepared, { host, fileWalk });
     },
   };
 }

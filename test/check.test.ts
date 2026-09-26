@@ -1,6 +1,7 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import * as hegel from "@hegeldev/hegel";
 import * as gen from "@hegeldev/hegel/generators";
+import ts from "typescript";
 import { assertEdgesShapeValid } from "../src/config.js";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -8,6 +9,16 @@ import { join } from "node:path";
 import { init } from "../src/verbs/init.js";
 import { check, formatText, loadConfig } from "../src/verbs/check.js";
 import { ReportError } from "../src/report-error.js";
+
+// A real ES module namespace object's own exports are read-only -
+// vi.spyOn cannot redefine `ts.createProgram` directly. Every call here
+// still runs the real implementation; only the two "check <file>"
+// Program tests below actually inspect the spy.
+vi.mock("typescript", async (importOriginal) => {
+  const actual = await importOriginal<{ default: typeof ts }>();
+  return { ...actual, default: { ...actual.default,
+    createProgram: vi.fn((options: ts.CreateProgramOptions) => actual.default.createProgram(options)) } };
+});
 
 function withTempProject(fn: (root: string) => void | Promise<void>): Promise<void> {
   const root = mkdtempSync(join(tmpdir(), "archstrict-check-"));
@@ -697,6 +708,60 @@ describe("check", () => {
       // disagree with `root` as mkdtempSync returned it) - compare against
       // the same realpath'd form the violation itself now always carries.
       expect(focused.violations[0]!.path).toBe(realpathSync(join(root, "src", "app", "a.ts")));
+    });
+  });
+
+  // Rule 6 (type-leak)'s own violations are always reported at a surface
+  // file's own path (checkTypeLeaks groups every finding under
+  // `group.path = surfacePath`) - a `check <file>` scoped to a file that
+  // is not any module's own surface can never contain one, so running the
+  // rule at all would only build a whole-project ts.Program to throw its
+  // answer away.
+  test("check <non-surface file> never builds a ts.Program", async () => {
+    await withTempProject(async (root) => {
+      mkdirSync(join(root, "src", "leaky"), { recursive: true });
+      mkdirSync(join(root, "src", "app"), { recursive: true });
+      writeFileSync(
+        join(root, "src", "leaky", "internal.ts"),
+        'export interface Hidden { value: string }\nexport function make(): Hidden { return { value: "x" }; }\n',
+      );
+      writeFileSync(join(root, "src", "leaky", "index.ts"), 'export { make } from "./internal.js";\n');
+      writeFileSync(join(root, "src", "app", "a.ts"), "export const a = 1;\n");
+      await init(root);
+
+      vi.mocked(ts.createProgram).mockClear();
+      const focus = join(root, "src", "app", "a.ts");
+      const result = await check(root, focus);
+      expect(ts.createProgram).not.toHaveBeenCalled();
+      expect(result.violations.some((v) => v.rule === "type-leak")).toBe(false);
+      // Pinned: null (not 0) means rule 6 did not run at all this call -
+      // "not evaluated" is a different fact than "evaluated, found none".
+      expect(result.typeLeaks).toBeNull();
+      expect(result.typeLeaksSkippedFile).toBe(focus);
+      expect(formatText(result)).toContain(`type leaks: not checked (${focus} is not a module surface file)`);
+    });
+  });
+
+  test("check <surface file> still builds a ts.Program and reports its own type leak", async () => {
+    await withTempProject(async (root) => {
+      mkdirSync(join(root, "src", "leaky"), { recursive: true });
+      writeFileSync(
+        join(root, "src", "leaky", "internal.ts"),
+        'export interface Hidden { value: string }\nexport function make(): Hidden { return { value: "x" }; }\n',
+      );
+      writeFileSync(join(root, "src", "leaky", "index.ts"), 'export { make } from "./internal.js";\n');
+      await init(root);
+
+      vi.mocked(ts.createProgram).mockClear();
+      const result = await check(root, join(root, "src", "leaky", "index.ts"));
+      expect(ts.createProgram).toHaveBeenCalled();
+      const leak = result.violations.find((v) => v.rule === "type-leak");
+      expect(leak).toBeDefined();
+      expect(leak!.evidence).toContain("Hidden");
+      // Evaluated, found one - a real number, not null.
+      expect(result.typeLeaks).toBe(1);
+      expect(result.typeLeaksSkippedFile).toBeUndefined();
+      expect(formatText(result)).toContain("type leaks: 1");
     });
   });
 

@@ -71,7 +71,15 @@ export function checkPublicSurfaceBypass(graph: ModuleGraph): Violation[] {
       ),
     );
   }
-  return violations;
+  // `graph.crossModuleEdges` follows the edge build's own walk order
+  // (rootNames order - a directory scan, not a promise about reading
+  // order across files), not a promise about output order - sorted here
+  // so this rule's own output stays stable regardless of it, by the same
+  // (path, line, column) a reader would scan a file top to bottom.
+  // Code-unit order (`<`/`>`), not localeCompare: a locale-aware compare
+  // can order the same two paths differently on different machines.
+  return violations.sort((a, b) =>
+    (a.path < b.path ? -1 : a.path > b.path ? 1 : 0) || a.line - b.line || a.column - b.column);
 }
 
 function violationFor(
