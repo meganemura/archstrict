@@ -13,7 +13,14 @@ export type SearchMatch = {
   signature: string;
   score: number;
 };
-export type SearchResult = { query: string; total: number; shown: number; matches: SearchMatch[] };
+export type SearchResult = {
+  query: string; total: number; shown: number; matches: SearchMatch[];
+  // Set only when rule 6's own closure Program (type-closure.ts) had to
+  // fall back to the whole-project Program for this call - the same
+  // shape and the same convention `check`'s own `notes` follows
+  // (undefined, never an empty array, on every ordinary run).
+  notes?: string[];
+};
 
 // Punctuation alone leaves JSONConfig as one token. These transitions separate
 // lowercase from uppercase and an acronym from the next word without splitting its letters.
@@ -101,11 +108,13 @@ export async function search(projectRoot: string, query: string): Promise<Search
   // Search presents the best ranked matches with a visible total count.
   // A top-K limit serves that query; recommend instead reports its whole candidate set.
   const shown = matches.slice(0, 20);
-  return { query, total: matches.length, shown: shown.length, matches: shown };
+  const notes = graph.programNotes;
+  return { query, total: matches.length, shown: shown.length, matches: shown, ...(notes.length > 0 ? { notes: [...notes] } : {}) };
 }
 
 export function formatSearchText(result: SearchResult): string {
   return [`${result.total} matches for "${result.query}" (showing ${result.shown})`,
     ...result.matches.map(match => `${match.module} :: ${match.name} (${match.kind}) - ${match.signature}  [score ${match.score.toFixed(2)}]`),
+    ...(result.notes ?? []).map(note => `note: ${note}`),
   ].join("\n") + "\n";
 }

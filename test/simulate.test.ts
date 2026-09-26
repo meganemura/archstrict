@@ -150,17 +150,31 @@ test("deleting a target removes the real edge and its public-surface violation",
 
 test("creation in a new directory becomes a root and reports its new violation", () => project(async (root, parent) => {
   const { result, simulated } = await compareCold(root, parent, [{ path: "src/new/deep/file.ts", content: "export {};" }]);
-  expect(simulated.program.getRootFileNames()).toContain(join(root, "src/new/deep/file.ts"));
+  // rule 6's own Program is the type closure (type-closure.ts), not
+  // every analyzed file - this plain, unreferenced file (no surface, no
+  // type reference into it, no ambient body) is correctly outside that
+  // closure. "Became a root" is checked the way the edge walk itself
+  // reports it instead: a real file the scan reached that matches no
+  // declared module, exactly what makes it an uncovered-module violation
+  // below.
+  expect(simulated.outsideFiles).toContain(join(root, "src/new/deep/file.ts"));
   expect(result.added.some(v => v.rule === "uncovered-module")).toBe(true);
   expect(existsSync(join(root, "src/new"))).toBe(false);
 }));
 
-test("imported non-root declarations use overlay text without becoming roots", () => project(async (root, parent) => {
+test("an imported declaration file's overlay text reaches the closure Program", () => project(async (root, parent) => {
   put(root, "src/a/index.ts", 'import type { Hidden } from "./types.js"; export const value: Hidden = { value: 1 };');
   put(root, "src/a/types.d.ts", "export interface Hidden { value: number }");
   const content = "export interface Hidden { value: number; optional?: string }";
   const { simulated } = await compareCold(root, parent, [{ path: "src/a/types.d.ts", content }]);
-  expect(simulated.program.getRootFileNames()).not.toContain(join(root, "src/a/types.d.ts"));
+  // types.d.ts is never in rootNames (a hand-authored .d.ts is excluded
+  // from analysis by default), yet Hidden is referenced by an explicit
+  // type annotation on a declaration this surface exports - the closure
+  // reaches it and must give it its own explicit Program root (unlike a
+  // whole-project Program, `noResolve: true` means nothing enters the
+  // Program by resolution alone). Its overlay text must still be the one
+  // this check actually cares about.
+  expect(simulated.program.getRootFileNames()).toContain(join(root, "src/a/types.d.ts"));
   expect(simulated.program.getSourceFile(join(root, "src/a/types.d.ts"))!.text).toBe(content);
 }));
 
@@ -264,7 +278,12 @@ test("generated change sets preserve cold graph facts and full rule results", as
     expect(simulated.modules.get("surface")!.surfaceFiles).toContain(join(root, "src/surface/index.ts"));
     expect(simulated.program.getRootFileNames()).not.toContain(join(root, "src/excluded/new.ts"));
     expect(simulated.program.getRootFileNames()).not.toContain(join(root, "src/non-surface.d.ts"));
-    expect(simulated.program.getRootFileNames()).toContain(join(root, "src/a/new/deep/file.ts"));
+    // watch.ts's own bare `import "./new/deep/file.js"` is a side-effect
+    // import with no binding at all, and nothing else references this new
+    // file - rule 6's own type closure correctly never reaches it, so
+    // "became a root" is checked the way the edge walk itself reports it:
+    // a real file the scan reached and attributed to module a.
+    expect(simulated.modules.get("a")!.files).toContain(join(root, "src/a/new/deep/file.ts"));
     expect(simulated.modules.get("doomed")!.files).toEqual([]);
     counts.cases++; counts.surface++; counts.excluded += 2; counts.newDirectory++; counts.lastFile++; counts.modified++;
   }), { testCases: 20 });

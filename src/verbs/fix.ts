@@ -15,6 +15,11 @@ export type FixResult = {
   planned: { path: string; lines: string[] }[];
   unfixable: { path: string; type: string; reason: string }[];
   reverted: { path: string; reason: string }[];
+  // Set only when rule 6's own closure Program (type-closure.ts) had to
+  // fall back to the whole-project Program on any refresh this call
+  // made - the same shape and the same convention `check`'s own `notes`
+  // follows (undefined, never an empty array, on every ordinary run).
+  notes?: string[];
 };
 
 // A bare interface or type can leak through an inferred return type without its declaring file ever exporting it.
@@ -36,7 +41,12 @@ export async function fix(projectRoot: string, file?: string, dryRun = false): P
   const options = { projectRoot, declaredModules: config.declaredModules!, exclude: config.exclude, surface: config.surface };
   const warm = createWarmGraph();
   let graph = warm.refresh(options);
-  const evaluate = () => applyTodo(graph, config, runRules(graph, config));
+  const notesSeen = new Set<string>();
+  const evaluate = () => {
+    const evaluated = applyTodo(graph, config, runRules(graph, config));
+    for (const note of graph.programNotes) notesSeen.add(note);
+    return evaluated;
+  };
   const baseline = evaluate();
   const baselineKeys = new Set(baseline.violations.map(fingerprintOf));
   const scoped = focus === undefined ? baseline : filterToFile(baseline, focus);
@@ -137,6 +147,7 @@ export async function fix(projectRoot: string, file?: string, dryRun = false): P
       result.fixed.push({ path, lines });
     }
   }
+  if (notesSeen.size > 0) result.notes = [...notesSeen];
   return result;
 }
 
@@ -148,5 +159,6 @@ export function formatFixText(result: FixResult): string {
   for (const entry of result.unfixable) lines.push(`unfixable: ${entry.path} (${entry.type}): ${entry.reason}`);
   for (const entry of result.reverted) lines.push(`reverted: ${entry.path}: ${entry.reason}`);
   lines.push(`fixed: ${result.fixed.length}; planned: ${result.planned.length}; unfixable: ${result.unfixable.length}; reverted: ${result.reverted.length}`);
+  for (const note of result.notes ?? []) lines.push(`note: ${note}`);
   return lines.join("\n") + "\n";
 }

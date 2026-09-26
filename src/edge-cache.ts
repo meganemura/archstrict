@@ -13,6 +13,13 @@ export type EdgeCache = {
   // Schema 3 caches hold an edge for each `import("./x").Y` in type
   // position. A schema 2 cache has none of those edges, so reading one
   // would silently under-report them.
+  //
+  // A cache hit's own program/checker still delegates to a fresh,
+  // uncached rebuild (module-graph.ts's own `buildModuleGraphForRules`),
+  // so this cache does not carry `isScript`/`hasAmbientDeclarations`
+  // (walkFileImports' own two flags, read only by that fresh rebuild's
+  // own closure) - storing them here would answer a question the cache
+  // hit path never asks.
   schema: 3;
   tsconfigHash: string;
   archstrictVersion: string;

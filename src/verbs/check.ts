@@ -123,6 +123,13 @@ export type CheckResult = {
   // the graph, the same gap that made a genuinely vacuous rule look
   // identical to a clean pass in real use.
   edgeRuleCoverage: EdgeRuleCoverage[];
+  // Set only when rule 6's own closure Program (type-closure.ts) had to
+  // fall back to the whole-project Program this call - undefined on every
+  // ordinary run (JSON.stringify omits it then, the same convention
+  // `typeLeaksSkippedFile` follows), never silently: rule 6's own findings
+  // are still real either way, but a fallback run costs far more memory
+  // than the closure this tool is built to keep bounded.
+  notes?: string[];
 };
 
 // declaredModules replaces modules/kinds as the required field, the same
@@ -525,6 +532,11 @@ export async function check(projectRoot: string, focusFile?: string, options: Ch
   // `check` (no focusFile) always evaluates it.
   const skipTypeLeak = focusFile !== undefined && !focusesSurfaceFile(graph, focusFile);
   const evaluated = runRules(graph, config, { skipTypeLeak });
+  // Read before releasing below - `releaseProgram` clears it back to
+  // empty along with the Program itself, since a later access on this
+  // same graph would build a fresh one and might not need the fallback a
+  // first build did.
+  const programNotes = graph.programNotes;
   // Rule 6 is the last rule that can touch `graph.program`/`graph.checker`
   // (runRules' own ordering keeps it last) - release it now, right after,
   // before todo suppression and checkConfigMeaning's own (unrelated) work,
@@ -535,6 +547,7 @@ export async function check(projectRoot: string, focusFile?: string, options: Ch
   // arguments), even for a project with no type-leak-eligible module.
   graph.releaseProgram();
   if (skipTypeLeak) evaluated.typeLeaksSkippedFile = focusFile;
+  if (programNotes.length > 0) evaluated.notes = [...programNotes];
   evaluated.violations.push(...await checkConfigMeaning(config, options.prove ?? false, options.prover));
   const result = applyTodo(graph, config, evaluated, { skipStaleCheckForRules: skipTypeLeak ? ["type-leak"] : [] });
   return focusFile === undefined ? result : filterToFile(result, focusFile);
@@ -588,6 +601,7 @@ export function formatText(result: CheckResult): string {
     ? `type leaks: not checked (${result.typeLeaksSkippedFile} is not a module surface file)`
     : `type leaks: ${result.typeLeaks}`);
   lines.push(`todo: ${result.todo}`);
+  for (const note of result.notes ?? []) lines.push(`note: ${note}`);
   // A do: line only when there is a concrete next action - a clean
   // check has none, and telling the reader to re-run the command that
   // just produced this clean result is circular, unlike every other

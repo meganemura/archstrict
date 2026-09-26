@@ -103,17 +103,21 @@ test("multiple surfaces share one warm core and reuse the unchanged file's own p
   expect(result.reverted).toEqual([]);
   expect(factory).toHaveBeenCalledTimes(1);
   expect(refreshes).toHaveLength(3);
-  // This spy only sees archstrict's own per-file edge walk (the exported
-  // `ts.createSourceFile` binding this mock replaces): internal.ts never
-  // changes across the whole run, so that walk parses it once, on the
-  // first refresh, and reuses the cached record on the other two. Rule 6
-  // (type-leak) still forces a fresh ts.Program on every refresh here (no
-  // oldProgram is held across calls - warm-graph.ts's own header), and
-  // that Program reparses every file, internal.ts included, through
-  // TypeScript's own internal parsing path each time - a cost this spy
-  // cannot see, because it never calls back through this exported
-  // binding.
-  expect(parses.mock.calls.filter(call => call[0] === internal)).toHaveLength(1);
+  // This spy sees two different callers of the exported
+  // `ts.createSourceFile` binding it replaces. archstrict's own per-file
+  // edge walk parses internal.ts once, on the first refresh, and reuses
+  // the cached record on the other two (internal.ts never changes across
+  // the whole run) - that alone would be 1 call. Rule 6 (type-leak)'s own
+  // type closure (type-closure.ts) is rebuilt from scratch on every
+  // refresh here (no cross-refresh cache for it - each warm.refresh call
+  // returns a brand new ModuleGraph, with its own fresh closure), and it
+  // reaches internal.ts on every one of the 3 refreshes (make -> internal.ts,
+  // via src/app/index.ts's own re-export) through this SAME exported
+  // binding, since it parses with the public ts.createSourceFile API, not
+  // through the checker's own internal parsing path a Program's later
+  // build uses for a file already in the closure. 1 (edge walk) + 3
+  // (closure, once per refresh) = 4.
+  expect(parses.mock.calls.filter(call => call[0] === internal)).toHaveLength(4);
 }));
 
 test("same-name declarations block the whole file before any write", () => project(async ({ root, put, surface }) => {

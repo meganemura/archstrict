@@ -37,17 +37,63 @@ function declaredIn(symbol: ts.Symbol): string | undefined {
   return symbol.getDeclarations()?.[0]?.getSourceFile().fileName;
 }
 
+// TypeScript's own sentinel for "this alias could not be resolved to a
+// real symbol" (its internal `unknownSymbol`) - not a project symbol at
+// all: name "unknown", no declarations, reached whenever
+// `getAliasedSymbol` runs out of a real target to point to (measured
+// directly against a broken import). Detected by shape, since the public
+// API exposes no dedicated flag for it.
+function isUnresolvedAliasTarget(symbol: ts.Symbol): boolean {
+  return symbol.name === "unknown" && symbol.getDeclarations() === undefined;
+}
+
+// A module specifier and the file it was written in, recovered by
+// walking up from an unresolved alias's own declaration (an
+// ImportSpecifier, a NamespaceImport, or similar) to its nearest
+// import/export declaration - the same two values module-graph.ts's own
+// edge records are keyed by, so a caller can map this straight to a
+// resolved file without resolving the specifier itself again.
+function specifierOf(symbol: ts.Symbol): { file: string; specifier: string } | undefined {
+  let node: ts.Node | undefined = symbol.getDeclarations()?.[0];
+  const declaration = node;
+  if (declaration === undefined) return undefined;
+  while (node !== undefined && !ts.isImportDeclaration(node) && !ts.isExportDeclaration(node)) node = node.parent;
+  if (node === undefined || node.moduleSpecifier === undefined || !ts.isStringLiteral(node.moduleSpecifier)) return undefined;
+  return { file: declaration.getSourceFile().fileName, specifier: node.moduleSpecifier.text };
+}
+
+// The seam module-graph.ts's own closure Program (type-closure.ts) reads
+// through `checkTypeLeaks`'s own options below: rule 6 is the only code
+// that already walks every alias a surface (or an internal declaration)
+// depends on, so its own resolution failures are reported back here
+// instead of duplicating that walk in module-graph.ts. An unresolved
+// alias names the specifier it failed to resolve, from an
+// ImportSpecifier/ExportSpecifier declaration - module-graph.ts's own
+// edge records already know exactly which file that specifier resolves
+// to. Boundary: this reports a fact about a real resolution failure - it
+// decides nothing about the closure, the round bound, or the fallback;
+// module-graph.ts's own `ensureProgram` owns all of that.
+export type UnresolvedReference = { file: string; specifier: string };
+export type ReportUnresolvedReference = (ref: UnresolvedReference) => void;
+
+function reportIfUnresolved(symbol: ts.Symbol, target: ts.Symbol, report: ReportUnresolvedReference | undefined): void {
+  if (report === undefined || !isUnresolvedAliasTarget(target)) return;
+  const ref = specifierOf(symbol);
+  if (ref !== undefined) report(ref);
+}
+
 // A re-export's own alias (`export { X as Y } from "./z.js"`, and a chain
 // of those across several files - `verbs/index.ts` re-exporting a type
 // `rules/index.ts` itself re-exported) is unwrapped one hop at a time by
 // `getAliasedSymbol` - looping here follows the chain all the way to the
 // symbol whose own declarations are the real, original ones, which is
 // what `isInternal` below needs to compare against.
-function resolveAlias(checker: ts.TypeChecker, symbol: ts.Symbol): ts.Symbol {
+function resolveAlias(checker: ts.TypeChecker, symbol: ts.Symbol, report?: ReportUnresolvedReference): ts.Symbol {
   let current = symbol;
   while (current.flags & ts.SymbolFlags.Alias) {
     const next = checker.getAliasedSymbol(current);
     if (next === current) break; // defensive: an unresolvable alias must not loop forever
+    reportIfUnresolved(current, next, report);
     current = next;
   }
   return current;
@@ -70,6 +116,7 @@ function collectNamedDeclarations(
   program: ts.Program,
   checker: ts.TypeChecker,
   surfaceFiles: readonly string[],
+  report?: ReportUnresolvedReference,
 ): Set<ts.Node> {
   const declarations = new Set<ts.Node>();
   for (const path of surfaceFiles) {
@@ -78,7 +125,7 @@ function collectNamedDeclarations(
     const moduleSymbol = checker.getSymbolAtLocation(sf);
     if (moduleSymbol === undefined) continue;
     for (const exp of checker.getExportsOfModule(moduleSymbol)) {
-      const resolved = resolveAlias(checker, exp);
+      const resolved = resolveAlias(checker, exp, report);
       for (const decl of resolved.getDeclarations() ?? []) declarations.add(decl);
     }
   }
@@ -109,6 +156,11 @@ export function detectTypeLeaks(
   // harness passes none, so only this one file's own exports, folded in
   // below, apply there).
   externallyNamedDeclarations: ReadonlySet<ts.Node> = new Set(),
+  // Reports every alias this walk cannot resolve (module-graph.ts's own
+  // closure Program safety net) - see UnresolvedReference's own comment
+  // for the seam this is. Absent for a standalone caller (the nukadoko
+  // harness): a real, whole-project Program never has this problem.
+  report?: ReportUnresolvedReference,
 ): LeakFinding[] {
   const boundaryRoots = typeof boundaryRoot === "string" ? [boundaryRoot] : boundaryRoot;
   const moduleSymbol = checker.getSymbolAtLocation(entrySf);
@@ -122,7 +174,7 @@ export function detectTypeLeaks(
   // under some name - not necessarily its own declared name.
   const namedDeclarations = new Set<ts.Node>(externallyNamedDeclarations);
   for (const exp of exports) {
-    const resolved = resolveAlias(checker, exp);
+    const resolved = resolveAlias(checker, exp, report);
     for (const decl of resolved.getDeclarations() ?? []) namedDeclarations.add(decl);
   }
 
@@ -307,6 +359,7 @@ export function detectTypeLeaks(
     // may still structurally reach an internal type nothing re-exports -
     // get walked, exactly as if it had been declared locally.
     const resolvedSymbol = symbol.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(symbol) : symbol;
+    if (symbol.flags & ts.SymbolFlags.Alias) reportIfUnresolved(symbol, resolvedSymbol, report);
     const resolvedDecl = resolvedSymbol.getDeclarations()?.[0];
     if (resolvedDecl === undefined) continue;
 
@@ -469,7 +522,21 @@ export function checkTypeLeaks(graph: {
   program: ts.Program;
   checker: ts.TypeChecker;
   rootDir: string;
-}): Violation[] {
+  // Set once module-graph.ts's own `ensureProgram` has already run this
+  // exact walk once, against this exact Program, to build the Program
+  // itself (its safety net's own round loop) - reused here so a caller
+  // that only needs graph.program/graph.checker (this call) does not pay
+  // for the whole walk a second time. Skipped when `options.report` is
+  // given: that call wants a fresh walk with its own reports, not a
+  // stale answer from a possibly earlier round.
+  cachedTypeLeaks?: Violation[];
+}, options: { report?: ReportUnresolvedReference } = {}): Violation[] {
+  // Forces graph.program/graph.checker first (as this always did): on a
+  // graph whose Program was not built yet, that is what populates
+  // `cachedTypeLeaks` as a side effect, in time for the check right after.
+  void graph.program;
+  void graph.checker;
+  if (options.report === undefined && graph.cachedTypeLeaks !== undefined) return graph.cachedTypeLeaks;
   const violations: Violation[] = [];
   // Every declared module's own directory, not the whole project root -
   // see detectTypeLeaks' own comment on why a single, broad boundary was
@@ -480,7 +547,7 @@ export function checkTypeLeaks(graph: {
   // already import from module B is not a leak in module A's surface
   // either - see collectNamedDeclarations' own header comment.
   const allSurfaceFiles = [...graph.modules.values()].flatMap((m) => m.surfaceFiles);
-  const namedDeclarations = collectNamedDeclarations(graph.program, graph.checker, allSurfaceFiles);
+  const namedDeclarations = collectNamedDeclarations(graph.program, graph.checker, allSurfaceFiles, options.report);
 
   for (const [name, module] of graph.modules) {
     // A module's surface can be more than one file (a glob, not a single
@@ -497,6 +564,7 @@ export function checkTypeLeaks(graph: {
         moduleBoundaries,
         module.surfaceFiles.filter(p => p !== surfacePath),
         namedDeclarations,
+        options.report,
       );
       for (const [key, group] of groupByInternalType(findings, surfacePath)) {
         const existing = groups.get(key);

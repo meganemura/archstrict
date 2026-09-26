@@ -137,23 +137,21 @@ export async function simulate(projectRoot: string, changes: readonly Change[]):
   const graph = buildPreparedGraph(simulatedPrepared, { host, oldProgram: baseline.program });
   // graph.edges above already came from this same `host` (buildPreparedGraph's
   // own per-file walk reads through it, then drops each SourceFile once
-  // walked - it never keeps one around to inspect). Forcing `graph.program`
-  // here is the one place left to actually look at a real SourceFile's own
-  // text, so this check validates the SAME host the edges were already
-  // built through, using the Program as the only surviving place to see it.
-  const sources = new Map(graph.program.getSourceFiles().map(source => [source.fileName, source]));
-  const simulatedRoots = new Set(simulatedPrepared.rootNames);
-  // A changed file can be ineligible as a root but still enter the Program
-  // through another file's import. An "if and only if" membership check
-  // would reject that valid case. Check three narrower properties instead:
-  // each changed root must appear, each deleted path must stay absent,
-  // and each changed file that appears must contain the overlay text - the
-  // text check is what actually catches the host silently reading stale
-  // disk content, a case simulatedRoots membership alone would miss.
+  // walked - it never keeps one around to inspect). This does not force
+  // `graph.program`: rule 6's own Program holds only the type-reachable
+  // closure from every module's surface (type-closure.ts), a smaller file
+  // list than the simulation's own, so an ordinary change outside that
+  // closure would misread here as a host bug that never happened.
+  // Instead this calls `host.getSourceFile` directly - the same function
+  // a real `ts.createProgram` call uses to load a file's text - for
+  // every change, and compares its own text with the change's own
+  // content: a deleted file must read back as absent there, and every
+  // other change's real SourceFile text must equal what this call asked
+  // to write.
+  const languageVersion = simulatedPrepared.compilerOptions.target ?? ts.ScriptTarget.ESNext;
   for (const [file, content] of contents) {
-    const source = sources.get(file);
-    if (content === null ? source !== undefined :
-        (simulatedRoots.has(file) && source === undefined) || (source !== undefined && source.text !== content)) {
+    const source = host.getSourceFile(file, languageVersion);
+    if (content === null ? source !== undefined : (source === undefined || source.text !== content)) {
       throw new Error(`internal simulation error: overlay mismatch for ${file}`);
     }
   }

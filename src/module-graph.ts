@@ -6,7 +6,18 @@
 // Boundary: no rule logic here. A rule is a predicate over this graph's
 // edges and modules; this module only builds the graph and says what it
 // could not analyze (unresolved specifiers, unsupported syntax, files
-// outside the modules glob) as counts, never as silence.
+// outside the modules glob) as counts, never as silence. One deliberate
+// exception: `ensureProgram`'s own safety net (below) calls rule 6
+// (`checkTypeLeaks`) to build its own closure Program correctly, since
+// rule 6 is the only code that already walks every alias a Program needs
+// - see `ensureProgram`'s own comment for the seam this is, and
+// rules/type-leak.ts's own `ReportUnresolvedReference` for the other side
+// of it. Also by design: rule 6's own closure Program resolves each
+// file's own imports through that file's own nearest tsconfig
+// (`compilerOptionsForFile`, the same one the edge walk uses), not the
+// project root's compiler options for every file alike, so a nested
+// tsconfig's own `paths` resolves there the same way the edge walk
+// resolves it.
 //
 // Edges never require a whole-project ts.Program. A per-file
 // ts.createSourceFile (parsed, walked for its own imports/exports, then
@@ -41,6 +52,8 @@ import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { builtinModules } from "node:module";
 import { compileGlob, mostSpecificMatch } from "./classify.js";
+import { buildTypeClosure } from "./type-closure.js";
+import { checkTypeLeaks, type Violation as TypeLeakViolation } from "./rules/type-leak.js";
 
 // A node builtin (`fs`, `node:fs`, ...) never has a real resolvedModule:
 // ts.resolveModuleName looks for an actual file, but @types/node's ambient
@@ -174,14 +187,19 @@ export type ModuleGraph = {
   // dependency's own types, under node_modules, are not this project's
   // boundary to keep).
   rootDir: string;
-  // The program and checker built over every module file - shared here so
-  // a rule needing type information (rule 6) does not build its own
-  // second program over the same files. Lazy: building either one parses
-  // and binds every file in the program, the memory cost this module's
-  // own edge build exists to avoid paying unconditionally (see this
-  // module's own header) - so nothing on the edge path may touch either
-  // getter, and a caller that never needs type information never pays for
-  // a Program at all.
+  // The program and checker built over the type-reachable closure from
+  // every module's public surface (type-closure.ts), not every analyzed
+  // file - shared here so a rule needing type information (rule 6) does
+  // not build its own second program over the same files. Lazy: building
+  // either one parses and binds every file in the program, the memory
+  // cost this module's own edge build exists to avoid paying
+  // unconditionally (see this module's own header) - so nothing on the
+  // edge path may touch either getter, and a caller that never needs type
+  // information never pays for a Program at all. A caller that needs
+  // every analyzed file's own SourceFile present (simulate.ts's own
+  // overlay check, for one) cannot use this getter for that - see
+  // simulate.ts's own comment for why it checks `rootNames` and the
+  // overlay host directly instead.
   readonly program: ts.Program;
   readonly checker: ts.TypeChecker;
   // Drops the memoized Program (and, with it, the checker) once a caller
@@ -189,6 +207,21 @@ export type ModuleGraph = {
   // sit in memory for the rest of a run that has no further use for it. A
   // later access to `program`/`checker` builds a fresh one.
   releaseProgram(): void;
+  // Empty unless building `program` needed the closure's own bounded
+  // safety net to add a file the closure's ordinary rules missed, and
+  // even then only once that net exhausted its own round limit and fell
+  // back to the whole-project Program instead - see this module's own
+  // `ensureProgram` for why. Populated only once `program`/`checker` has
+  // actually been accessed; a caller that never touches either sees an
+  // empty array here regardless.
+  readonly programNotes: readonly string[];
+  // Rule 6's own findings against the exact Program `program` now holds -
+  // set only when building that Program already ran rule 6's own walk to
+  // do so (the closure's safety net), so `checkTypeLeaks(graph)` can reuse
+  // it instead of walking the same Program a second time. Undefined
+  // whenever that has not happened (no surface-owning module at all, or
+  // the whole-project fallback, which does not run this walk itself).
+  readonly cachedTypeLeaks?: TypeLeakViolation[];
 };
 
 export type BuildOptions = {
@@ -674,18 +707,19 @@ function loadCompilerOptions(startDir: string): { configPath: string | undefined
 // config than the project root's own reuses the already-parsed root
 // options rather than re-parsing the same file per directory.
 //
-// Scope of this fix, stated plainly: this only changes what
-// `ts.resolveModuleName` is called with for edge resolution - it does
-// NOT change the shared `ts.Program`/`TypeChecker` every module in the
-// graph is checked against (rule 6, `graph.checker`, still uses the
-// project-root's own compiler options for the whole program, the same as
-// before). `ts.createProgram` itself also resolves each root file's own
-// imports internally, under the root options, to decide what enters the
-// program at all - a leaf package's own aliased import can still fail
-// there even once this makes its own edge resolve correctly for
-// unresolvedSpecifierCount's sake. Mixing genuinely incompatible
-// per-file options (target, jsx) into one shared program is a real,
-// separate architectural question this fix does not attempt.
+// This function serves two callers with the same per-file need. The edge
+// walk uses it to resolve each specifier through its own file's nearest
+// tsconfig. Rule 6's own closure Program (`ensureProgram`, via
+// `resolveModuleNameLiterals`) uses it too, by design: a leaf package's
+// own aliased import (a monorepo path alias a nested tsconfig's own
+// `paths` defines, differently from the root) resolves there too; a
+// plain `ts.createProgram` call under the root options alone cannot see
+// a nested tsconfig at all. One real,
+// intentional difference this leaves standing: `target`/`jsx` still
+// come from the root options for the whole Program (mixing genuinely
+// incompatible per-file compilation targets into one shared Program is a
+// separate architectural question, not attempted here) - only module
+// resolution is per-file.
 function makeCompilerOptionsForFile(
   rootOptions: ts.CompilerOptions,
   rootConfigPath: string | undefined,
@@ -780,6 +814,14 @@ export type ImportRecord = {
 export type FileImportWalk = {
   imports: ImportRecord[];
   unsupportedSyntaxCount: number;
+  // Both read by type-closure.ts's own ambient-root rule (R6): a file
+  // with neither import nor export binds its own top-level names into
+  // the global scope, the same as a `declare global` or a
+  // `declare module "literal name"` body does from inside a real module.
+  // Computed once here, from real syntax, so the closure never re-parses
+  // a file just to answer this - see walkFileImports' own header.
+  isScript: boolean;
+  hasAmbientDeclarations: boolean;
 };
 
 // TypeScript's own default (ensureScriptKind, applied when a caller of
@@ -866,7 +908,30 @@ export function walkFileImports(sf: ts.SourceFile): FileImportWalk {
     ts.forEachChild(node, walk);
   });
 
-  return { imports, unsupportedSyntaxCount };
+  const isScript = !ts.isExternalModule(sf);
+  const hasAmbientDeclarations = sf.statements.some((statement) =>
+    isGlobalAugmentationOrAmbientModule(statement) || (isScript && isTopLevelDeclaration(statement)));
+  return { imports, unsupportedSyntaxCount, isScript, hasAmbientDeclarations };
+}
+
+// `declare global { ... }` (GlobalAugmentation) or `declare module "literal
+// name"` (a StringLiteral name) - binds names no import ever names,
+// unlike a plain `namespace X {}`/`declare namespace X {}` (an Identifier
+// name), which is an ordinary, reachable local declaration.
+function isGlobalAugmentationOrAmbientModule(statement: ts.Statement): boolean {
+  return ts.isModuleDeclaration(statement) &&
+    (statement.name.kind === ts.SyntaxKind.StringLiteral || (statement.flags & ts.NodeFlags.GlobalAugmentation) !== 0);
+}
+
+// Every top-level statement shape type-closure.ts's own per-file summary
+// treats as a named declaration - mirrored here only to decide whether a
+// script file actually binds anything into the global scope, not to
+// summarize its own references (that stays type-closure.ts's own job).
+function isTopLevelDeclaration(statement: ts.Statement): boolean {
+  return ts.isInterfaceDeclaration(statement) || ts.isTypeAliasDeclaration(statement) || ts.isClassDeclaration(statement) ||
+    ts.isFunctionDeclaration(statement) || ts.isEnumDeclaration(statement) || ts.isModuleDeclaration(statement) ||
+    ts.isVariableStatement(statement) ||
+    (ts.isImportEqualsDeclaration(statement) && !ts.isExternalModuleReference(statement.moduleReference));
 }
 
 export type GraphBuildOverrides = {
@@ -880,9 +945,29 @@ export type GraphBuildOverrides = {
   // file is skipped entirely, exactly as a Program that failed to read a
   // root file simply omits it from getSourceFiles()).
   fileWalk?: (fileName: string) => FileImportWalk | undefined;
+  // Test-only: forces `ensureProgram`'s own round loop to keep finding a
+  // (fake) missing file forever, so a test can exercise the round bound
+  // and the whole-project fallback without needing a closure rule gap
+  // that genuinely never resolves - not part of BuildOptions, and never
+  // read outside this module.
+  forceClosureFallbackForTests?: boolean;
+  // Test-only: simulates a genuine gap in type-closure.ts's own rules by
+  // removing these files from the closure on round 0 only - a later
+  // round, once the safety net reports the resulting unresolved alias
+  // and resolves it through the edge records, adds them back for real.
+  // Never read outside this module.
+  dropFromClosureForTests?: readonly string[];
 };
 
-export function buildPreparedGraph(prepared: ReturnType<typeof prepareGraph>, overrides: GraphBuildOverrides = {}): ModuleGraph {
+// A file's own isScript/hasAmbientDeclarations flags (walkFileImports' own
+// header) - exposed only for buildModuleGraphForRules's own edge-cache
+// write below, not part of the public ModuleGraph shape every rule and
+// verb reads.
+export type PreparedModuleGraph = ModuleGraph & {
+  fileFlags: ReadonlyMap<string, { isScript: boolean; hasAmbientDeclarations: boolean }>;
+};
+
+export function buildPreparedGraph(prepared: ReturnType<typeof prepareGraph>, overrides: GraphBuildOverrides = {}): PreparedModuleGraph {
   const { projectRoot, surface, rootDir, rootNames, modules, resolveModuleForFile, compilerOptions, compilerOptionsForFile } = prepared;
   const host = overrides.host ?? ts.createCompilerHost(compilerOptions);
   const languageVersion = compilerOptions.target ?? ts.ScriptTarget.ESNext;
@@ -923,9 +1008,16 @@ export function buildPreparedGraph(prepared: ReturnType<typeof prepareGraph>, ov
   // consumer that cares about a stable order sorts at its own site rather
   // than leaning on this order (see each rule's own comment where that
   // applies); this loop makes no ordering promise beyond "rootNames order".
+  // Read by type-closure.ts's own ambient-root rule - every analyzed
+  // file's own two flags (walkFileImports' own header), regardless of
+  // module membership: an ambient file binds names no import ever names,
+  // whether or not any declared module claims it.
+  const fileFlags = new Map<string, { isScript: boolean; hasAmbientDeclarations: boolean }>();
+
   for (const fileName of rootNames) {
     const walked = fileWalk(fileName);
     if (walked === undefined) continue; // unreadable: invisible, matching a Program that never got a SourceFile for it either
+    fileFlags.set(fileName, { isScript: walked.isScript, hasAmbientDeclarations: walked.hasAmbientDeclarations });
 
     const fromModule = resolveModuleForFile(fileName);
     if (fromModule === undefined) {
@@ -998,12 +1090,124 @@ export function buildPreparedGraph(prepared: ReturnType<typeof prepareGraph>, ov
     (e) => e.toModule !== undefined && e.toModule !== e.fromModule,
   );
 
+  // Bounded at 3 rounds. A later round only ever happens when the closure
+  // built in round 0 (surfaces, export chains, type positions, inference,
+  // ambient roots, and a dynamic `import(...)` reached while inferring)
+  // still leaves rule 6 unable to resolve some alias it needs - a
+  // specifier syntax type-closure.ts's own rules do not yet recognize,
+  // not an ordinary project's own re-export depth (every rule already
+  // follows a whole chain in its first pass). Each later round adds
+  // exactly the files rule 6 just reported missing and tries again.
+  // Three rounds leaves room for one such gap to itself reference one
+  // more before the closure stabilizes, while keeping the fallback path
+  // fast to reach when it doesn't stabilize at all.
+  const MAX_CLOSURE_ROUNDS = 3;
+
   // Built only on first access to `program`/`checker`, and dropped again
   // by `releaseProgram` - see this module's own header and the
   // `ModuleGraph.program`/`releaseProgram` field comments for why.
   let program: ts.Program | undefined;
+  let notes: string[] = [];
+  let cachedTypeLeaks: TypeLeakViolation[] | undefined;
   const ensureProgram = (): ts.Program => {
-    program ??= ts.createProgram({ rootNames, options: compilerOptions, host: overrides.host, oldProgram: overrides.oldProgram });
+    if (program !== undefined) return program;
+    const resolvedSpecifiers = new Map<string, Map<string, string>>();
+    for (const edge of edges) {
+      let perFile = resolvedSpecifiers.get(edge.fromFile);
+      if (perFile === undefined) { perFile = new Map(); resolvedSpecifiers.set(edge.fromFile, perFile); }
+      perFile.set(edge.specifier, edge.resolvedFile);
+    }
+    const surfaceFiles = [...modules.values()].flatMap((m) => m.surfaceFiles);
+    const analyzedSet = new Set(rootNames);
+    const readFile = (file: string): string | undefined => host.readFile(file);
+    const baseHost = overrides.host ?? host;
+
+    // The Program's own module-resolution host, not `noResolve`: `noResolve`
+    // also stops TypeScript from following node_modules/@types imports and
+    // triple-slash references, so an external dependency's own generic type
+    // (Promise<Internal>, an npm package's own EventEmitter<Internal>, ...)
+    // would resolve to an error type there, and a real finding through it
+    // would silently disappear. `resolveModuleNameLiterals` instead resolves
+    // every specifier exactly the way this module's own edge walk already
+    // does (the file's own nearest tsconfig, the same per-options
+    // resolution cache), then restricts only ONE case: a containing file
+    // this project analyzes, resolving to ANOTHER file this project
+    // analyzes that sits outside the closure, reads back as unresolved -
+    // the checker sees exactly what it would see if that file did not
+    // exist, which is the closure's whole premise. Every other case
+    // (an external dependency's own file resolving its own further
+    // imports, a project file resolving into node_modules/@types/lib) gets
+    // the real result unfiltered, so that whole external graph loads the
+    // same way it would in a whole-project Program - triple-slash
+    // references and automatic type-directive inclusion are untouched,
+    // TypeScript's own defaults for both.
+    function closureHost(closureSet: ReadonlySet<string>): ts.CompilerHost {
+      const delegate: ts.CompilerHost = Object.create(baseHost);
+      delegate.resolveModuleNameLiterals = (moduleLiterals, containingFile, redirectedReference, redirectOptions) =>
+        moduleLiterals.map((literal) => {
+          if (!analyzedSet.has(containingFile)) {
+            return ts.resolveModuleName(literal.text, containingFile, redirectOptions, baseHost, undefined, redirectedReference);
+          }
+          const options = compilerOptionsForFile(containingFile);
+          const resolved = ts.resolveModuleName(literal.text, containingFile, options, baseHost, resolutionCacheFor(options), redirectedReference);
+          const resolvedFile = resolved.resolvedModule?.resolvedFileName;
+          if (resolvedFile !== undefined && analyzedSet.has(resolvedFile) && !closureSet.has(resolvedFile)) {
+            return { ...resolved, resolvedModule: undefined };
+          }
+          return resolved;
+        });
+      return delegate;
+    }
+
+    let extraRoots: string[] = [];
+    for (let round = 0; ; round++) {
+      const closure = buildTypeClosure({
+        readFile, languageVersion, scriptKindFor: scriptKindForFile,
+        ambientFiles: [...fileFlags].filter(([, f]) => f.isScript || f.hasAmbientDeclarations).map(([file]) => file),
+        surfaceFiles, resolvedSpecifiers, extraRoots,
+      });
+      // Test-only: see GraphBuildOverrides' own comment. Round 0 only -
+      // a later round's own `extraRoots` (added for real, by the safety
+      // net below) must stick.
+      const dropped = round === 0 ? new Set(overrides.dropFromClosureForTests ?? []) : undefined;
+      const closureFiles = dropped === undefined ? closure.files : closure.files.filter((f) => !dropped.has(f));
+      const closureSet = new Set(closureFiles);
+      const candidate = ts.createProgram({
+        rootNames: closureFiles, options: compilerOptions,
+        host: closureHost(closureSet), oldProgram: overrides.oldProgram,
+      });
+      // The safety net: rule 6 itself is the only code that already
+      // walks every alias and every structural type a surface (or an
+      // internal declaration) depends on, so its own resolution failures
+      // are read back here instead of this module re-deriving them - a
+      // real, deliberate exception to this module's own "no rule logic
+      // here" boundary (see the header). An unresolved alias names the
+      // specifier it failed on - resolved from the same edge records the
+      // closure itself used, no re-resolution.
+      //
+      // This call's own return value is cached as `cachedTypeLeaks` once
+      // the loop settles (below) - `checkTypeLeaks(graph)` prefers that
+      // cache over walking the identical final Program a second time, so
+      // this pass is the only full rule-6 walk a normal `check` pays for.
+      const missing = new Set<string>();
+      const roundViolations = checkTypeLeaks({ modules, program: candidate, checker: candidate.getTypeChecker(), rootDir }, {
+        report: ({ file, specifier }) => {
+          const resolved = resolvedSpecifiers.get(file)?.get(specifier);
+          if (resolved !== undefined && analyzedSet.has(resolved) && !closureSet.has(resolved)) missing.add(resolved);
+        },
+      });
+      // Test-only: see GraphBuildOverrides' own comment. The value added
+      // is never a real file - only `missing.size` past this point
+      // matters, not what it names.
+      if (overrides.forceClosureFallbackForTests === true) missing.add("\0forced-missing-for-tests");
+      if (missing.size === 0) { program = candidate; cachedTypeLeaks = roundViolations; break; }
+      if (round >= MAX_CLOSURE_ROUNDS) {
+        notes = [`rule 6's type closure could not resolve every referenced import after ${MAX_CLOSURE_ROUNDS} rounds; fell back to the whole-project program for this check`];
+        program = ts.createProgram({ rootNames, options: compilerOptions, host: baseHost, oldProgram: overrides.oldProgram });
+        break;
+      }
+      extraRoots = [...extraRoots, ...missing];
+    }
     return program;
   };
 
@@ -1026,7 +1230,16 @@ export function buildPreparedGraph(prepared: ReturnType<typeof prepareGraph>, ov
     },
     releaseProgram() {
       program = undefined;
+      notes = [];
+      cachedTypeLeaks = undefined;
     },
+    get programNotes() {
+      return notes;
+    },
+    get cachedTypeLeaks() {
+      return cachedTypeLeaks;
+    },
+    fileFlags,
   };
 }
 
@@ -1101,6 +1314,8 @@ export function buildModuleGraphForRules(options: BuildOptions): ModuleGraph {
       get program() { return full().program; },
       get checker() { return full().checker; },
       releaseProgram() { fullGraph?.releaseProgram(); fullGraph = undefined; },
+      get programNotes() { return fullGraph?.programNotes ?? []; },
+      get cachedTypeLeaks() { return fullGraph?.cachedTypeLeaks; },
     };
   }
   const graph = buildPreparedGraph(prepared);
