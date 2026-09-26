@@ -89,7 +89,8 @@ function referenceWalk(root: string, declaredModules: readonly DeclaredModule[])
   let unsupportedSyntaxCount = 0;
   for (const sf of program.getSourceFiles()) {
     if (!rootNameSet.has(sf.fileName)) continue;
-    const walked = walkFileImports(sf);
+    const options = prepared.compilerOptionsForFile(sf.fileName);
+    const walked = walkFileImports(sf, options);
     unsupportedSyntaxCount += walked.unsupportedSyntaxCount;
     for (const imp of walked.imports) {
       const common = { fromFile: relative(root, sf.fileName), specifier: imp.specifier, isTypeOnly: imp.isTypeOnly, isDynamic: imp.isDynamic,
@@ -98,7 +99,12 @@ function referenceWalk(root: string, declaredModules: readonly DeclaredModule[])
         edges.push({ ...common, resolvedFile: "node:fs" });
         continue;
       }
-      const resolved = ts.resolveModuleName(imp.specifier, sf.fileName, prepared.compilerOptionsForFile(sf.fileName), host);
+      // sf comes from program.getSourceFiles(), which already carries a
+      // real impliedNodeFormat (ts.Program's own getCreateSourceFileOptions -
+      // see module-graph.ts's own closureHost comment) - imp.mode above
+      // is the same real mode buildPreparedGraph would resolve this
+      // specifier under.
+      const resolved = ts.resolveModuleName(imp.specifier, sf.fileName, options, host, undefined, undefined, imp.mode);
       const resolvedFile = resolved.resolvedModule?.resolvedFileName;
       if (resolvedFile === undefined) { unresolvedSpecifiers.push(imp.specifier); continue; }
       edges.push({ ...common, resolvedFile: relative(root, resolvedFile) });

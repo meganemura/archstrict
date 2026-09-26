@@ -10,9 +10,10 @@ export type EdgeCache = {
   // own dependency order - there is no Program on this build's own edge
   // path. readEdgeCache's own schema check below rejects any other
   // schema value, forcing a cache miss (and a fresh write) for one.
-  // Schema 3 caches hold an edge for each `import("./x").Y` in type
-  // position. A schema 2 cache has none of those edges, so reading one
-  // would silently under-report them.
+  // Schema 4 edges are resolved with each import's resolution mode (ESM
+  // or CJS export conditions) and include `import("./x").Y` in type
+  // position. An older cache holds edges resolved without the mode, and
+  // reading one would replay wrong targets for conditional `exports`.
   //
   // A cache hit's own program/checker still delegates to a fresh,
   // uncached rebuild (module-graph.ts's own `buildModuleGraphForRules`),
@@ -20,7 +21,7 @@ export type EdgeCache = {
   // (walkFileImports' own two flags, read only by that fresh rebuild's
   // own closure) - storing them here would answer a question the cache
   // hit path never asks.
-  schema: 3;
+  schema: 4;
   tsconfigHash: string;
   archstrictVersion: string;
   buildOptionsHash: string;
@@ -52,7 +53,7 @@ function isEdge(value: unknown): value is Edge {
 export function readEdgeCache(path: string): EdgeCache | undefined {
   try {
     const value: unknown = JSON.parse(readFileSync(path, "utf8"));
-    if (!record(value) || value.schema !== 3 ||
+    if (!record(value) || value.schema !== 4 ||
         !["tsconfigHash", "archstrictVersion", "buildOptionsHash"].every((k) => typeof value[k] === "string") ||
         !record(value.metadata) || !Object.values(value.metadata).every((n) => n === null || typeof n === "number" && Number.isFinite(n)) ||
         !record(value.files) || !strings(value.sourceOrder) || !strings(value.unresolvedSpecifiers) ||

@@ -78,10 +78,21 @@ describe("the safety net recovers an unresolved alias, and never falls back for 
       // specifier ("./hop.js") - module-graph.ts's own round loop
       // resolves it through the edge records and adds hop.ts back for
       // round 1.
-      const graph = buildPreparedGraph(prepared, { dropFromClosureForTests: [join(root, "src/m/hop.ts")] });
+      const rounds: { round: number; files: readonly string[] }[] = [];
+      const graph = buildPreparedGraph(prepared, {
+        dropFromClosureForTests: [join(root, "src/m/hop.ts")],
+        onClosureRoundForTests: (round, closureFiles) => rounds.push({ round, files: closureFiles }),
+      });
       const violations = checkTypeLeaks(graph);
       expect(violations).toEqual([]); // Secret has its public name again; UsesSecret does not leak it
       expect(graph.programNotes).toEqual([]);
+      // The round seam itself: round 0 really dropped hop.ts (not just a
+      // no-op override), and a second round actually ran and put it back -
+      // without this, "no fallback" alone cannot tell "recovered by round
+      // 1" apart from "round 0 never needed hop.ts at all".
+      expect(rounds.map((r) => r.round)).toEqual([0, 1]);
+      expect(rounds[0]!.files).not.toContain(join(root, "src/m/hop.ts"));
+      expect(rounds[1]!.files).toContain(join(root, "src/m/hop.ts"));
 
       const program = ts.createProgram({ rootNames: prepared.rootNames, options: prepared.compilerOptions });
       const whole = checkTypeLeaks({ modules: graph.modules, program, checker: program.getTypeChecker(), rootDir: graph.rootDir });

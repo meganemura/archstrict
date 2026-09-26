@@ -18,7 +18,7 @@
 import ts from "typescript";
 import { statSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { buildPreparedGraph, prepareGraph, graphBuildFingerprint, scriptKindForFile, walkFileImports,
+import { buildPreparedGraph, prepareGraph, graphBuildFingerprint, parseFileForImports,
   type BuildOptions, type FileImportWalk, type ModuleGraph } from "./module-graph.js";
 
 function mtime(path: string): number | undefined {
@@ -51,6 +51,12 @@ export function createWarmGraph(): { refresh(options: BuildOptions): ModuleGraph
       }
       const host = ts.createCompilerHost(prepared.compilerOptions);
       const languageVersion = prepared.compilerOptions.target ?? ts.ScriptTarget.ESNext;
+      // One package.json lookup cache per refresh: a cold refresh parses
+      // every file, and each .ts/.tsx file's format depends on its nearest
+      // package.json "type". Without it, every file re-reads each
+      // package.json up its directory chain.
+      const packageJsonInfoCache = ts.createModuleResolutionCache(prepared.projectRoot,
+        host.getCanonicalFileName.bind(host), prepared.compilerOptions).getPackageJsonInfoCache();
       const fileWalk = (fileName: string): FileImportWalk | undefined => {
         const path = resolve(fileName);
         const mtimeMs = mtime(path);
@@ -59,8 +65,7 @@ export function createWarmGraph(): { refresh(options: BuildOptions): ModuleGraph
         if (cached?.mtimeMs === mtimeMs) return cached.walk;
         const text = host.readFile(fileName);
         if (text === undefined) return undefined;
-        const sf = ts.createSourceFile(fileName, text, languageVersion, false, scriptKindForFile(fileName));
-        const walk = walkFileImports(sf);
+        const walk = parseFileForImports(fileName, text, languageVersion, host, prepared.compilerOptionsForFile(fileName), packageJsonInfoCache);
         cache.set(path, { mtimeMs, walk });
         return walk;
       };

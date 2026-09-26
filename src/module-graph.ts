@@ -719,7 +719,11 @@ function loadCompilerOptions(startDir: string): { configPath: string | undefined
 // come from the root options for the whole Program (mixing genuinely
 // incompatible per-file compilation targets into one shared Program is a
 // separate architectural question, not attempted here) - only module
-// resolution is per-file.
+// resolution is per-file. The same holds for each file's ESM/CJS format
+// inside that Program: TypeScript derives it from the root options, while
+// the edge walk derives it from the file's own nearest tsconfig, so a
+// nested tsconfig that overrides `module`/`moduleResolution` can make the
+// two disagree on which export condition applies.
 function makeCompilerOptionsForFile(
   rootOptions: ts.CompilerOptions,
   rootConfigPath: string | undefined,
@@ -809,6 +813,16 @@ export type ImportRecord = {
   fromPosition: Position;
   isTypeOnly: boolean;
   isDynamic: boolean;
+  // undefined moduleKind vs resolutionMode strings: same TS enum
+  // (ResolutionMode is ModuleKind.CommonJS | ModuleKind.ESNext |
+  // undefined) - undefined under a resolution strategy that does not
+  // vary by usage (classic, and node10/"node" without package.json
+  // exports/imports resolution), and defined under node16/nodenext and
+  // bundler, which pick export conditions by it. Computed here,
+  // from the real AST node (the one place that still has it - see this
+  // module's own header on staying AST-free past this walk), so the
+  // resolver never re-parses a file just to learn a specifier's own mode.
+  mode: ts.ResolutionMode;
 };
 
 export type FileImportWalk = {
@@ -843,7 +857,16 @@ export function scriptKindForFile(fileName: string): ts.ScriptKind {
 // (require(), import x = require(...)) - no resolution, no Program, no
 // module graph. Kept separate from buildPreparedGraph's own resolution
 // loop below so warm-graph.ts can memoize exactly this part.
-export function walkFileImports(sf: ts.SourceFile): FileImportWalk {
+// `compilerOptions` is this file's own effective options (compilerOptionsForFile,
+// not necessarily the project root's) - passed through unchanged to
+// ts.getModeForUsageLocation for every specifier, so the mode recorded
+// here is the same one the resolver (buildPreparedGraph's own
+// resolveModule) will resolve that same specifier under. `sf` must have
+// been parsed with `setParentNodes: true`: getModeForUsageLocation reads
+// `usage.parent` (and, for `import type ... with { "resolution-mode" }`,
+// `usage.parent.parent`) - measured directly, a parent-less literal makes
+// it throw rather than return undefined.
+export function walkFileImports(sf: ts.SourceFile, compilerOptions: ts.CompilerOptions): FileImportWalk {
   const imports: ImportRecord[] = [];
   let unsupportedSyntaxCount = 0;
 
@@ -902,6 +925,7 @@ export function walkFileImports(sf: ts.SourceFile): FileImportWalk {
         fromPosition: { line: line + 1, column: character + 1 },
         isTypeOnly,
         isDynamic,
+        mode: ts.getModeForUsageLocation(sf, specifier, compilerOptions),
       });
     }
 
@@ -912,6 +936,38 @@ export function walkFileImports(sf: ts.SourceFile): FileImportWalk {
   const hasAmbientDeclarations = sf.statements.some((statement) =>
     isGlobalAugmentationOrAmbientModule(statement) || (isScript && isTopLevelDeclaration(statement)));
   return { imports, unsupportedSyntaxCount, isScript, hasAmbientDeclarations };
+}
+
+// Parses one file and walks it for imports, in one place both real parse
+// paths (buildPreparedGraph's own default walk, and warm-graph.ts's own
+// cached one) call, so both compute the same resolution mode the same
+// way. `impliedNodeFormat` (needed before the mode of any specifier
+// inside can be known - see walkFileImports' own header) depends on the
+// nearest package.json's own "type" field for a .ts/.tsx/.js/.jsx file
+// (fixed by extension alone for .mts/.cts/.mjs/.cjs); `host` supplies the
+// fileExists/readFile that lookup needs, and `packageJsonInfoCache`
+// (a ts.ModuleResolutionCache's own getPackageJsonInfoCache(), or
+// undefined) lets a caller that already has one avoid re-reading the
+// same package.json for every ambiguous file - undefined costs an extra
+// read per such file, never a wrong answer. `setExternalModuleIndicator`
+// is deliberately NOT set here (unlike a real ts.Program, which sets it
+// via getSetExternalModuleIndicator): that indicator, not
+// impliedNodeFormat, decides `isScript` (via ts.isExternalModule) for a
+// file with no import/export syntax of its own, and setting it would
+// reclassify an import-less "type": "module" file as a module in a way
+// this fix's own scope (resolution mode only - see this module's header)
+// must not touch.
+export function parseFileForImports(
+  fileName: string,
+  text: string,
+  languageVersion: ts.ScriptTarget,
+  host: ts.ModuleResolutionHost,
+  compilerOptions: ts.CompilerOptions,
+  packageJsonInfoCache: ts.PackageJsonInfoCache | undefined,
+): FileImportWalk {
+  const impliedNodeFormat = ts.getImpliedNodeFormatForFile(fileName, packageJsonInfoCache, host, compilerOptions);
+  const sf = ts.createSourceFile(fileName, text, { languageVersion, impliedNodeFormat }, true, scriptKindForFile(fileName));
+  return walkFileImports(sf, compilerOptions);
 }
 
 // `declare global { ... }` (GlobalAugmentation) or `declare module "literal
@@ -957,6 +1013,12 @@ export type GraphBuildOverrides = {
   // and resolves it through the edge records, adds them back for real.
   // Never read outside this module.
   dropFromClosureForTests?: readonly string[];
+  // Test-only: called once per closure round with that round's own round
+  // number and closure file list, so a test can assert on the round-by-
+  // round shape itself (which files a round dropped, whether a later
+  // round actually ran) through this seam instead of guessing it from the
+  // final graph alone. Never read outside this module.
+  onClosureRoundForTests?: (round: number, closureFiles: readonly string[]) => void;
 };
 
 // A file's own isScript/hasAmbientDeclarations flags (walkFileImports' own
@@ -972,21 +1034,18 @@ export function buildPreparedGraph(prepared: ReturnType<typeof prepareGraph>, ov
   const host = overrides.host ?? ts.createCompilerHost(compilerOptions);
   const languageVersion = compilerOptions.target ?? ts.ScriptTarget.ESNext;
 
-  const defaultFileWalk = (fileName: string): FileImportWalk | undefined => {
-    const text = host.readFile(fileName);
-    if (text === undefined) return undefined;
-    return walkFileImports(ts.createSourceFile(fileName, text, languageVersion, false, scriptKindForFile(fileName)));
-  };
-  const fileWalk = overrides.fileWalk ?? defaultFileWalk;
-
   // One ts.ModuleResolutionCache per distinct compiler-options object
   // (a monorepo can have many, one per leaf tsconfig - see
   // compilerOptionsForFile's own comment), unless the caller supplies one
   // cache to use for every file regardless of its own options
   // (overrides.resolutionCache - simulate.ts's own single-cache-per-run
-  // convention, kept as-is here).
+  // convention, kept as-is here). Always returns a real cache (never
+  // undefined) - every branch below produces one - so a caller needing
+  // its own getPackageJsonInfoCache() (parseFileForImports' own
+  // impliedNodeFormat lookup) can call it directly, with no extra
+  // plumbing for a case that cannot happen.
   const resolutionCaches = new Map<ts.CompilerOptions, ts.ModuleResolutionCache>();
-  const resolutionCacheFor = (options: ts.CompilerOptions): ts.ModuleResolutionCache | undefined => {
+  const resolutionCacheFor = (options: ts.CompilerOptions): ts.ModuleResolutionCache => {
     if (overrides.resolutionCache !== undefined) return overrides.resolutionCache;
     let cache = resolutionCaches.get(options);
     if (cache === undefined) {
@@ -994,6 +1053,37 @@ export function buildPreparedGraph(prepared: ReturnType<typeof prepareGraph>, ov
       resolutionCaches.set(options, cache);
     }
     return cache;
+  };
+
+  const defaultFileWalk = (fileName: string): FileImportWalk | undefined => {
+    const text = host.readFile(fileName);
+    if (text === undefined) return undefined;
+    const options = compilerOptionsForFile(fileName);
+    return parseFileForImports(fileName, text, languageVersion, host, options, resolutionCacheFor(options).getPackageJsonInfoCache());
+  };
+  const fileWalk = overrides.fileWalk ?? defaultFileWalk;
+
+  // Every specifier resolution in this build goes through this one
+  // function - the edge walk below, and (via optionsForContainingFile)
+  // both branches of ensureProgram's own closureHost. `mode` decides
+  // which of a dual package's own "import"/"require" export condition
+  // (or a condition-scoped "types") applies under node16/nodenext; the
+  // caller supplies it because only the caller has the real usage site
+  // (an ImportRecord already carrying its own mode, or a live AST literal
+  // node) getModeForUsageLocation needs to compute it - see
+  // walkFileImports' own header for where that happens for an analyzed
+  // file's own specifier.
+  const analyzedSet = new Set(rootNames);
+  const optionsForContainingFile = (containingFile: string, redirectedReference?: ts.ResolvedProjectReference): ts.CompilerOptions =>
+    analyzedSet.has(containingFile) ? compilerOptionsForFile(containingFile) : (redirectedReference?.commandLine.options ?? compilerOptions);
+  const resolveModule = (
+    specifier: string,
+    containingFile: string,
+    mode: ts.ResolutionMode,
+    redirectedReference?: ts.ResolvedProjectReference,
+  ): ts.ResolvedModuleWithFailedLookupLocations => {
+    const options = optionsForContainingFile(containingFile, redirectedReference);
+    return ts.resolveModuleName(specifier, containingFile, options, host, resolutionCacheFor(options), redirectedReference, mode);
   };
 
   const outsideFiles: string[] = [];
@@ -1027,9 +1117,6 @@ export function buildPreparedGraph(prepared: ReturnType<typeof prepareGraph>, ov
     modules.get(fromModule)?.files.push(fileName);
     unsupportedSyntaxCount += walked.unsupportedSyntaxCount;
 
-    const options = compilerOptionsForFile(fileName);
-    const cache = resolutionCacheFor(options);
-
     for (const imp of walked.imports) {
       const builtin = builtinModuleName(imp.specifier);
 
@@ -1059,7 +1146,7 @@ export function buildPreparedGraph(prepared: ReturnType<typeof prepareGraph>, ov
       // package's package.json `exports` under nodenext, so the only
       // thing gating that path before was this project's own code,
       // not TypeScript.
-      const resolved = ts.resolveModuleName(imp.specifier, fileName, options, host, cache);
+      const resolved = resolveModule(imp.specifier, fileName, imp.mode);
       const resolvedModule = resolved.resolvedModule;
       if (resolvedModule === undefined) {
         unresolvedSpecifierCount++;
@@ -1118,7 +1205,6 @@ export function buildPreparedGraph(prepared: ReturnType<typeof prepareGraph>, ov
       perFile.set(edge.specifier, edge.resolvedFile);
     }
     const surfaceFiles = [...modules.values()].flatMap((m) => m.surfaceFiles);
-    const analyzedSet = new Set(rootNames);
     const readFile = (file: string): string | undefined => host.readFile(file);
     const baseHost = overrides.host ?? host;
 
@@ -1143,13 +1229,24 @@ export function buildPreparedGraph(prepared: ReturnType<typeof prepareGraph>, ov
     // TypeScript's own defaults for both.
     function closureHost(closureSet: ReadonlySet<string>): ts.CompilerHost {
       const delegate: ts.CompilerHost = Object.create(baseHost);
-      delegate.resolveModuleNameLiterals = (moduleLiterals, containingFile, redirectedReference, redirectOptions) =>
+      // `containingSourceFile` comes from the Program itself, already
+      // carrying the correct `impliedNodeFormat` (Program's own
+      // getCreateSourceFileOptions computes it before ever calling
+      // host.getSourceFile - untouched by this delegate, which never
+      // overrides getSourceFile) - so getModeForUsageLocation reads a
+      // real, correctly-tagged file here, the same as it would inside a
+      // default (no resolveModuleNameLiterals override) ts.createProgram
+      // call. The 4th positional param (TS's own per-call options,
+      // accounting for a redirected project reference) is not used here:
+      // optionsForContainingFile derives the equivalent value itself, and
+      // this project never sets up project references for the two to
+      // disagree over.
+      delegate.resolveModuleNameLiterals = (moduleLiterals, containingFile, redirectedReference, _options, containingSourceFile) =>
         moduleLiterals.map((literal) => {
-          if (!analyzedSet.has(containingFile)) {
-            return ts.resolveModuleName(literal.text, containingFile, redirectOptions, baseHost, undefined, redirectedReference);
-          }
-          const options = compilerOptionsForFile(containingFile);
-          const resolved = ts.resolveModuleName(literal.text, containingFile, options, baseHost, resolutionCacheFor(options), redirectedReference);
+          const options = optionsForContainingFile(containingFile, redirectedReference);
+          const mode = ts.getModeForUsageLocation(containingSourceFile, literal, options);
+          const resolved = resolveModule(literal.text, containingFile, mode, redirectedReference);
+          if (!analyzedSet.has(containingFile)) return resolved;
           const resolvedFile = resolved.resolvedModule?.resolvedFileName;
           if (resolvedFile !== undefined && analyzedSet.has(resolvedFile) && !closureSet.has(resolvedFile)) {
             return { ...resolved, resolvedModule: undefined };
@@ -1171,6 +1268,7 @@ export function buildPreparedGraph(prepared: ReturnType<typeof prepareGraph>, ov
       // net below) must stick.
       const dropped = round === 0 ? new Set(overrides.dropFromClosureForTests ?? []) : undefined;
       const closureFiles = dropped === undefined ? closure.files : closure.files.filter((f) => !dropped.has(f));
+      overrides.onClosureRoundForTests?.(round, closureFiles);
       const closureSet = new Set(closureFiles);
       const candidate = ts.createProgram({
         rootNames: closureFiles, options: compilerOptions,
@@ -1334,7 +1432,7 @@ export function buildModuleGraphForRules(options: BuildOptions): ModuleGraph {
   if (rootNames.every((file) => existsSync(file) && statSync(file).mtimeMs === mtimes[file])) {
     // rootNames order (a directory scan) - this write never builds a
     // Program at all (see buildPreparedGraph's own header for why).
-    writeEdgeCache(path, { schema: 3, tsconfigHash, archstrictVersion: ARCHSTRICT_VERSION, buildOptionsHash, metadata, files,
+    writeEdgeCache(path, { schema: 4, tsconfigHash, archstrictVersion: ARCHSTRICT_VERSION, buildOptionsHash, metadata, files,
       sourceOrder: rootNames.filter((file) => Object.hasOwn(files, file)),
       unsupportedSyntaxCount: graph.unsupportedSyntaxCount, unresolvedSpecifiers: graph.unresolvedSpecifiers });
   }
