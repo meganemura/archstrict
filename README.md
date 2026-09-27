@@ -1,5 +1,7 @@
 # archstrict
 
+[![npm version](https://img.shields.io/npm/v/archstrict?logo=npm)](https://www.npmjs.com/package/archstrict)
+
 arch is architecture, not tsc, not eslint, not a type checker: module boundary checking.
 Not archetype.
 
