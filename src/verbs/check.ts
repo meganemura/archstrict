@@ -35,7 +35,7 @@ import {
   type EdgeRuleCoverage,
 } from "../rules/constraints.js";
 import { checkConfigMeaning, type Prover, type Violation as ConfigMeaningViolation } from "../rules/config-meaning.js";
-import { fingerprintOf, readTodo } from "../todo-store.js";
+import { fingerprintOf, readTodo, type TodoEntry } from "../todo-store.js";
 
 // Not one of the six rules: reported when a todo entry matches no current
 // violation (import-linter's own default for the same case is also an
@@ -432,6 +432,22 @@ export function applyTodo(graph: ModuleGraph, config: Config, result: CheckResul
   const matchedByModule = new Map<string, Set<string>>();
   let suppressed = 0;
 
+  // One read per module directory per `applyTodo` call, shared by both
+  // loops below: readTodo parses the file (JSON.parse) on every call, and
+  // a module can carry tens of thousands of violations on a large project,
+  // so a read per violation would reparse the same file that many times.
+  // `graph.rootDir` is fixed for the whole call, so the cache key is
+  // `moduleDir` alone.
+  const todoByModuleDir = new Map<string, TodoEntry[]>();
+  function todoFor(moduleDir: string): TodoEntry[] {
+    let entries = todoByModuleDir.get(moduleDir);
+    if (entries === undefined) {
+      entries = readTodo(moduleDir, graph.rootDir);
+      todoByModuleDir.set(moduleDir, entries);
+    }
+    return entries;
+  }
+
   for (const v of result.violations) {
     // A module configured to stay clean has its own violations never
     // suppressed by its todo, existing or not: a real violation there must
@@ -443,7 +459,7 @@ export function applyTodo(graph: ModuleGraph, config: Config, result: CheckResul
       continue;
     }
     const targetModule = graph.modules.get(v.todoModule);
-    const entries = targetModule === undefined ? [] : readTodo(targetModule.dir, graph.rootDir);
+    const entries = targetModule === undefined ? [] : todoFor(targetModule.dir);
     const fp = fingerprintOf(v);
     if (entries.some((e) => e.fingerprint === fp)) {
       suppressed++;
@@ -459,7 +475,7 @@ export function applyTodo(graph: ModuleGraph, config: Config, result: CheckResul
   }
 
   for (const [name, module] of graph.modules) {
-    const entries = readTodo(module.dir, graph.rootDir);
+    const entries = todoFor(module.dir);
     if (entries.length === 0) continue;
 
     if (strict.has(name)) {

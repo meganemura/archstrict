@@ -1,5 +1,6 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { fingerprintOf, readTodo, todoPath, writeTodo } from "../src/todo-store.js";
+import * as todoStore from "../src/todo-store.js";
 import * as hegel from "@hegeldev/hegel";
 import * as gen from "@hegeldev/hegel/generators";
 import { existsSync, mkdtempSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
@@ -157,6 +158,57 @@ describe("matching survives regardless of stored path format", () => {
       const withRelative = applyTodo(graph, config, result);
       expect(withRelative.todo).toBe(1);
       expect(withRelative.violations).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("applyTodo reads each module's todo file once per run", () => {
+  // A module with N public-surface-bypass violations - the ordinary shape
+  // of a fresh, un-frozen module on a large project (every one of them
+  // carries the SAME target module as `todoModule`, since that field
+  // names the module whose surface was bypassed, not the importer). Before
+  // the fix, applyTodo's first loop called readTodo once per violation
+  // (todo-store.ts's own readTodo does an existsSync + a readFileSync +
+  // JSON.parse each time); after it, both of applyTodo's loops share one
+  // `Map<moduleDir, TodoEntry[]>`, so the module's own todo file is read
+  // at most once for the whole call, regardless of how many of its
+  // violations exist.
+  test("N violations against the same module give 1 real readTodo call for it", () => {
+    const root = mkdtempSync(join(tmpdir(), "archstrict-todo-read-once-"));
+    try {
+      mkdirSync(join(root, "src", "target"), { recursive: true });
+      mkdirSync(join(root, "src", "app"), { recursive: true });
+      writeFileSync(join(root, "src", "target", "index.ts"), "export const publicValue = 1;\n");
+      writeFileSync(join(root, "src", "target", "internal.ts"), "export const internalValue = 1;\n");
+      const N = 5;
+      for (let i = 0; i < N; i++) {
+        writeFileSync(
+          join(root, "src", "app", `caller${i}.ts`),
+          `import { internalValue } from "../target/internal.js";\nexport const v${i} = internalValue;\n`,
+        );
+      }
+      const config = {
+        configPath: join(root, "archstrict.config.ts"),
+        because: "Keep modules independent.",
+        declaredModules: [
+          { name: "target", glob: "src/target/**", surface: "index.ts" },
+          { name: "app", glob: "src/app/**" },
+        ],
+      };
+      const graph = buildModuleGraph({ projectRoot: root, declaredModules: config.declaredModules });
+      const result = runRules(graph, config);
+      const bypassViolations = result.violations.filter((v) => v.rule === "public-surface-bypass");
+      expect(bypassViolations).toHaveLength(N);
+      expect(bypassViolations.every((v) => "todoModule" in v && v.todoModule === "target")).toBe(true);
+
+      const spy = vi.spyOn(todoStore, "readTodo");
+      applyTodo(graph, config, result);
+      const targetDir = graph.modules.get("target")!.dir;
+      const readsForTarget = spy.mock.calls.filter((args) => args[0] === targetDir);
+      expect(readsForTarget).toHaveLength(1);
+      spy.mockRestore();
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
