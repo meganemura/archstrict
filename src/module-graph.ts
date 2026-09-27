@@ -1427,11 +1427,20 @@ function makeGraphCommons(prepared: ReturnType<typeof prepareGraph>, overrides: 
   // A cached syntax answer is valid only under the parse options and module
   // format that produce its usage modes. Reusing by file metadata alone is
   // refused because a config or package type change can change those modes.
+  // Files under one tsconfig share one options object. Hashing per file is
+  // refused because a warm surface check visits every candidate, and on a
+  // 23,000-file project that hash was a fifth of the whole run.
+  const optionsHashes = new WeakMap<ts.CompilerOptions, string>();
   const augmentationScanMetadata = (fileName: string) => {
     const options = compilerOptionsForFile(fileName);
     const packageJsonInfoCache = resolutionCacheFor(options).getPackageJsonInfoCache();
+    let optionsHash = optionsHashes.get(options);
+    if (optionsHash === undefined) {
+      optionsHash = createHash("sha256").update(JSON.stringify(options)).digest("hex");
+      optionsHashes.set(options, optionsHash);
+    }
     return {
-      optionsHash: createHash("sha256").update(JSON.stringify(options)).digest("hex"),
+      optionsHash,
       impliedNodeFormat: ts.getImpliedNodeFormatForFile(fileName, packageJsonInfoCache, host, options),
     };
   };
