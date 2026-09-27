@@ -7,7 +7,7 @@
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import ts from "typescript";
-import { buildModuleGraph, toProjectRelativePosix, type ModuleGraph, type BuildOptions } from "../module-graph.js";
+import { buildModuleGraphForRules, toProjectRelativePosix, type ModuleGraph, type BuildOptions } from "../module-graph.js";
 import { assertEdgesShapeValid, assertGlobsSupported, assertSchemaVersion, describeShape, type Config } from "../config.js";
 import { ReportError } from "../report-error.js";
 import { checkPublicSurfaceBypass, type Violation as PublicSurfaceViolation } from "../rules/public-surface.js";
@@ -378,15 +378,24 @@ export function runRules(graph: ModuleGraph, config: Config, options: RunRulesOp
 // has its own process.cwd() come back already resolved, with no way to
 // see the symlinked form again; a caller-supplied `file` carries whatever
 // form it arrived in, independently). Comparing the two strings as given
-// then silently matches nothing. `realpathSync` on both sides compares
-// what they actually name, not how each one happened to spell it.
+// then silently matches nothing. `realpathSync` resolves `file` - the one
+// path this function has any reason to distrust. A violation's own
+// `path` never gets its own `realpathSync` call here: every one of them
+// is already real by the time it reaches this filter - a module- or
+// file-derived path comes from `graph.rootDir` (itself realpath'd once,
+// in prepareGraph) joined onto a project-relative fragment, and a
+// config-meaning violation's own path comes from `check()`'s own
+// `configPath`, realpath'd once there for exactly this reason. Calling
+// `realpathSync` per violation instead of `resolve` (a pure string op,
+// no filesystem call) measured at 3.4% of a whole `check` run on a
+// 23,000-file tree, almost all of it inside this one loop.
 export function filterToFile(result: CheckResult, file: string): CheckResult {
   const resolved = resolve(file);
   if (!existsSync(resolved)) {
     throw new ReportError(`check ${file}: no such file`, "archstrict check");
   }
   const target = realpathSync(resolved);
-  return { ...result, violations: result.violations.filter((v) => realpathSync(v.path) === target) };
+  return { ...result, violations: result.violations.filter((v) => resolve(v.path) === target) };
 }
 
 function isFreezable(v: AnyViolation): v is AnyViolation & { todoModule: string } {
@@ -522,12 +531,24 @@ function focusesSurfaceFile(graph: ModuleGraph, file: string): boolean {
 export async function check(projectRoot: string, focusFile?: string, options: CheckOptions = {}): Promise<CheckResult> {
   const configPath = resolve(projectRoot, "archstrict.config.ts");
   const config = await loadConfig(configPath);
+  // `config.configPath` (a config-meaning violation's own `path`) is
+  // realpath'd once, here, after a successful load - `filterToFile`
+  // realpaths the file it was asked about, and every other violation's
+  // own `path` already comes from `graph.rootDir` (itself realpath'd in
+  // prepareGraph); a config-meaning violation's own path is the one
+  // exception that would otherwise stay in whatever textual form
+  // `projectRoot` arrived in, comparing unequal to `filterToFile`'s own
+  // realpath'd target when the two differ (a symlinked project root).
+  // Done after loadConfig, not before: every error loadConfig itself can
+  // throw (a missing file, a bad default export, ...) still names the
+  // exact path the caller gave, not a form it never used.
+  config.configPath = realpathSync(configPath);
   // declaredModules is the only source of scope now - loadConfig already
   // guarantees a loaded config has it, as an array of well-shaped entries
   // (assertDeclaredModulesShapeValid), not merely present. config.exclude
   // keeps a project's own root-level files (archstrict.config.ts itself,
   // dist/, etc.) out of scope entirely; `init` writes one by default.
-  const graph = (options.buildGraph ?? buildModuleGraph)({
+  const graph = (options.buildGraph ?? buildModuleGraphForRules)({
     projectRoot,
     declaredModules: config.declaredModules!,
     exclude: config.exclude,

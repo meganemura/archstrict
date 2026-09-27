@@ -4,9 +4,9 @@ import * as gen from "@hegeldev/hegel/generators";
 import ts from "typescript";
 import { fileURLToPath } from "node:url";
 import { dirname, join, relative } from "node:path";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { buildModuleGraph, prepareGraph, walkFileImports, type DeclaredModule } from "../src/module-graph.js";
+import { buildModuleGraph, prepareGraph, walkFileImports, listAnalyzedFiles, type DeclaredModule } from "../src/module-graph.js";
 
 const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), "fixtures/package-resolution");
 const declaredModules = [{ name: "consumer", glob: "src/consumer/**" }];
@@ -176,3 +176,89 @@ test("edges from the Program-free build equal a Program-based reference walk ove
     }
   }, { testCases: 15 });
 }, 20_000);
+
+// listAnalyzedFiles' own walk must equal ts.sys.readDirectory's real
+// output on the exact same tree, in order, not merely as a set - a cheap
+// generated case (which of these named features is present, not their
+// shape) covers the real gaps a fixed fixture alone found here before: a
+// symlink cycle back to an ancestor, a directory reached twice through a
+// symlink, mixed-case and `_`-prefixed names (ordinal sort, never
+// localeCompare, can reorder these), a broken symlink, a symlink
+// pointing outside the project root, a hidden directory, and a build
+// tool's own dist/ symlinking straight back into src/ (dist/b -> ../src/b)
+// alongside a real, non-symlinked file inside dist/ itself - the case
+// that made the two-pass split necessary: dist/'s own walk must never
+// share a visited set with the analyzed-file walk, or `src/b` reached
+// through dist/ first (dist sorts before src) marks it visited before
+// the real walk ever gets there. `prepareGraph(...).rootNames` is
+// asserted equal too, not just `listAnalyzedFiles` alone - prepareGraph
+// is what the whole graph build actually uses, and the two must never
+// drift apart. Bounded like the property above it: each case builds a
+// real tree and a real ts.sys.readDirectory call, so a large case count
+// is slow for no more coverage (there are only 2^8 feature combinations,
+// and 25 cases already samples most of them more than once).
+test("listAnalyzedFiles' and prepareGraph's own order equal ts.sys.readDirectory's, across a symlink cycle, a duplicate path, mixed case, a hidden directory, and a dist/ symlinked into src/", async () => {
+  await hegel.testAsync(async (tc) => {
+    const outside = mkdtempSync(join(tmpdir(), "archstrict-walk-outside-"));
+    const root = mkdtempSync(join(tmpdir(), "archstrict-walk-"));
+    try {
+      mkdirSync(join(root, "src/a/z"), { recursive: true });
+      mkdirSync(join(root, "src/.hidden"), { recursive: true });
+      mkdirSync(join(root, "examples"), { recursive: true });
+      mkdirSync(join(root, "bower_components"), { recursive: true });
+      writeFileSync(join(root, "src/a/index.ts"), "export const x = 1;\n");
+      writeFileSync(join(root, "src/a/z/deep.ts"), "export const x = 1;\n");
+      writeFileSync(join(root, "examples/ex.ts"), "export const x = 1;\n");
+      writeFileSync(join(root, "bower_components/bc.ts"), "export const x = 1;\n");
+      if (tc.draw(gen.booleans())) writeFileSync(join(root, "src/a/B.ts"), "export const x = 1;\n");
+      if (tc.draw(gen.booleans())) writeFileSync(join(root, "src/a/_u.ts"), "export const x = 1;\n");
+      if (tc.draw(gen.booleans())) writeFileSync(join(root, "src/.hidden/h.ts"), "export const x = 1;\n");
+      if (tc.draw(gen.booleans())) symlinkSync(join(root, "examples"), join(root, "src/a/docs-link")); // duplicate path
+      if (tc.draw(gen.booleans())) symlinkSync(join(root, "src"), join(root, "src/a/z/loop")); // ancestor cycle
+      if (tc.draw(gen.booleans())) symlinkSync(join(root, "nope"), join(root, "src/a/broken.ts")); // broken
+      if (tc.draw(gen.booleans())) {
+        mkdirSync(join(outside, "lib"), { recursive: true });
+        writeFileSync(join(outside, "lib/out.ts"), "export const x = 1;\n");
+        symlinkSync(join(outside, "lib"), join(root, "src/outlink"));
+      }
+      if (tc.draw(gen.booleans())) {
+        mkdirSync(join(root, "src/b"), { recursive: true });
+        writeFileSync(join(root, "src/b/index.ts"), "export const x = 1;\n");
+        mkdirSync(join(root, "dist"), { recursive: true });
+        writeFileSync(join(root, "dist/built.js"), "export const x = 1;\n"); // a real, non-symlinked file inside dist/
+        symlinkSync(join(root, "src/b"), join(root, "dist/b")); // build tool links sources into dist
+      }
+      const realRoot = realpathSync(root);
+      const head = ts.sys.readDirectory(realRoot, [".ts", ".tsx", ".mts", ".cts"], ["**/node_modules/**", "**/dist/**"]);
+      const now = listAnalyzedFiles(realRoot, [], [], "index.ts");
+      expect(now).toEqual(head);
+      const prepared = prepareGraph({ projectRoot: realRoot, declaredModules: [{ name: "root", glob: "**" }], exclude: [], surface: "index.ts" });
+      expect(prepared.rootNames).toEqual(head);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(outside, { recursive: true, force: true });
+    }
+  }, { testCases: 25 });
+}, 20_000);
+
+// The exact fixture that first found the dist/-symlinked-into-src/ bug -
+// kept as a fixed example alongside the property above it, so a future
+// change that happens to draw around this specific shape by chance still
+// has one deterministic case pinning it down.
+test("a dist/ directory symlinking back into src/ never hides the real src/ file from prepareGraph", () => {
+  const root = mkdtempSync(join(tmpdir(), "archstrict-walk-dist-symlink-"));
+  try {
+    mkdirSync(join(root, "src/shared"), { recursive: true });
+    mkdirSync(join(root, "dist"));
+    writeFileSync(join(root, "src/shared/index.ts"), "export const s = 1;\n");
+    writeFileSync(join(root, "src/index.ts"), 'import { s } from "./shared/index.js"; export const x = s;\n');
+    symlinkSync(join(root, "src/shared"), join(root, "dist/shared")); // build tool links sources into dist
+    const realRoot = realpathSync(root);
+    const head = ts.sys.readDirectory(realRoot, [".ts"], ["**/node_modules/**", "**/dist/**"]);
+    expect(listAnalyzedFiles(realRoot, [], [], "index.ts")).toEqual(head);
+    const prepared = prepareGraph({ projectRoot: realRoot, declaredModules: [{ name: "src", glob: "src/**" }], exclude: [], surface: "index.ts" });
+    expect(prepared.rootNames).toEqual(head);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

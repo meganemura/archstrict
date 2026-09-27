@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { init } from "../src/verbs/init.js";
 import { check, formatText, loadConfig } from "../src/verbs/check.js";
+import type { Prover } from "../src/rules/config-meaning.js";
 import { ReportError } from "../src/report-error.js";
 
 // A real ES module namespace object's own exports are read-only -
@@ -793,6 +794,41 @@ describe("check", () => {
       try {
         const result = await check(root, join(linkedRoot, "src", "app", "a.ts"));
         expect(result.violations).toHaveLength(1);
+      } finally {
+        rmSync(linkedRoot, { force: true });
+      }
+    });
+  });
+
+  // check()'s own `configPath` (a config-meaning violation's own `path`)
+  // is realpath'd once, at the top of check(), for the same reason
+  // filterToFile realpaths `file`: a symlinked project root would
+  // otherwise leave `config.configPath` in the symlinked textual form
+  // while filterToFile's own `target` (from a real, symlinked-through
+  // `focusFile`) is realpath'd, comparing unequal and silently dropping
+  // every config-meaning finding for a `check <config>` scoped to that
+  // project.
+  test("check archstrict.config.ts still reports config-meaning through a symlinked project root", async () => {
+    await withTempProject(async (root) => {
+      mkdirSync(join(root, "src", "app"), { recursive: true });
+      writeFileSync(join(root, "src", "app", "a.ts"), "export const a = 1;\n");
+      writeFileSync(join(root, "archstrict.config.ts"), [
+        "export default {",
+        '  declaredModules: [{ name: "app", glob: "src/app/**" }],',
+        '  because: "test architecture",',
+        "  edges: { point: [{ from: { tags: [\"role:app\"] }, to: \"src/app/**\", because: \"Keep app self-contained.\" }] },",
+        "};",
+      ].join("\n"));
+      const prover: Prover = async () => ({ answers: {
+        "point-0": { type: "choice", choice: "contradicts", confidence: 0.9,
+          probabilities: { consistent: 0.1, contradicts: 0.9 } },
+      } });
+
+      const linkedRoot = join(root, "..", `${root.split("/").at(-1)}-symlink`);
+      symlinkSync(root, linkedRoot);
+      try {
+        const result = await check(linkedRoot, join(linkedRoot, "archstrict.config.ts"), { prove: true, prover });
+        expect(result.violations.some((v) => v.rule === "config-meaning")).toBe(true);
       } finally {
         rmSync(linkedRoot, { force: true });
       }

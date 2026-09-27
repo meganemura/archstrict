@@ -12,7 +12,7 @@
 // the same identity for the same violation without depending on each other.
 import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { buildModuleGraph, toProjectRelativePosix, type ModuleGraph } from "../module-graph.js";
+import { buildModuleGraphForRules, toProjectRelativePosix, type ModuleGraph } from "../module-graph.js";
 import type { Config } from "../config.js";
 import { ReportError } from "../report-error.js";
 import { fingerprintOf, readTodo, writeTodo } from "../todo-store.js";
@@ -153,7 +153,7 @@ export async function todo(projectRoot: string): Promise<TodoResult> {
   const config = await loadConfig(configPath);
   // See check.ts's own comment: declaredModules is the only source of
   // scope now.
-  const graph = buildModuleGraph({
+  const graph = buildModuleGraphForRules({
     projectRoot,
     declaredModules: config.declaredModules!,
     exclude: config.exclude,

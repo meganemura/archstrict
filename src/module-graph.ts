@@ -47,8 +47,8 @@
 // former.
 import ts from "typescript";
 import { createHash } from "node:crypto";
-import { readEdgeCache, writeEdgeCache, type EdgeCache } from "./edge-cache.js";
-import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { readEdgeCache, writeEdgeCache, type EdgeCache, type CachedFileEntry, type CachedResolution } from "./edge-cache.js";
+import { existsSync, readFileSync, readdirSync, realpathSync, statSync, type Dirent } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { builtinModules } from "node:module";
 import { compileGlob, mostSpecificMatch } from "./classify.js";
@@ -251,6 +251,18 @@ export type BuildOptions = {
 // isEligibleSourceFile's own comment) - this list is source extensions
 // only, not every extension ts.sys.readDirectory could be asked for.
 export const ANALYZED_EXTENSIONS = [".ts", ".tsx", ".mts", ".cts"] as const;
+
+// A relative or bare specifier resolves through every one of these
+// extensions, analyzed or not: a hand-authored .d.ts/.d.mts/.d.cts
+// (declarations with no source counterpart), a plain .js/.mjs/.cjs/.jsx
+// (an already-built or hand-written non-TypeScript sibling), a bare
+// .json (an `import data.json` under `resolveJsonModule`), or one of the
+// four ANALYZED_EXTENSIONS themselves under an exclude glob or outside
+// every declared module's own glob - excluded from analysis, but not
+// from what a specifier can resolve to. None of these is parsed or
+// walked for its own imports here - only whether one exists at a given
+// path can change which real file a specifier resolves to.
+const RESOLVABLE_EXTENSIONS = [".ts", ".tsx", ".mts", ".cts", ".d.ts", ".d.mts", ".d.cts", ".js", ".mjs", ".cjs", ".jsx", ".json"] as const;
 
 // The default public surface now names one file per analyzed source
 // extension (an array, not a single string) - a directory module whose
@@ -542,6 +554,227 @@ function isEffectivelyTypeOnlyExport(node: ts.ExportDeclaration): boolean {
 // hand-rolled scan here would drift from isEligibleSourceFile's own rules
 // (node_modules/dist segments, .d.ts, exclude globs) the moment either one
 // changed without the other.
+const NON_TS_SOURCE_EXTENSIONS = [".js", ".mjs", ".cjs"] as const;
+
+export type ProjectTreeWalk = {
+  analyzedFiles: string[];
+  nonTsSourceFileCount: number;
+  resolvableFiles: string[];
+  packageJsonFiles: string[];
+  // Every node_modules directory the descent met, not descended into -
+  // an ancestor of `projectRoot` itself is a separate, second source
+  // (ancestorNodeModulesDirs), since it is never inside this walk's own
+  // root at all.
+  nodeModulesDirs: string[];
+};
+
+// One directory's own real identity, following any symlink - `undefined`
+// for a broken symlink, or a directory this process cannot stat at all
+// (invisible to this walk, the same as an unreadable file is).
+function realDirOf(path: string): string | undefined {
+  try {
+    return realpathSync(path);
+  } catch {
+    return undefined;
+  }
+}
+
+// Ordinal, case-sensitive comparison - plain `<`/`>` on the raw strings,
+// never `localeCompare` (which is locale-sensitive and can reorder
+// mixed-case or `_`-prefixed names differently across machines). Matches
+// TypeScript's own `matchFiles`, whose real output this walk replaces
+// (walk-parity tests compare directly against it) - a caller comparing
+// this walk's own order against a fresh `ts.sys.readDirectory` call must
+// see the identical order, not merely the identical file set.
+function ordinalCompare(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+// A directory's own children, split into real files and real
+// directories (a symlink resolved through statSync either way - a
+// Dirent never resolves one on its own: isDirectory()/isFile() both
+// read false for a symlink regardless of what it points at). A broken
+// symlink, or an entry this process cannot stat at all, is invisible -
+// the same as a file this walk can't read is everywhere else in this
+// project. Each group comes back sorted with `ordinalCompare`, matching
+// `matchFiles`' own order.
+function readDirEntries(dir: string): { files: Dirent[]; dirs: { entry: Dirent; real: string }[] } {
+  let entries: Dirent[];
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return { files: [], dirs: [] };
+  }
+  const files: Dirent[] = [];
+  const dirs: { entry: Dirent; real: string }[] = [];
+  for (const entry of entries) {
+    const full = join(dir, entry.name);
+    let isDir = entry.isDirectory();
+    let isFile = entry.isFile();
+    if (entry.isSymbolicLink()) {
+      try {
+        const target = statSync(full);
+        isDir = target.isDirectory();
+        isFile = target.isFile();
+      } catch {
+        continue;
+      }
+    }
+    if (isDir) {
+      const real = realDirOf(full);
+      if (real !== undefined) dirs.push({ entry, real });
+      continue;
+    }
+    if (isFile) files.push(entry);
+  }
+  files.sort((a, b) => ordinalCompare(a.name, b.name));
+  dirs.sort((a, b) => ordinalCompare(a.entry.name, b.entry.name));
+  return { files, dirs };
+}
+
+// One recursive descent of the project tree, in place of four separate
+// directory walks: the analyzed file list, the non-TS source count, the
+// resolvable-file set, and the outside-node_modules package.json list.
+// node_modules is recorded but never descended into - the package names
+// and package.json mtimes a resolution fingerprint needs from it come
+// from listNodeModulesPackages instead, reading only that one directory's
+// own top level. config.exclude applies to the analyzed list and the
+// non-TS count only - never to the resolvable set or the package.json
+// list, which describe what a specifier can reach, not what gets
+// analyzed.
+//
+// dist/ is NEVER entered by this pass, unconditionally - not only under
+// `analysisOnly` (see below). A real, measured case this fixes: a build
+// tool symlinking a source directory straight into dist/ (`dist/shared
+// -> ../src/shared`, a real pattern some bundlers use) reaches
+// `src/shared`'s own real identity while walking dist/ alphabetically
+// before src/ - if this pass's own visited set were shared with dist's
+// own descent, `src/shared` would already be marked visited by the time
+// this pass reaches it for real, and every file under it would silently
+// vanish from the analyzed list. Every one of dist/'s own top-level
+// directories this pass meets (never descended into) is instead handed
+// to a second, wholly separate pass below - own visited set, never
+// touching this pass's own analyzed output at all.
+//
+// `analysisOnly` (listAnalyzedFiles' own use, and every other caller that
+// wants only the analyzed list) additionally skips collecting the
+// resolvable set, the package.json list, and the node_modules directory
+// list for the rest of the tree too (and skips the second, dist-only
+// pass entirely) - each is real, avoidable work a caller that never
+// reads those fields would otherwise pay for nothing.
+// buildModuleGraphForRules' own resolutionInputs is the one caller that
+// needs the fuller walk (`analysisOnly` false, prepareGraph's own
+// default).
+//
+// Every directory's own real identity (following any symlink) is
+// visited at most once per pass, first visit wins - the same rule
+// TypeScript's own `matchFiles` follows. Without it, a symlink cycle (a
+// directory symlinked back to one of its own ancestors) recurses forever
+// in practice (bounded only by the filesystem's own path-length limit),
+// and a directory reached twice through two different symlinks (or a
+// symlink and its own real target) is listed twice over. Each pass's
+// root (this walk's own `projectRoot` for the first; each dist/
+// directory, independently, for the second) is seeded into that pass's
+// own visited set before it starts, so a later symlink back to it (or to
+// any directory already reached within that same pass) is caught the
+// same way an ordinary cycle is.
+//
+// Measured directly on nukadoko-archstrict-adopt's own real tree (1,342
+// files outside node_modules): the four separate ts.sys.readDirectory
+// calls this replaces took about 41 ms; this one recursive descent takes
+// about 23 ms - roughly 1.8x faster, from walking every directory once
+// instead of four times.
+function walkProjectTree(
+  projectRoot: string,
+  excludeGlobs: readonly string[],
+  dtsSurfaceGlobs: readonly string[],
+  analysisOnly = false,
+): ProjectTreeWalk {
+  const analyzedFiles: string[] = [];
+  let nonTsSourceFileCount = 0;
+  const resolvableFiles: string[] = [];
+  const packageJsonFiles: string[] = [];
+  const nodeModulesDirs: string[] = [];
+  const distDirs: string[] = [];
+  const visited = new Set<string>();
+
+  function visit(dir: string): void {
+    const { files, dirs } = readDirEntries(dir);
+
+    for (const entry of files) {
+      const full = join(dir, entry.name);
+      if (entry.name === "package.json" && !analysisOnly) packageJsonFiles.push(full);
+      if (!analysisOnly && RESOLVABLE_EXTENSIONS.some((ext) => entry.name.endsWith(ext))) resolvableFiles.push(full);
+      const rel = toProjectRelativePosix(full, projectRoot);
+      if (excludeGlobs.some((glob) => compileGlob(glob).test(rel))) continue;
+      if (NON_TS_SOURCE_EXTENSIONS.some((ext) => entry.name.endsWith(ext))) {
+        nonTsSourceFileCount++;
+      } else if (
+        ANALYZED_EXTENSIONS.some((ext) => entry.name.endsWith(ext)) &&
+        (!isDeclarationFile(full) || dtsSurfaceGlobs.some((glob) => compileGlob(glob).test(rel)))
+      ) {
+        analyzedFiles.push(full);
+      }
+    }
+
+    for (const { entry, real } of dirs) {
+      const full = join(dir, entry.name);
+      if (entry.name === "node_modules") {
+        if (!analysisOnly) nodeModulesDirs.push(full);
+        continue;
+      }
+      // An exact, case-sensitive match on every platform: "Dist" or "DIST" stays analyzed even on
+      // a case-insensitive file system, so one project gives the same analyzed list on macOS,
+      // Windows and Linux.
+      if (entry.name === "dist") {
+        if (!analysisOnly) distDirs.push(full);
+        continue; // never entered by this pass, unconditionally
+      }
+      if (visited.has(real)) continue;
+      visited.add(real);
+      visit(full);
+    }
+  }
+
+  const rootReal = realDirOf(projectRoot);
+  if (rootReal !== undefined) visited.add(rootReal);
+  visit(projectRoot);
+
+  // The second pass: every dist/ directory the first pass met, walked
+  // separately for the resolvable set, the package.json list, and the
+  // node_modules directory list only - never the analyzed list or the
+  // non-TS count, and never sharing the first pass's own visited set.
+  if (!analysisOnly) {
+    const distVisited = new Set<string>();
+    function visitDist(dir: string): void {
+      const { files, dirs } = readDirEntries(dir);
+      for (const entry of files) {
+        const full = join(dir, entry.name);
+        if (entry.name === "package.json") packageJsonFiles.push(full);
+        if (RESOLVABLE_EXTENSIONS.some((ext) => entry.name.endsWith(ext))) resolvableFiles.push(full);
+      }
+      for (const { entry, real } of dirs) {
+        const full = join(dir, entry.name);
+        if (entry.name === "node_modules") {
+          nodeModulesDirs.push(full);
+          continue;
+        }
+        if (distVisited.has(real)) continue;
+        distVisited.add(real);
+        visitDist(full);
+      }
+    }
+    for (const dir of distDirs) {
+      const real = realDirOf(dir);
+      if (real === undefined || distVisited.has(real)) continue;
+      distVisited.add(real);
+      visitDist(dir);
+    }
+  }
+
+  return { analyzedFiles, nonTsSourceFileCount, resolvableFiles, packageJsonFiles, nodeModulesDirs };
+}
+
 export function listAnalyzedFiles(
   projectRoot: string,
   excludeGlobs: readonly string[],
@@ -551,24 +784,28 @@ export function listAnalyzedFiles(
   // Computed once for the whole scan, not once per .d.ts candidate file:
   // surfaceGlobsAllowingDts itself derives every module's own surface from
   // its package.json (a file read plus a JSON.parse per module), and a
-  // project can have thousands of .d.ts candidates in one readDirectory
-  // call - isEligibleSourceFile's own exported form still recomputes this
-  // per call (safe there: callers of that form check a handful of files,
-  // not the whole tree).
+  // project can have thousands of .d.ts candidates in one walk - the
+  // exported, per-file isEligibleSourceFile still recomputes this per
+  // call (safe there: callers of that form check a handful of files, not
+  // the whole tree). `analysisOnly: true` - this function's only output
+  // is the analyzed list, so dist/ is never entered and the other three
+  // categories are never collected at all. `init` calls this 4-5 times,
+  // each with its own exclude list (noise directories, colocated tests,
+  // ...) - pruning each individual call, rather than sharing one fuller
+  // walk across all of them, is the simpler of the two fixes for that:
+  // `init` needs no change at all, and every other analysis-only caller
+  // gets the same win for free. Measured directly on
+  // nukadoko-archstrict-adopt (which has no dist/ of its own): `init`
+  // took about 61 ms pruned and about 61 ms unpruned - indistinguishable
+  // there, since this checkout has nothing under dist/ to skip; the
+  // pruning still removes real work (a full descent into a real dist/
+  // tree, plus the resolvable/package.json/node_modules collection) on
+  // any project that has one.
   const dtsSurfaceGlobs = surfaceGlobsAllowingDts(declaredModules, projectRoot, globalDefaultSurface);
-  return ts.sys
-    .readDirectory(projectRoot, ANALYZED_EXTENSIONS, ["**/node_modules/**", "**/dist/**"])
-    .filter((file) => isEligibleSourceFileWithDtsGlobs(file, projectRoot, excludeGlobs, dtsSurfaceGlobs));
+  return walkProjectTree(projectRoot, excludeGlobs, dtsSurfaceGlobs, true).analyzedFiles;
 }
 
-function countNonTsSourceFiles(rootDir: string, excludeGlobs: readonly string[]): number {
-  return ts.sys
-    .readDirectory(rootDir, [".js", ".mjs", ".cjs"], ["**/node_modules/**", "**/dist/**"])
-    .filter((file) => !excludeGlobs.some((glob) => compileGlob(glob).test(toProjectRelativePosix(file, rootDir))))
-    .length;
-}
-
-// A proposed new path has never passed through ts.sys.readDirectory.
+// A proposed new path has never passed through walkProjectTree.
 // Export the eligibility predicate so callers can ask whether that path
 // would qualify, using the same rules as the real scan. Keeping these
 // rules separate from directory traversal lets both paths agree before
@@ -775,7 +1012,15 @@ export function prepareGraph(options: BuildOptions) {
   const compilerOptionsForFile = makeCompilerOptionsForFile(compilerOptions, rootConfigPath);
 
   const rootDir = projectRoot;
-  let rootNames = listAnalyzedFiles(projectRoot, exclude, declaredModules, surface);
+  // One walk produces the analyzed file list and the non-TS source count
+  // every caller needs, plus the resolvable-file set, the package.json
+  // list, and the node_modules directories found by descent - the three
+  // extra ones only buildModuleGraphForRules' own resolutionInputs reads,
+  // at no extra walk cost to a caller (simulate, fix, search) that never
+  // touches them.
+  const dtsSurfaceGlobs = surfaceGlobsAllowingDts(declaredModules, projectRoot, surface);
+  const tree = walkProjectTree(projectRoot, exclude, dtsSurfaceGlobs);
+  let rootNames = tree.analyzedFiles;
   if (options.fileListOverride) rootNames = options.fileListOverride(rootNames);
   const modules = buildDeclaredModules(projectRoot, declaredModules, rootNames, surface);
   // Cached by absolute file path: buildPreparedGraph calls this once per
@@ -793,8 +1038,9 @@ export function prepareGraph(options: BuildOptions) {
     return result;
   };
 
-  const nonTsSourceFileCount = countNonTsSourceFiles(rootDir, exclude);
-  return { projectRoot, surface, rootDir, rootNames, modules, resolveModuleForFile, compilerOptions, compilerOptionsForFile, nonTsSourceFileCount };
+  return { projectRoot, surface, rootDir, rootNames, modules, resolveModuleForFile, compilerOptions, compilerOptionsForFile,
+    nonTsSourceFileCount: tree.nonTsSourceFileCount, resolvableFiles: tree.resolvableFiles,
+    packageJsonFiles: tree.packageJsonFiles, nodeModulesDirs: tree.nodeModulesDirs };
 }
 
 export function buildModuleGraph(options: BuildOptions): ModuleGraph {
@@ -1029,8 +1275,23 @@ export type PreparedModuleGraph = ModuleGraph & {
   fileFlags: ReadonlyMap<string, { isScript: boolean; hasAmbientDeclarations: boolean }>;
 };
 
-export function buildPreparedGraph(prepared: ReturnType<typeof prepareGraph>, overrides: GraphBuildOverrides = {}): PreparedModuleGraph {
-  const { projectRoot, surface, rootDir, rootNames, modules, resolveModuleForFile, compilerOptions, compilerOptionsForFile } = prepared;
+// Everything a graph build needs that does NOT depend on which files were
+// actually walked or how their specifiers resolved - built once per build
+// (cold or cache-backed) and shared by the per-file walk, the disk-cache
+// reconciliation (module-graph.ts's own buildModuleGraphForRules), and
+// ensureProgram's own closure host, so all three resolve the same
+// specifier under the same file's own nearest tsconfig the same way.
+type GraphCommons = {
+  host: ts.CompilerHost;
+  resolutionCacheFor(options: ts.CompilerOptions): ts.ModuleResolutionCache;
+  optionsForContainingFile(containingFile: string, redirectedReference?: ts.ResolvedProjectReference): ts.CompilerOptions;
+  resolveModule(specifier: string, containingFile: string, mode: ts.ResolutionMode, redirectedReference?: ts.ResolvedProjectReference): ts.ResolvedModuleWithFailedLookupLocations;
+  analyzedSet: ReadonlySet<string>;
+  defaultFileWalk(fileName: string): FileImportWalk | undefined;
+};
+
+function makeGraphCommons(prepared: ReturnType<typeof prepareGraph>, overrides: GraphBuildOverrides): GraphCommons {
+  const { rootNames, compilerOptions, compilerOptionsForFile } = prepared;
   const host = overrides.host ?? ts.createCompilerHost(compilerOptions);
   const languageVersion = compilerOptions.target ?? ts.ScriptTarget.ESNext;
 
@@ -1061,7 +1322,6 @@ export function buildPreparedGraph(prepared: ReturnType<typeof prepareGraph>, ov
     const options = compilerOptionsForFile(fileName);
     return parseFileForImports(fileName, text, languageVersion, host, options, resolutionCacheFor(options).getPackageJsonInfoCache());
   };
-  const fileWalk = overrides.fileWalk ?? defaultFileWalk;
 
   // Every specifier resolution in this build goes through this one
   // function - the edge walk below, and (via optionsForContainingFile)
@@ -1086,22 +1346,75 @@ export function buildPreparedGraph(prepared: ReturnType<typeof prepareGraph>, ov
     return ts.resolveModuleName(specifier, containingFile, options, host, resolutionCacheFor(options), redirectedReference, mode);
   };
 
+  return { host, resolutionCacheFor, optionsForContainingFile, resolveModule, analyzedSet, defaultFileWalk };
+}
+
+// One import's own edge (or the reason it has none yet) - shared by the
+// cold, always-resolve walk below and buildModuleGraphForRules' own
+// disk-cache reconciliation, so a builtin and an external-package edge
+// are built identically whichever path produced the underlying
+// resolution. `resolution` is `undefined` for a builtin (no real
+// resolvedFile - the specifier itself, "node:"-stripped, stands in for
+// one) and the caller-supplied resolved outcome (or "unresolved")
+// otherwise.
+function edgeFor(
+  fileName: string,
+  fromModule: string,
+  imp: ImportRecord,
+  resolution: { resolvedFile: string; isExternalLibraryImport?: true; packageName?: string } | "unresolved" | undefined,
+  resolveModuleForFile: (filePath: string) => string | undefined,
+  projectRoot: string,
+): { edge: Edge } | { unresolvedSpecifier: string } | undefined {
+  const builtin = builtinModuleName(imp.specifier);
+  if (builtin !== undefined) {
+    return { edge: {
+      fromFile: fileName, fromModule, fromPosition: imp.fromPosition, specifier: imp.specifier,
+      isTypeOnly: imp.isTypeOnly, isDynamic: imp.isDynamic, resolvedFile: `node:${builtin}`, toModule: undefined, externalPackage: builtin,
+    } };
+  }
+  if (resolution === undefined || resolution === "unresolved") return { unresolvedSpecifier: imp.specifier };
+  const { resolvedFile } = resolution;
+  const toModule = resolveModuleForFile(resolvedFile);
+  const externalPackage = resolution.isExternalLibraryImport && !isWorkspaceSiblingResolution(resolvedFile, projectRoot)
+    ? (resolution.packageName ?? imp.specifier.replace(/^node:/, "")) : undefined;
+  return { edge: {
+    fromFile: fileName, fromModule, fromPosition: imp.fromPosition, specifier: imp.specifier,
+    isTypeOnly: imp.isTypeOnly, isDynamic: imp.isDynamic, resolvedFile, toModule, externalPackage,
+  } };
+}
+
+type WalkResult = {
+  edges: Edge[];
+  outsideFiles: string[];
+  // Read by type-closure.ts's own ambient-root rule - every analyzed
+  // file's own two flags (walkFileImports' own header), regardless of
+  // module membership: an ambient file binds names no import ever names,
+  // whether or not any declared module claims it.
+  fileFlags: Map<string, { isScript: boolean; hasAmbientDeclarations: boolean }>;
+  unsupportedSyntaxCount: number;
+  unresolvedSpecifierCount: number;
+  unresolvedSpecifiers: string[];
+};
+
+// The cold, always-resolve walk: every rootName is parsed (via `fileWalk`)
+// and every one of its specifiers is resolved through `commons.resolveModule`,
+// with no cache of any kind consulted. buildModuleGraphForRules' own
+// disk-cache reconciliation walks the identical rootNames list but skips
+// this function entirely for a file whose parse and resolutions are both
+// still valid.
+function walkAllFiles(prepared: ReturnType<typeof prepareGraph>, commons: GraphCommons, fileWalk: (fileName: string) => FileImportWalk | undefined): WalkResult {
+  const { rootNames, modules, resolveModuleForFile, projectRoot } = prepared;
   const outsideFiles: string[] = [];
   const edges: Edge[] = [];
   let unsupportedSyntaxCount = 0;
   let unresolvedSpecifierCount = 0;
   const unresolvedSpecifiers: string[] = [];
-
   // Walked in rootNames order (listAnalyzedFiles' own directory-scan
   // order), not program.getSourceFiles()'s dependency order - there is no
   // Program to walk here. Every edges/modules-membership/outsideFiles
   // consumer that cares about a stable order sorts at its own site rather
   // than leaning on this order (see each rule's own comment where that
   // applies); this loop makes no ordering promise beyond "rootNames order".
-  // Read by type-closure.ts's own ambient-root rule - every analyzed
-  // file's own two flags (walkFileImports' own header), regardless of
-  // module membership: an ambient file binds names no import ever names,
-  // whether or not any declared module claims it.
   const fileFlags = new Map<string, { isScript: boolean; hasAmbientDeclarations: boolean }>();
 
   for (const fileName of rootNames) {
@@ -1118,60 +1431,42 @@ export function buildPreparedGraph(prepared: ReturnType<typeof prepareGraph>, ov
     unsupportedSyntaxCount += walked.unsupportedSyntaxCount;
 
     for (const imp of walked.imports) {
-      const builtin = builtinModuleName(imp.specifier);
-
-      if (builtin !== undefined) {
-        // No real resolvedFile exists for a builtin - the specifier
-        // itself (normalized to the bare, "node:"-stripped name) stands
-        // in for one, matching every other external edge's convention of
-        // a stable, human-readable identifier rather than a filesystem
-        // path that doesn't exist.
-        edges.push({
-          fromFile: fileName,
-          fromModule,
-          fromPosition: imp.fromPosition,
-          specifier: imp.specifier,
-          isTypeOnly: imp.isTypeOnly,
-          isDynamic: imp.isDynamic,
-          resolvedFile: `node:${builtin}`,
-          toModule: undefined,
-          externalPackage: builtin,
-        });
-        continue;
-      }
-
       // Resolved regardless of a leading "." - a bare specifier
       // (`@internal/a`, `lodash`) is resolved the same way a relative
       // one is; TS's own resolver already follows a workspace
       // package's package.json `exports` under nodenext, so the only
       // thing gating that path before was this project's own code,
       // not TypeScript.
-      const resolved = resolveModule(imp.specifier, fileName, imp.mode);
-      const resolvedModule = resolved.resolvedModule;
-      if (resolvedModule === undefined) {
-        unresolvedSpecifierCount++;
-        unresolvedSpecifiers.push(imp.specifier);
-        continue;
-      }
-      const resolvedFile = resolvedModule.resolvedFileName;
-      const toModule = resolveModuleForFile(resolvedFile);
-      const externalPackage =
-        resolvedModule.isExternalLibraryImport && !isWorkspaceSiblingResolution(resolvedFile, projectRoot)
-          ? (resolvedModule.packageId?.name ?? imp.specifier.replace(/^node:/, ""))
-          : undefined;
-      edges.push({
-        fromFile: fileName,
-        fromModule,
-        fromPosition: imp.fromPosition,
-        specifier: imp.specifier,
-        isTypeOnly: imp.isTypeOnly,
-        isDynamic: imp.isDynamic,
-        resolvedFile,
-        toModule,
-        externalPackage,
-      });
+      const builtin = builtinModuleName(imp.specifier);
+      const resolution = builtin !== undefined ? undefined : (() => {
+        const resolved = commons.resolveModule(imp.specifier, fileName, imp.mode);
+        const rm = resolved.resolvedModule;
+        return rm === undefined ? ("unresolved" as const) : {
+          resolvedFile: rm.resolvedFileName,
+          ...(rm.isExternalLibraryImport ? { isExternalLibraryImport: true as const } : {}),
+          ...(rm.packageId?.name !== undefined ? { packageName: rm.packageId.name } : {}),
+        };
+      })();
+      const outcome = edgeFor(fileName, fromModule, imp, resolution, resolveModuleForFile, projectRoot);
+      if (outcome !== undefined && "edge" in outcome) edges.push(outcome.edge);
+      else if (outcome !== undefined) { unresolvedSpecifierCount++; unresolvedSpecifiers.push(outcome.unresolvedSpecifier); }
     }
   }
+
+  return { edges, outsideFiles, fileFlags, unsupportedSyntaxCount, unresolvedSpecifierCount, unresolvedSpecifiers };
+}
+
+// The rest of a graph build - crossModuleEdges and the lazy Program/rule-6
+// closure - shared verbatim by the cold walk (buildPreparedGraph) and the
+// disk-cache reconciliation (buildModuleGraphForRules): both hand this the
+// same shape (edges + fileFlags + counts), so ensureProgram's own closure
+// never needs to know whether its input came from a fresh parse or a
+// cache hit, and a cache hit never rebuilds the whole graph through a
+// second, uncached pass just to reach a Program.
+function assembleGraph(prepared: ReturnType<typeof prepareGraph>, commons: GraphCommons, walked: WalkResult, overrides: GraphBuildOverrides): PreparedModuleGraph {
+  const { modules, surface, rootDir, rootNames, compilerOptions } = prepared;
+  const { edges, outsideFiles, fileFlags, unsupportedSyntaxCount, unresolvedSpecifierCount, unresolvedSpecifiers } = walked;
+  const { host, analyzedSet, optionsForContainingFile, resolveModule } = commons;
 
   const crossModuleEdges = edges.filter(
     (e) => e.toModule !== undefined && e.toModule !== e.fromModule,
@@ -1206,6 +1501,7 @@ export function buildPreparedGraph(prepared: ReturnType<typeof prepareGraph>, ov
     }
     const surfaceFiles = [...modules.values()].flatMap((m) => m.surfaceFiles);
     const readFile = (file: string): string | undefined => host.readFile(file);
+    const languageVersion = compilerOptions.target ?? ts.ScriptTarget.ESNext;
     const baseHost = overrides.host ?? host;
 
     // The Program's own module-resolution host, not `noResolve`: `noResolve`
@@ -1341,11 +1637,47 @@ export function buildPreparedGraph(prepared: ReturnType<typeof prepareGraph>, ov
   };
 }
 
+export function buildPreparedGraph(prepared: ReturnType<typeof prepareGraph>, overrides: GraphBuildOverrides = {}): PreparedModuleGraph {
+  const commons = makeGraphCommons(prepared, overrides);
+  const walked = walkAllFiles(prepared, commons, overrides.fileWalk ?? commons.defaultFileWalk);
+  return assembleGraph(prepared, commons, walked, overrides);
+}
+
 function hash(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
 const ARCHSTRICT_VERSION: string = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
+
+// A hash of the two built files whose own code produces a cache entry
+// (this file and edge-cache.ts, read from beside `import.meta.url` - the
+// same directory a build writes both to), computed once per process. A
+// package version bump is not the only way this project's own walker or
+// resolver logic changes: a local build after an uncommitted edit to
+// either file changes neither ARCHSTRICT_VERSION nor the package.json
+// this process reads, but does change what a cache entry means - reading
+// an old entry back under new code would replay an answer the new code
+// never produced. Read once, not per build: neither file's own content
+// changes while one process is running.
+const CODE_VERSION_HASH: string = (() => {
+  try {
+    const sources = ["module-graph.js", "edge-cache.js"].map((name) => readFileSync(new URL(name, import.meta.url), "utf8"));
+    return createHash("sha256").update(sources.join("\u0000")).digest("hex");
+  } catch {
+    // A test importing this module from its own .ts source (never built
+    // to module-graph.js/edge-cache.js beside it) has no built files to
+    // hash - a fixed placeholder, not a crash, since this only ever
+    // gates a cache write/read this same process makes and reads back.
+    return "unbuilt";
+  }
+})();
+
+// The exact typescript this process resolved, next to CODE_VERSION_HASH:
+// a different installed typescript version can resolve or parse the same
+// project differently (a resolver bug fix, a new export-condition rule)
+// with neither this project's own code nor its package.json version
+// having changed at all.
+const TYPESCRIPT_VERSION: string = ts.version;
 
 function cacheMetadata(projectRoot: string, options: BuildOptions): Record<string, number | null> {
   const packages = [join(projectRoot, "package.json"), ...options.declaredModules
@@ -1356,85 +1688,377 @@ function cacheMetadata(projectRoot: string, options: BuildOptions): Record<strin
   return Object.fromEntries([...new Set(packages)].sort().map((path) => [path, existsSync(path) ? statSync(path).mtimeMs : null]));
 }
 
+// warm-graph.ts's own in-memory, single-process fingerprint - unrelated to
+// the persistent disk cache below (see buildModuleGraphForRules' own
+// header for that one's own, broader inputs). Kept as one opaque string
+// per distinct effective options object, not one 14 KB options object
+// repeated per file: a project with thousands of files but a handful of
+// distinct tsconfigs hashes a handful of objects, not one per file - the
+// same dedup technique the disk cache uses (below).
 export function graphBuildFingerprint(options: BuildOptions, prepared: ReturnType<typeof prepareGraph>) {
   const { projectRoot, rootNames, compilerOptions, compilerOptionsForFile } = prepared;
-  const tsconfigHash = hash({ root: compilerOptions, files: rootNames.map((file) => [file, compilerOptionsForFile(file)]) });
+  const optionsIndexByJson = new Map<string, number>();
+  const optionsTable: string[] = [];
+  const fileOptionsIndex = rootNames.map((file) => {
+    const json = JSON.stringify(compilerOptionsForFile(file));
+    let idx = optionsIndexByJson.get(json);
+    if (idx === undefined) { idx = optionsTable.length; optionsTable.push(json); optionsIndexByJson.set(json, idx); }
+    return idx;
+  });
+  const tsconfigHash = hash({ root: compilerOptions, optionsTable, fileOptionsIndex });
   const buildOptionsHash = hash({ declaredModules: options.declaredModules,
     exclude: options.exclude, surface: prepared.surface });
   const metadata = cacheMetadata(projectRoot, options);
   return { tsconfigHash, buildOptionsHash, metadata, archstrictVersion: ARCHSTRICT_VERSION };
 }
 
-// File membership, nearest compiler options, and package metadata all affect
-// resolution. A change to any input discards the entire snapshot.
+const LOCKFILE_NAMES = ["package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lock", "bun.lockb"] as const;
+
+// The nearest lockfile above `startDir`, checked at `startDir` itself and
+// then each ancestor up to the filesystem root - a monorepo's own
+// lockfile commonly sits at the workspace root, one or more directories
+// above any one package's own project root.
+function findNearestLockfile(startDir: string): string | undefined {
+  let dir = startDir;
+  for (;;) {
+    for (const name of LOCKFILE_NAMES) {
+      const candidate = join(dir, name);
+      if (existsSync(candidate)) return candidate;
+    }
+    const parent = dirname(dir);
+    if (parent === dir) return undefined;
+    dir = parent;
+  }
+}
+
+// Top-level package names (scoped names included, one entry per
+// "@scope/name") directly under one node_modules directory, each paired
+// with its own package.json's own mtime - read after following any
+// symlink (`npm link`, or a workspace's own symlinked sibling package),
+// since the real file such a symlink points at is what actually changes
+// when that package's own `exports`/`imports` map is edited, not the
+// symlink itself, whose own mtime a package manager does not always
+// touch for that edit. Returns an empty object for a directory that does
+// not exist (a project with no dependencies at all, or above the
+// filesystem root's own node_modules that never exists).
+function listNodeModulesPackages(nodeModulesDir: string): Record<string, number | null> {
+  let entries: Dirent[];
+  try {
+    entries = readdirSync(nodeModulesDir, { withFileTypes: true });
+  } catch {
+    return {};
+  }
+  const names: string[] = [];
+  for (const entry of entries) {
+    // Never a real package: ".bin" (npm's own executable-symlink
+    // directory), and every other dot-prefixed entry a package manager
+    // or another tool creates for its own bookkeeping right inside
+    // node_modules (".cache", ".vite", ".vitest", pnpm's own ".pnpm"
+    // content-addressed store - a real package under it is reached
+    // through a top-level symlink instead, counted there). Skipping
+    // these keeps this project's own persistent cache from moving its
+    // own fingerprint the moment it creates node_modules/.cache/archstrict.
+    if (entry.name.startsWith(".") || !(entry.isDirectory() || entry.isSymbolicLink())) continue;
+    if (entry.name.startsWith("@")) {
+      let scoped: Dirent[];
+      try {
+        scoped = readdirSync(join(nodeModulesDir, entry.name), { withFileTypes: true });
+      } catch {
+        continue;
+      }
+      for (const s of scoped) {
+        if (s.isDirectory() || s.isSymbolicLink()) names.push(`${entry.name}/${s.name}`);
+      }
+    } else {
+      names.push(entry.name);
+    }
+  }
+  return Object.fromEntries(
+    names.sort().map((name) => {
+      const packageJson = join(nodeModulesDir, name, "package.json");
+      let mtime: number | null = null;
+      try {
+        mtime = statSync(realpathSync(packageJson)).mtimeMs;
+      } catch {
+        // A package directory with no package.json, or a broken symlink -
+        // its own presence in `names` still moves the fingerprint.
+        mtime = null;
+      }
+      return [name, mtime];
+    }),
+  );
+}
+
+// Every node_modules directory this project's own root, or an ancestor
+// of it, has - up to the filesystem root, always, because that is how
+// far TypeScript's own resolver walks for a bare specifier (measured
+// directly: a package installed only into an ancestor directory's own
+// node_modules, above any lockfile the project has, still resolves for
+// real - a chain that stopped at the nearest lockfile's own directory
+// missed exactly this). Covers a package installed or removed with no
+// lockfile edit at all (no package.json under the project root moves
+// either, and no lockfile exists to record it), and a symlinked
+// workspace package's own `exports` edit. A node_modules directory
+// nested INSIDE the project (a workspace member's own, e.g.
+// packages/app/node_modules) is not an ancestor of the project root, so
+// it is covered separately, by walkProjectTree's own descent - merged
+// in here by the caller.
+//
+// Remaining limit, stated here and in this cache's own module header: an
+// edit inside an already-installed package's own file (not its
+// package.json) is invisible to every input this function reads - this
+// cache has no way to notice it short of deleting
+// node_modules/.cache/archstrict itself.
+function ancestorNodeModulesDirs(projectRoot: string): string[] {
+  const dirs: string[] = [];
+  let dir = projectRoot;
+  for (;;) {
+    dirs.push(join(dir, "node_modules"));
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return dirs;
+}
+
+// Every input a resolution answer (not a parse) depends on that this
+// module cannot read off one file alone - see edge-cache.ts's own header
+// for the full contract this feeds. `resolvableFiles`, `packageJsonFiles`,
+// and `descendantNodeModulesDirs` all come from the one project-tree walk
+// prepareGraph already did (walkProjectTree) - this function adds no
+// directory walk of its own beyond the ancestor node_modules chain and
+// each node_modules directory's own top level.
+function resolutionInputs(
+  projectRoot: string,
+  rootNames: readonly string[],
+  resolvableFiles: readonly string[],
+  packageJsonFiles: readonly string[],
+  descendantNodeModulesDirs: readonly string[],
+) {
+  const packages = Object.fromEntries(
+    [...packageJsonFiles].sort().map((path) => [path, statSync(path).mtimeMs]),
+  );
+  const lockPath = findNearestLockfile(projectRoot);
+  const lockMtime = lockPath === undefined ? null : statSync(lockPath).mtimeMs;
+  // Hashed once, not embedded file-by-file: an added, deleted, or renamed
+  // file changes this one hash, not a per-file field every other file's
+  // own entry would otherwise have to repeat.
+  const filesHash = hash([...rootNames].sort());
+  // Existence only, never mtime: a resolvable file's own content never
+  // changes what it resolves to (it is never parsed or read for that
+  // purpose) - only whether it exists at all does.
+  const resolvableFilesHash = hash([...resolvableFiles].sort());
+  const nodeModuleDirs = new Set([...ancestorNodeModulesDirs(projectRoot), ...descendantNodeModulesDirs]);
+  const nodeModules = Object.fromEntries([...nodeModuleDirs].sort().map((dir) => [dir, listNodeModulesPackages(dir)]));
+  return { packages, lockPath: lockPath ?? null, lockMtime, filesHash, resolvableFilesHash, nodeModules };
+}
+
+function resolutionKey(imp: ImportRecord): string {
+  return `${imp.specifier}\u0000${imp.mode ?? ""}`;
+}
+
+// One analyzed file's own reparse gate: true while this file's own text
+// (mtime+size), its own nearest tsconfig's own effective options, and its
+// own nearest package.json "type" (impliedNodeFormat - see edge-cache.ts's
+// own header on why this is separate from the tsconfig check) all still
+// match what was cached for it. False for either a brand-new file (no old
+// entry) or one whose own inputs moved - the only two cases that force a
+// reparse of this ONE file, never the rest of the project.
+function fileParseValid(
+  oldEntry: CachedFileEntry | undefined,
+  stat: { mtimeMs: number; size: number } | undefined,
+  optionsJson: string,
+  oldOptionsTable: readonly string[],
+  impliedNodeFormat: ts.ResolutionMode,
+): oldEntry is CachedFileEntry {
+  return oldEntry !== undefined && stat !== undefined &&
+    oldEntry.mtimeMs === stat.mtimeMs && oldEntry.size === stat.size &&
+    oldEntry.optionsIndex < oldOptionsTable.length && oldOptionsTable[oldEntry.optionsIndex] === optionsJson &&
+    oldEntry.impliedNodeFormat === impliedNodeFormat;
+}
+
+// THE one graph-build path every verb that needs a real analysis reads
+// and writes (check, check <file>, todo, rules, recommend, fix's own
+// baseline, search - see each verb's own call site). Persists to
+// node_modules/.cache/archstrict/edges.json, per file, keyed by absolute
+// path - see edge-cache.ts's own header for the full correctness contract
+// (which input invalidates which stored fact, and where). Never touched
+// by simulate.ts, which keeps its own in-memory overlay instead (a
+// proposed, not-yet-real change has no business landing in a cache other
+// commands would then read back as if it were real).
 export function buildModuleGraphForRules(options: BuildOptions): ModuleGraph {
   const prepared = prepareGraph(options);
-  const { projectRoot, rootNames, modules, resolveModuleForFile } = prepared;
+  const commons = makeGraphCommons(prepared, {});
+  const { projectRoot, rootNames, modules, resolveModuleForFile, compilerOptionsForFile, resolvableFiles, packageJsonFiles, nodeModulesDirs } = prepared;
   const path = join(projectRoot, "node_modules/.cache/archstrict/edges.json");
-  const { tsconfigHash, buildOptionsHash, metadata } = graphBuildFingerprint(options, prepared);
-  const mtimes = Object.fromEntries(rootNames.map((file) => [file, statSync(file).mtimeMs]));
   const cached = readEdgeCache(path);
-  if (cached !== undefined && cached.archstrictVersion === ARCHSTRICT_VERSION && cached.tsconfigHash === tsconfigHash &&
-      cached.buildOptionsHash === buildOptionsHash && hash(cached.metadata) === hash(metadata) &&
-      Object.keys(cached.files).length === rootNames.length &&
-      rootNames.every((file) => cached.files[file]?.mtimeMs === mtimes[file])) {
-    const edges: Edge[] = [];
-    const outsideFiles: string[] = [];
-    for (const file of cached.sourceOrder) {
-      // A file the walk could not read is invisible on a cold build too
-      // (module-graph.ts's own per-file walk: an unreadable file joins
-      // neither a module's own `files` nor `outsideFiles`) - its cache
-      // entry carries no edges either way, but membership must still
-      // skip it to replay that same invisibility, not just its edges.
-      if (cached.files[file]!.unreadable) continue;
-      const owner = resolveModuleForFile(file);
-      if (owner === undefined) outsideFiles.push(file);
-      else modules.get(owner)?.files.push(file);
-      for (const edge of cached.files[file]!.edges) {
-        // JSON omits undefined fields; restore the same Edge shape as a fresh walk.
-        edges.push({ ...edge, fromModule: owner!, toModule: edge.resolvedFile.startsWith("node:") ? undefined : resolveModuleForFile(edge.resolvedFile),
-          externalPackage: edge.externalPackage });
+  // A package version or code-version mismatch drops the whole cache -
+  // modeled here as "no old entry for any file", which the per-file logic
+  // below already treats as a full reparse+resolve of that file.
+  const versionOk = cached !== undefined && cached.archstrictVersion === ARCHSTRICT_VERSION &&
+    cached.codeVersionHash === CODE_VERSION_HASH && cached.typescriptVersion === TYPESCRIPT_VERSION;
+  const oldOptionsTable = versionOk ? cached.optionsTable : [];
+
+  // Every file's own effective options and implied module format - cheap
+  // even on a large tree: compilerOptionsForFile memoizes per directory
+  // (not per file), and ts.getImpliedNodeFormatForFile reads only the
+  // nearest package.json, cached the same way.
+  const optionsIndexByJson = new Map<string, number>();
+  const optionsTable: string[] = [];
+  const optionsJsonByFile = new Map<string, string>();
+  const optionsIndexByFile = new Map<string, number>();
+  const impliedFormatByFile = new Map<string, ts.ResolutionMode>();
+  for (const file of rootNames) {
+    const opts = compilerOptionsForFile(file);
+    const json = JSON.stringify(opts);
+    optionsJsonByFile.set(file, json);
+    let idx = optionsIndexByJson.get(json);
+    if (idx === undefined) { idx = optionsTable.length; optionsTable.push(json); optionsIndexByJson.set(json, idx); }
+    optionsIndexByFile.set(file, idx);
+    const packageJsonInfoCache = commons.resolutionCacheFor(opts).getPackageJsonInfoCache();
+    impliedFormatByFile.set(file, ts.getImpliedNodeFormatForFile(file, packageJsonInfoCache, commons.host, opts));
+  }
+
+  const inputs = resolutionInputs(projectRoot, rootNames, resolvableFiles, packageJsonFiles, nodeModulesDirs);
+  const fingerprint = hash({ ...inputs, optionsTable });
+  // Whether every file's own already-cached resolutions can be reused
+  // outright, with no ts.resolveModuleName call at all - false forces a
+  // fresh resolve of every specifier (from each file's own, possibly still
+  // cached, `imports`), never a reparse of every file.
+  const resolutionsValid = versionOk && cached.resolutionFingerprint === fingerprint;
+
+  const stats = new Map<string, { mtimeMs: number; size: number } | undefined>();
+  for (const file of rootNames) {
+    try { const st = statSync(file); stats.set(file, { mtimeMs: st.mtimeMs, size: st.size }); }
+    catch { stats.set(file, undefined); }
+  }
+
+  const newFiles: EdgeCache["files"] = {};
+  const edges: Edge[] = [];
+  const outsideFiles: string[] = [];
+  const fileFlags = new Map<string, { isScript: boolean; hasAmbientDeclarations: boolean }>();
+  let unsupportedSyntaxCount = 0;
+  let unresolvedSpecifierCount = 0;
+  const unresolvedSpecifiers: string[] = [];
+  // True once any file's own parse was not reused - a full hit (every
+  // file's own parse AND the global resolution fingerprint both still
+  // valid) needs no rewrite at all: the new cache would be byte-identical
+  // to the one already on disk, and skipping the write leaves that file's
+  // own mtime alone, so a caller comparing two back-to-back no-op builds
+  // (or a snapshot of the project tree around one) sees no change either.
+  let dirty = !versionOk || !resolutionsValid;
+
+  for (const file of rootNames) {
+    const stat = stats.get(file);
+    const oldEntry = versionOk ? cached.files[file] : undefined;
+    const optionsIndex = optionsIndexByFile.get(file)!;
+    const impliedNodeFormat = impliedFormatByFile.get(file);
+    const parseValid = fileParseValid(oldEntry, stat, optionsJsonByFile.get(file)!, oldOptionsTable, impliedNodeFormat);
+    if (!parseValid) dirty = true;
+
+    let imports: ImportRecord[];
+    let unsupportedForFile: number;
+    let isScript: boolean;
+    let hasAmbientDeclarations: boolean;
+    let unreadable: true | undefined;
+    if (parseValid) {
+      ({ imports, unsupportedSyntaxCount: unsupportedForFile, isScript, hasAmbientDeclarations, unreadable } = oldEntry);
+    } else if (stat === undefined) {
+      // Listed by the scan, gone (or unstattable) by the time this build
+      // reached it - a race, not a real file to analyze this build.
+      continue;
+    } else {
+      const walked = commons.defaultFileWalk(file);
+      if (walked === undefined) {
+        imports = []; unsupportedForFile = 0; isScript = false; hasAmbientDeclarations = false; unreadable = true;
+      } else {
+        ({ imports, unsupportedSyntaxCount: unsupportedForFile, isScript, hasAmbientDeclarations } = walked);
       }
     }
-    let fullGraph: ModuleGraph | undefined;
-    // Building the full graph just to reach its Program re-walks every
-    // file for edges this branch already has cached - wasteful, but
-    // `program`/`checker` are each still lazy getters on the result, so
-    // that cost is paid only if a caller actually touches one of them.
-    const full = () => fullGraph ??= buildModuleGraph(options);
-    return { modules, edges, outsideFiles,
-      nonTsSourceFileCount: prepared.nonTsSourceFileCount,
-      crossModuleEdges: edges.filter((e) => e.toModule !== undefined && e.toModule !== e.fromModule),
-      unsupportedSyntaxCount: cached.unsupportedSyntaxCount,
-      unresolvedSpecifierCount: cached.unresolvedSpecifiers.length,
-      unresolvedSpecifiers: cached.unresolvedSpecifiers,
-      surface: prepared.surface, rootDir: prepared.rootDir,
-      get program() { return full().program; },
-      get checker() { return full().checker; },
-      releaseProgram() { fullGraph?.releaseProgram(); fullGraph = undefined; },
-      get programNotes() { return fullGraph?.programNotes ?? []; },
-      get cachedTypeLeaks() { return fullGraph?.cachedTypeLeaks; },
-    };
+
+    if (unreadable) {
+      // Invisible exactly like a cold walk treats it (module-graph.ts's
+      // own header): joins neither a module's own `files` nor
+      // `outsideFiles`, and carries no resolutions - there is nothing to
+      // resolve for a file that was never really read.
+      newFiles[file] = { mtimeMs: stat!.mtimeMs, size: stat!.size, optionsIndex,
+        ...(impliedNodeFormat !== undefined ? { impliedNodeFormat } : {}),
+        imports: [], unsupportedSyntaxCount: 0, isScript: false, hasAmbientDeclarations: false, unreadable: true, resolutions: {} };
+      continue;
+    }
+
+    fileFlags.set(file, { isScript, hasAmbientDeclarations });
+    const fromModule = resolveModuleForFile(file);
+    if (fromModule === undefined) outsideFiles.push(file);
+    else { modules.get(fromModule)?.files.push(file); unsupportedSyntaxCount += unsupportedForFile; }
+
+    // Every walked file's own specifiers are resolved here, whether or
+    // not it currently belongs to a declared module - a file outside
+    // every module today can belong to one after a `declaredModules`
+    // edit alone, with its own mtime, size, and resolution fingerprint
+    // all unchanged; a resolution recorded only for module-owned files
+    // would leave that file with no record at all, and reading a missing
+    // key as "unresolved" below would misreport it as unresolved forever
+    // instead of resolving it once, right here.
+    //
+    // A changed file's own specifiers are always re-resolved (mustResolve
+    // is true whenever parseValid is false); otherwise, reused outright
+    // while resolutionsValid, or freshly resolved (project-wide, but from
+    // each file's own already-cached `imports`, never a reparse) the
+    // moment any covered input moved. Either way, a specifier with no
+    // prior record (this file's own membership changed, or any other
+    // reason a key could be missing) is resolved here rather than assumed
+    // unresolved - a cache entry records exactly the specifiers it
+    // actually resolved, never a gap silently read back as a negative
+    // answer.
+    const mustResolve = !parseValid || !resolutionsValid;
+    const priorResolutions: Record<string, CachedResolution> = parseValid ? oldEntry.resolutions : {};
+    const resolutions: Record<string, CachedResolution> = {};
+    for (const imp of imports) {
+      const key = resolutionKey(imp);
+      const builtin = builtinModuleName(imp.specifier);
+      let resolution: CachedResolution | undefined;
+      if (builtin === undefined) {
+        if (!mustResolve && Object.hasOwn(priorResolutions, key)) {
+          resolution = priorResolutions[key]!; // Object.hasOwn just confirmed this key is present
+        } else {
+          const resolved = commons.resolveModule(imp.specifier, file, imp.mode);
+          const rm = resolved.resolvedModule;
+          resolution = rm === undefined ? "unresolved" : {
+            resolvedFile: rm.resolvedFileName,
+            ...(rm.isExternalLibraryImport ? { isExternalLibraryImport: true as const } : {}),
+            ...(rm.packageId?.name !== undefined ? { packageName: rm.packageId.name } : {}),
+          };
+        }
+        resolutions[key] = resolution;
+      }
+      if (fromModule !== undefined) {
+        const outcome = edgeFor(file, fromModule, imp, resolution, resolveModuleForFile, projectRoot);
+        if (outcome !== undefined && "edge" in outcome) edges.push(outcome.edge);
+        else if (outcome !== undefined) { unresolvedSpecifierCount++; unresolvedSpecifiers.push(outcome.unresolvedSpecifier); }
+      }
+    }
+
+    // `stat` is defined here regardless of branch: `parseValid` requires
+    // it (fileParseValid), and the reparse branch above already `continue`s
+    // when it's undefined.
+    newFiles[file] = { mtimeMs: stat!.mtimeMs, size: stat!.size, optionsIndex,
+      ...(impliedNodeFormat !== undefined ? { impliedNodeFormat } : {}),
+      imports, unsupportedSyntaxCount: unsupportedForFile, isScript, hasAmbientDeclarations, resolutions };
   }
-  const graph = buildPreparedGraph(prepared);
-  // Every rootName the walk actually read - the union of every module's
-  // own `files` and `outsideFiles` - never includes a file the host
-  // could not read (buildPreparedGraph's own per-file walk treats that
-  // file as invisible, joining neither list). A rootName missing from
-  // this set gets `unreadable: true` below, so a cache hit can replay
-  // that same invisibility instead of treating a stale cache format's
-  // silent inclusion as membership.
-  const readFiles = new Set([...[...graph.modules.values()].flatMap((m) => m.files), ...graph.outsideFiles]);
-  const files: EdgeCache["files"] = Object.fromEntries(rootNames.map((file) =>
-    [file, { mtimeMs: mtimes[file]!, edges: [], ...(readFiles.has(file) ? {} : { unreadable: true as const }) }]));
-  for (const edge of graph.edges) files[edge.fromFile]!.edges.push(edge);
-  // Do not label an analysis with mtimes from a concurrent edit.
-  if (rootNames.every((file) => existsSync(file) && statSync(file).mtimeMs === mtimes[file])) {
-    // rootNames order (a directory scan) - this write never builds a
-    // Program at all (see buildPreparedGraph's own header for why).
-    writeEdgeCache(path, { schema: 4, tsconfigHash, archstrictVersion: ARCHSTRICT_VERSION, buildOptionsHash, metadata, files,
-      sourceOrder: rootNames.filter((file) => Object.hasOwn(files, file)),
-      unsupportedSyntaxCount: graph.unsupportedSyntaxCount, unresolvedSpecifiers: graph.unresolvedSpecifiers });
+
+  // Do not label an analysis with mtimes/sizes from a concurrent edit.
+  const stillStable = rootNames.every((file) => {
+    const before = stats.get(file);
+    if (before === undefined) return false;
+    try { const now = statSync(file); return now.mtimeMs === before.mtimeMs && now.size === before.size; }
+    catch { return false; }
+  });
+  if (dirty && stillStable) {
+    writeEdgeCache(path, { schema: 5, archstrictVersion: ARCHSTRICT_VERSION, codeVersionHash: CODE_VERSION_HASH, typescriptVersion: TYPESCRIPT_VERSION, optionsTable, resolutionFingerprint: fingerprint,
+      files: newFiles, sourceOrder: rootNames.filter((file) => Object.hasOwn(newFiles, file)) });
   }
-  return graph;
+
+  const walked: WalkResult = { edges, outsideFiles, fileFlags, unsupportedSyntaxCount, unresolvedSpecifierCount, unresolvedSpecifiers };
+  return assembleGraph(prepared, commons, walked, {});
 }

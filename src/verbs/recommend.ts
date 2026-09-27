@@ -3,7 +3,7 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { loadConfig } from "./check.js";
-import { buildModuleGraph, DEFAULT_SURFACE } from "../module-graph.js";
+import { buildModuleGraphForRules, DEFAULT_SURFACE } from "../module-graph.js";
 // Without a config, recommend previews init's own walk in memory (same
 // argument rules, same groups and globs) instead of running its own
 // single-level "src/*" discovery - the two could disagree about which
@@ -38,8 +38,8 @@ export async function recommend(
   const plan = config ? undefined : freshRun(projectRoot, normalizeDirArg(dir, "recommend"), "recommend");
   const declaredModules = config ? config.declaredModules! : plan!.declaredModules;
   const graph = config
-    ? buildModuleGraph({ projectRoot, declaredModules: config.declaredModules!, exclude: config.exclude, surface: config.surface })
-    : buildModuleGraph({ projectRoot, declaredModules: plan!.declaredModules, exclude: plan!.exclude, surface });
+    ? buildModuleGraphForRules({ projectRoot, declaredModules: config.declaredModules!, exclude: config.exclude, surface: config.surface })
+    : buildModuleGraphForRules({ projectRoot, declaredModules: plan!.declaredModules, exclude: plan!.exclude, surface });
   // An empty directory has no files to import or be imported by within this graph.
   // It cannot form a real candidate pair, so reporting it would add noise rather than information.
   const modules = [...graph.modules.values()].filter(module => module.files.length > 0).sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);

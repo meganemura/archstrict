@@ -69,8 +69,13 @@ test("an import in either direction excludes the pair", async () => fixture(asyn
   expect((await recommend(root)).pairs).toEqual([]);
 }));
 
+// node_modules/.cache/archstrict/ is recommend's own persistent graph
+// cache (module-graph.ts's own buildModuleGraphForRules), not user
+// content - excluded here so this test's own "preserves every file"
+// claim is about the project's own files, the ones a user actually wrote.
 function snapshot(root: string): unknown[] {
-  return readdirSync(root, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name)).map(entry =>
+  return readdirSync(root, { withFileTypes: true }).filter(entry => entry.name !== "node_modules")
+    .sort((a, b) => a.name.localeCompare(b.name)).map(entry =>
     [entry.name, entry.isDirectory() ? snapshot(join(root, entry.name)) : readFileSync(join(root, entry.name)).toString("base64")]);
 }
 function cli(root: string, ...args: string[]) {

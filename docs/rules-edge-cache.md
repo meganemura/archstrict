@@ -1,26 +1,42 @@
-# Edge cache for path queries
+# Persistent graph cache
 
-`rules <path>` needs module membership and resolved edges, but does not need type information.
-It uses `node_modules/.cache/archstrict/edges.json` in the analyzed project.
-`check` keeps its full analysis path. The shared graph creates its checker on first access.
+`check`, `check <file>`, `todo`, `rules`, `recommend`, `fix`'s own baseline, and `search` all build
+their module graph through one cached path. It reads and writes
+`node_modules/.cache/archstrict/edges.json` in the analyzed project. `simulate` never reads or
+writes this cache; it keeps its own in-memory overlay instead.
 
-The cache stores resolved edges per source file, source traversal order, and analysis diagnostics.
-A hit rebuilds modules and graph relationships without creating a TypeScript Program or checker.
-If a caller requests `program` or `checker` from that graph, a full analysis supplies them on demand.
+The cache stores one entry per analyzed file, keyed by its absolute path: that file's own
+syntactic import list (never its AST), its resolved specifiers, and the compiler options and
+package.json "type" it was parsed under. A file whose own mtime, size, effective compiler
+options, and implied module format all still match is not reparsed; only a changed or new file is
+reparsed, and only that one file.
 
-A hit requires the same complete source path set and source mtimes, effective compiler options, tool version, and graph build options.
-The compiler options hash includes the root options and each source file's nearest tsconfig options.
-Build options include declarations, exclusions, and the surface setting, because these affect which files produce edges.
+Resolutions are reused outright while nothing that can affect a resolution answer has moved:
+the analyzed file set, every package.json outside node_modules, the nearest lockfile, every
+resolvable file outside node_modules (any extension a specifier could resolve to, whether
+analyzed, excluded, or in dist/), every distinct effective compiler-options object, and the
+node_modules package set on the path resolution actually walks (see below). The moment any of
+these moves, every specifier is re-resolved project-wide from each file's own already-cached
+import list - never a reparse of any file whose own mtime and size are unchanged.
 
-Package metadata also invalidates the whole cache:
+The node_modules dependency set covers every node_modules directory this build meets: each
+ancestor of the project root's own, all the way up to the filesystem root (the same distance
+TypeScript's own resolver walks for a bare specifier, regardless of where a lockfile sits), and
+every one the project's own tree walk meets while descending (a workspace member's own
+node_modules, e.g. `packages/app/node_modules`), without ever descending into node_modules
+itself. Each one records its own top-level package names and their package.json's own mtime,
+read after following a symlink; a dot-prefixed entry (`.cache`, `.bin`, `.vite`, pnpm's own
+`.pnpm` store) is never counted as a package name, so this cache's own
+`node_modules/.cache/archstrict` does not move its own fingerprint. This covers a package
+installed or removed with no lockfile edit, and a symlinked workspace package's own `exports`
+edit. It does not cover an edit made directly to an already-installed package's own file, leaving
+its package.json untouched - nothing this cache reads changes for that edit, and deleting
+`node_modules/.cache/archstrict` is the only way to force a rebuild for it.
 
-- The root package.json and each declared module's package.json, at the same directory used for surface derivation.
-- The first existing root lockfile, in this order: package-lock.json, pnpm-lock.yaml, yarn.lock, bun.lock.
+The reparse gate is mtime and size, not a content hash: an edit that keeps the exact same byte
+size and whose mtime is restored (or never advances) is not detected either.
 
-Package file absence is recorded so creation and deletion also invalidate the cache.
-Any mismatch triggers a full rebuild, with no partial reuse.
-The cache uses mtimes rather than content hashes for source and package files.
-
-Writes use a temporary file in the cache directory followed by a rename.
-Malformed caches cause a rebuild; write failures leave the fresh analysis result usable.
-The cache schema has its own version, separate from the package version.
+A package version mismatch, a change to this project's own built code (module-graph.js,
+edge-cache.js), or a different installed typescript version drops the whole cache. A malformed
+cache file is a silent miss, not an error; writes are atomic (a temporary file, then a rename),
+and a failed write leaves the fresh analysis result usable regardless.

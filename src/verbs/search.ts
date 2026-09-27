@@ -2,7 +2,7 @@
 // Boundary: reads declared modules; does not search private declarations or change project files.
 import { resolve } from "node:path";
 import ts from "typescript";
-import { buildPreparedGraph, prepareGraph, toProjectRelativePosix } from "../module-graph.js";
+import { buildModuleGraphForRules, toProjectRelativePosix } from "../module-graph.js";
 import { loadConfig } from "./check.js";
 
 export type SearchMatch = {
@@ -68,8 +68,7 @@ export async function search(projectRoot: string, query: string): Promise<Search
   // loadConfig already guarantees declaredModules is a well-shaped array
   // (assertDeclaredModulesShapeValid) - see check.ts's own comment.
   const options = { projectRoot, declaredModules: config.declaredModules!, exclude: config.exclude, surface: config.surface };
-  const prepared = prepareGraph(options);
-  const graph = buildPreparedGraph(prepared);
+  const graph = buildModuleGraphForRules(options);
   const checker = graph.checker;
   const matches: SearchMatch[] = [];
   for (const module of graph.modules.values()) {
@@ -99,7 +98,7 @@ export async function search(projectRoot: string, query: string): Promise<Search
           .replace(/import\("[^"]*"(?:\s*,\s*\{[^)]*\})?\)/g, 'import("<module>")');
         // The surface path gives an agent a legal import destination. The internal
         // declaring path would invite the public-surface bypass that rule 1 rejects.
-        matches.push({ module: module.name, surface: toProjectRelativePosix(surfacePath, prepared.projectRoot),
+        matches.push({ module: module.name, surface: toProjectRelativePosix(surfacePath, graph.rootDir),
           name, kind, signature, score });
       }
     }
