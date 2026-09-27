@@ -1492,7 +1492,7 @@ function walkAllFiles(prepared: ReturnType<typeof prepareGraph>, commons: GraphC
 function assembleGraph(prepared: ReturnType<typeof prepareGraph>, commons: GraphCommons, walked: WalkResult, overrides: GraphBuildOverrides): PreparedModuleGraph {
   const { modules, surface, rootDir, rootNames, compilerOptions } = prepared;
   const { edges, outsideFiles, fileFlags, unsupportedSyntaxCount, unresolvedSpecifierCount, unresolvedSpecifiers } = walked;
-  const { host, analyzedSet, optionsForContainingFile, resolveModule } = commons;
+  const { host, analyzedSet, optionsForContainingFile, resolveModule, resolutionCacheFor } = commons;
 
   const crossModuleEdges = edges.filter(
     (e) => e.toModule !== undefined && e.toModule !== e.fromModule,
@@ -1575,6 +1575,14 @@ function assembleGraph(prepared: ReturnType<typeof prepareGraph>, commons: Graph
           }
           return resolved;
         });
+      // With resolveModuleNameLiterals overridden, createProgram takes its
+      // package.json and module-format cache from getModuleResolutionCache.
+      // Without one, it re-reads and re-parses the nearest package.json for
+      // every file's format and keeps a copy per SourceFile: on a 23,000-file
+      // project with a 145 KB root package.json, that cost about 550 MB of a
+      // full check. The root options' cache is the one the edge walk already
+      // filled.
+      delegate.getModuleResolutionCache = () => resolutionCacheFor(compilerOptions);
       return delegate;
     }
 
