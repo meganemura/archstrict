@@ -11,7 +11,7 @@ import { todo } from "../src/verbs/todo.js";
 import { check, formatText, loadConfig } from "../src/verbs/check.js";
 import type { Prover } from "../src/rules/config-meaning.js";
 import { ReportError } from "../src/report-error.js";
-import { buildModuleGraph } from "../src/module-graph.js";
+import { buildModuleGraph, buildPreparedGraph, prepareGraph } from "../src/module-graph.js";
 
 // A real ES module namespace object's own exports are read-only -
 // vi.spyOn cannot redefine `ts.createProgram` directly. Every call here
@@ -796,7 +796,7 @@ describe("check", () => {
     });
   });
 
-  test("check <surface file> falls back with a note for a resolved module augmentation", async () => {
+  test("check <surface file> stays scoped when an augmentation target is outside every other surface export chain", async () => {
     await withTempProject(async (root) => {
       mkdirSync(join(root, "src", "a"), { recursive: true });
       mkdirSync(join(root, "src", "b"), { recursive: true });
@@ -817,8 +817,40 @@ describe("check", () => {
 
       const reused = buildModuleGraph({ projectRoot: root, declaredModules, exclude: ["archstrict.config.ts", "tsconfig.json"] });
       reused.typeLeaksForFocus("a");
-      expect(reused.focusedTypeLeakNotes).toHaveLength(1);
+      expect(reused.focusedTypeLeakNotes).toEqual([]);
       expect(reused.programNotes).toEqual([]);
+
+      const focus = join(root, "src", "a", "index.ts");
+      const full = await check(root);
+      const result = await check(root, focus);
+      expect(result.notes ?? []).toEqual([]);
+      expect(result.typeLeaks).toBe(1);
+      expect(result.violations.filter((violation) => violation.rule === "type-leak"))
+        .toEqual(full.violations.filter((violation) => violation.rule === "type-leak" && violation.path === realpathSync(focus)));
+    });
+  });
+
+  test.each([
+    ["named export", 'export type { Added } from "./target.js";\n'],
+    ["export star", 'export * from "./target.js";\n'],
+  ])("check <surface file> falls back when an augmentation target is on another surface's %s chain", async (_shape, otherSurface) => {
+    await withTempProject(async (root) => {
+      mkdirSync(join(root, "src", "a"), { recursive: true });
+      mkdirSync(join(root, "src", "b"), { recursive: true });
+      writeFileSync(join(root, "tsconfig.json"), '{"compilerOptions":{"module":"nodenext","moduleResolution":"nodenext","strict":true,"skipLibCheck":true}}');
+      writeFileSync(join(root, "package.json"), '{"type":"module"}');
+      writeFileSync(join(root, "src", "a", "index.ts"), 'import type { Added } from "../b/target.js";\nexport interface A { value: Added }\n');
+      writeFileSync(join(root, "src", "a", "augment.ts"), 'export {};\ndeclare module "../b/target.js" { export interface Added { value: number } }\n');
+      writeFileSync(join(root, "src", "b", "target.ts"), "export interface Existing { value: number }\n");
+      writeFileSync(join(root, "src", "b", "index.ts"), otherSurface);
+      const declaredModules = [
+        { name: "a", glob: "src/a/**", surface: "index.ts" },
+        { name: "b", glob: "src/b/**", surface: "index.ts" },
+      ];
+      writeFileSync(join(root, "archstrict.config.ts"), `export default ${JSON.stringify({
+        declaredModules,
+        exclude: ["archstrict.config.ts", "tsconfig.json"], because: "test architecture",
+      })};`);
 
       const focus = join(root, "src", "a", "index.ts");
       const full = await check(root);
@@ -826,9 +858,120 @@ describe("check", () => {
       expect(result.notes).toHaveLength(1);
       expect(result.notes![0]).toContain("module augmentation");
       expect(result.notes![0]).toContain("fell back");
-      expect(result.typeLeaks).toBe(1);
       expect(result.violations.filter((violation) => violation.rule === "type-leak"))
         .toEqual(full.violations.filter((violation) => violation.rule === "type-leak" && violation.path === realpathSync(focus)));
+    });
+  });
+
+  test("check <surface file> applies an ambient-root augmentation inside the focused closure", async () => {
+    await withTempProject(async (root) => {
+      mkdirSync(join(root, "src", "a"), { recursive: true });
+      mkdirSync(join(root, "src", "b"), { recursive: true });
+      writeFileSync(join(root, "tsconfig.json"), '{"compilerOptions":{"module":"nodenext","moduleResolution":"nodenext","strict":true,"skipLibCheck":true}}');
+      writeFileSync(join(root, "package.json"), '{"type":"module"}');
+      writeFileSync(join(root, "src", "a", "target.ts"), "export interface Existing { value: number }\n");
+      writeFileSync(join(root, "src", "a", "index.ts"), 'import type { Added } from "./target.js";\nexport interface A { value: Added }\n');
+      const augmentation = realpathSync(join(root, "src", "a"));
+      const augmentationFile = join(augmentation, "augment.ts");
+      writeFileSync(augmentationFile, 'export {};\ndeclare module "./target.js" { export interface Added { value: number } }\n');
+      writeFileSync(join(root, "src", "b", "index.ts"), "export interface B { value: number }\n");
+      const declaredModules = [
+        { name: "a", glob: "src/a/**", surface: "index.ts" },
+        { name: "b", glob: "src/b/**", surface: "index.ts" },
+      ];
+      writeFileSync(join(root, "archstrict.config.ts"), `export default ${JSON.stringify({
+        declaredModules,
+        exclude: ["archstrict.config.ts", "tsconfig.json"], because: "test architecture",
+      })};`);
+
+      const rounds: string[][] = [];
+      const prepared = prepareGraph({ projectRoot: root, declaredModules });
+      const graph = buildPreparedGraph(prepared, {
+        onClosureRoundForTests: (_round, files) => rounds.push([...files]),
+      });
+      const focused = graph.typeLeaksForFocus("a");
+      expect(graph.focusedTypeLeakNotes).toEqual([]);
+      expect(rounds[0]).toContain(realpathSync(augmentationFile));
+
+      const full = (await check(root)).violations.filter((violation) => violation.rule === "type-leak" && violation.todoModule === "a");
+      expect(focused).toEqual(full);
+      const closureProgram = ts.createProgram({ rootNames: rounds[0]!, options: prepared.compilerOptions });
+      const target = closureProgram.getSourceFile(realpathSync(join(root, "src", "a", "target.ts")))!;
+      const targetSymbol = closureProgram.getTypeChecker().getSymbolAtLocation(target)!;
+      expect(closureProgram.getTypeChecker().getExportsOfModule(targetSymbol).map((symbol) => symbol.name)).toContain("Added");
+    });
+  });
+
+  test.each([
+    ["declaration file", "src/o/aug.d.ts", '/// <reference path="./aug.d.ts" />\nexport interface O {}\n', [], "declare module"],
+    ["excluded source file", "src/o/aug.ts", 'import "./aug.js";\nexport interface O {}\n', ["src/o/aug.ts"], "declare module"],
+    // A declaration file applies the augmentation even without `declare`.
+    ["declaration file without declare", "src/o/aug.d.ts", '/// <reference path="./aug.d.ts" />\nexport interface O {}\n', [], "module"],
+    ["declaration file with a comment between the keywords", "src/o/aug.d.ts", '/// <reference path="./aug.d.ts" />\nexport interface O {}\n', [], "declare /* note */ module"],
+  ])("check <surface file> falls back when a non-analyzed %s augments an analyzed file", async (_shape, augmentationPath, otherSurface, exclude, keyword) => {
+    await withTempProject(async (root) => {
+      mkdirSync(join(root, "src", "m"), { recursive: true });
+      mkdirSync(join(root, "src", "o"), { recursive: true });
+      writeFileSync(join(root, "tsconfig.json"), '{"compilerOptions":{"module":"nodenext","moduleResolution":"nodenext","strict":true,"skipLibCheck":true}}');
+      writeFileSync(join(root, "package.json"), '{"type":"module"}');
+      writeFileSync(join(root, "src", "m", "hidden.ts"), "export interface Hidden { value: number }\n");
+      writeFileSync(join(root, "src", "m", "index.ts"), "export interface Foo {}\n");
+      writeFileSync(join(root, augmentationPath), [
+        'import type { Hidden } from "../m/hidden.js";',
+        `${keyword} "../m/index.js" { interface Foo { extra: Hidden } }`,
+      ].join("\n") + "\n");
+      writeFileSync(join(root, "src", "o", "index.ts"), otherSurface);
+      const declaredModules = [
+        { name: "m", glob: "src/m/**", surface: "index.ts" },
+        { name: "o", glob: "src/o/**", surface: "index.ts" },
+      ];
+      writeFileSync(join(root, "archstrict.config.ts"), `export default ${JSON.stringify({
+        declaredModules, exclude: ["archstrict.config.ts", "tsconfig.json", ...exclude], because: "test architecture",
+      })};`);
+
+      const focus = realpathSync(join(root, "src", "m", "index.ts"));
+      const full = await check(root);
+      const result = await check(root, focus);
+      expect(result.notes).toHaveLength(1);
+      expect(result.notes![0]).toContain("module augmentation");
+      expect(result.notes![0]).toContain("fell back");
+      expect(result.violations.filter((violation) => violation.rule === "type-leak"))
+        .toEqual(full.violations.filter((violation) => violation.rule === "type-leak" && violation.path === focus));
+      expect(result.violations.some((violation) => violation.rule === "type-leak" && violation.evidence.includes("Hidden"))).toBe(true);
+    });
+  });
+
+  test("check <surface file> stays scoped when a non-analyzed declaration file augments an external package", async () => {
+    await withTempProject(async (root) => {
+      mkdirSync(join(root, "src", "m"), { recursive: true });
+      mkdirSync(join(root, "src", "o"), { recursive: true });
+      mkdirSync(join(root, "node_modules", "external-pkg"), { recursive: true });
+      writeFileSync(join(root, "tsconfig.json"), '{"compilerOptions":{"module":"nodenext","moduleResolution":"nodenext","strict":true,"skipLibCheck":true}}');
+      writeFileSync(join(root, "package.json"), '{"type":"module"}');
+      writeFileSync(join(root, "node_modules", "external-pkg", "package.json"), '{"name":"external-pkg","version":"1.0.0","types":"index.d.ts"}');
+      writeFileSync(join(root, "node_modules", "external-pkg", "index.d.ts"), "export interface Client {}\n");
+      writeFileSync(join(root, "src", "m", "hidden.ts"), "export interface Hidden { value: number }\n");
+      writeFileSync(join(root, "src", "m", "index.ts"), 'import type { Hidden } from "./hidden.js";\nexport interface Foo { value: Hidden }\n');
+      writeFileSync(join(root, "src", "o", "aug.d.ts"), 'export {};\ndeclare module "external-pkg" { interface Client { extra: string } }\n');
+      writeFileSync(join(root, "src", "o", "index.ts"), '/// <reference path="./aug.d.ts" />\nexport interface O {}\n');
+      const declaredModules = [
+        { name: "m", glob: "src/m/**", surface: "index.ts" },
+        { name: "o", glob: "src/o/**", surface: "index.ts" },
+      ];
+      writeFileSync(join(root, "archstrict.config.ts"), `export default ${JSON.stringify({
+        declaredModules, exclude: ["archstrict.config.ts", "tsconfig.json"], because: "test architecture",
+      })};`);
+
+      const focus = realpathSync(join(root, "src", "m", "index.ts"));
+      const full = await check(root);
+      vi.mocked(ts.createProgram).mockClear();
+      const result = await check(root, focus);
+      expect(result.notes ?? []).toEqual([]);
+      expect(result.violations.filter((violation) => violation.rule === "type-leak"))
+        .toEqual(full.violations.filter((violation) => violation.rule === "type-leak" && violation.path === focus));
+      const roots = vi.mocked(ts.createProgram).mock.calls.flatMap(([options]) =>
+        "rootNames" in options ? options.rootNames : options);
+      expect(roots).not.toContain(realpathSync(join(root, "src", "o", "index.ts")));
     });
   });
 

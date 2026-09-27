@@ -19,8 +19,10 @@
 // module-graph.ts's own per-file walk; asking `ts.resolveModuleName`
 // again here would be a second resolution pass over the same specifiers.
 // No rule logic and no checker: this module only names the files rule 6's
-// own Program needs to see. It never decides whether that set is
-// complete - module-graph.ts's own safety net makes that call, from rule
+// own Program needs to see. Its public-name walk also reports every file
+// it visits, because an augmentation matters only when that walk depends
+// on the augmented file. It never decides whether a closure is complete -
+// module-graph.ts's own safety net makes that call, from rule
 // 6's own real resolution failures on the Program this module's output
 // became, not from anything this module reports about itself.
 //
@@ -486,16 +488,24 @@ function resolveTarget(inputs: TypeClosureInputs, file: string, specifier: strin
 // that for a NAMED answer, so it never lets `name === "default"` reach
 // this function's own stars branch at all (`resolveNamed`'s own comment
 // on `export *` and "default" has the caller-side guard).
-function hasExport(inputs: TypeClosureInputs, summaries: Summaries, file: string, name: string, seen: Set<string> = new Set()): boolean {
+function hasExport(
+  inputs: TypeClosureInputs,
+  summaries: Summaries,
+  file: string,
+  name: string,
+  seen: Set<string> = new Set(),
+  visitedFiles?: Set<string>,
+): boolean {
   if (seen.has(file)) return false;
   seen.add(file);
+  visitedFiles?.add(file);
   const summary = summarize(inputs, summaries, file);
   if (summary.exportEquals) return true;
   if (summary.exportsLocal.has(name) || summary.reexports.has(name) || (name === "default" && summary.defaultInfo !== undefined)) return true;
   if (name === "default") return false;
   return summary.stars.some((spec) => {
     const target = resolveTarget(inputs, file, spec);
-    return target !== undefined && hasExport(inputs, summaries, target, name, seen);
+    return target !== undefined && hasExport(inputs, summaries, target, name, seen, visitedFiles);
   });
 }
 
@@ -688,7 +698,13 @@ export function buildTypeClosure(inputs: TypeClosureInputs): TypeClosureResult {
   return { files: [...closure].sort() };
 }
 
-export type NamedDeclarationsResult = { keys: ReadonlySet<string>; unresolvable: boolean };
+export type NamedDeclarationsResult = {
+  keys: ReadonlySet<string>;
+  // The augmentation guard needs the actual export-chain dependency set.
+  // Reusing all analyzed files is refused because it discards scoped savings.
+  visitedFiles: ReadonlySet<string>;
+  unresolvable: boolean;
+};
 
 // The one place a checker-derived declaration (type-leak.ts's own
 // `collectNamedDeclarations`) and a syntactically-parsed one (this
@@ -721,6 +737,11 @@ export function sourceFileKey(file: string): string {
 // Program cannot also scope away (a type a consumer can already import
 // from a module outside the closure is still not a leak).
 //
+// `visitedFiles` contains each file whose export syntax can affect the
+// answer. Returning this set is required because an augmentation can add
+// a name there. Treating every analyzed augmentation as relevant is
+// refused because ambient roots already apply unrelated augmentations.
+//
 // `unresolvable`: true the moment this walk crosses a shape it cannot
 // answer as confidently as the checker would (an `export =` target, or an
 // `import x = SomeNamespace.Y` export - DeclInfo's own `isImportEquals`
@@ -736,6 +757,7 @@ export function computeSyntacticNamedDeclarations(
 ): NamedDeclarationsResult {
   const summaries: Summaries = new Map();
   const keys = new Set<string>();
+  const visitedFiles = new Set<string>();
   let unresolvable = false;
   const resolvedAllExportsOf = new Set<string>();
   const resolvedNames = new Set<string>();
@@ -754,6 +776,7 @@ export function computeSyntacticNamedDeclarations(
   // A namespace-shaped resolution names the target SourceFile. A position
   // key is refused because the first declaration can start at the same offset.
   function addSourceFileKey(target: string): void {
+    visitedFiles.add(target);
     keys.add(sourceFileKey(target));
   }
 
@@ -790,6 +813,7 @@ export function computeSyntacticNamedDeclarations(
     const key = `${file}\0${name}`;
     if (resolvedNames.has(key)) return;
     resolvedNames.add(key);
+    visitedFiles.add(file);
     const summary = summarize(inputs, summaries, file);
     if (summary.missing) return; // an edge with no real target: the checker's own symbol there has no declarations either
     if (summary.exportEquals) { unresolvable = true; return; }
@@ -840,7 +864,7 @@ export function computeSyntacticNamedDeclarations(
     if (name === "default") return;
     for (const spec of summary.stars) {
       const target = resolveTarget(inputs, file, spec);
-      if (target !== undefined && hasExport(inputs, summaries, target, name)) { resolveNamed(target, name); return; }
+      if (target !== undefined && hasExport(inputs, summaries, target, name, new Set(), visitedFiles)) { resolveNamed(target, name); return; }
     }
   }
 
@@ -853,6 +877,7 @@ export function computeSyntacticNamedDeclarations(
     const names = new Set<string>();
     if (seen.has(file)) return names;
     seen.add(file);
+    visitedFiles.add(file);
     const summary = summarize(inputs, summaries, file);
     if (summary.missing) return names;
     for (const name of summary.exportsLocal.keys()) names.add(name);
@@ -880,6 +905,7 @@ export function computeSyntacticNamedDeclarations(
   function resolveAllExportsOf(file: string): void {
     if (resolvedAllExportsOf.has(file)) return;
     resolvedAllExportsOf.add(file);
+    visitedFiles.add(file);
     const summary = summarize(inputs, summaries, file);
     if (summary.missing) return;
     if (summary.exportEquals) { unresolvable = true; return; }
@@ -894,5 +920,5 @@ export function computeSyntacticNamedDeclarations(
   }
 
   for (const file of surfaceFiles) resolveAllExportsOf(file);
-  return { keys, unresolvable };
+  return { keys, visitedFiles, unresolvable };
 }

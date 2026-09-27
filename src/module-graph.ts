@@ -11,6 +11,9 @@
 // `checkTypeLeaks` because duplicate alias logic can omit required roots.
 // The focused builder computes absent public names because loading every
 // surface would remove the performance benefit of its smaller Program.
+// It also scans resolvable TypeScript files outside analysis for module
+// augmentations. Ignoring them is refused because an omitted surface can
+// make the full Program reach one and expose an otherwise hidden type.
 // Rule 6's closure Program resolves imports with each file's nearest tsconfig
 // (`compilerOptionsForFile`, the same one the edge walk uses), not the
 // project root's compiler options for every file alike, so a nested
@@ -264,9 +267,9 @@ export const ANALYZED_EXTENSIONS = [".ts", ".tsx", ".mts", ".cts"] as const;
 // .json (an `import data.json` under `resolveJsonModule`), or one of the
 // four ANALYZED_EXTENSIONS themselves under an exclude glob or outside
 // every declared module's own glob - excluded from analysis, but not
-// from what a specifier can resolve to. None of these is parsed or
-// walked for its own imports here - only whether one exists at a given
-// path can change which real file a specifier resolves to.
+// from what a specifier can resolve to. Files outside analysis never get
+// an import walk. TypeScript-shaped files receive only an augmentation
+// scan, because a full Program can reach one through an omitted surface.
 const RESOLVABLE_EXTENSIONS = [".ts", ".tsx", ".mts", ".cts", ".d.ts", ".d.mts", ".d.cts", ".js", ".mjs", ".cjs", ".jsx", ".json"] as const;
 
 // The default public surface now names one file per analyzed source
@@ -646,7 +649,8 @@ function readDirEntries(dir: string): { files: Dirent[]; dirs: { entry: Dirent; 
 // own top level. config.exclude applies to the analyzed list and the
 // non-TS count only - never to the resolvable set or the package.json
 // list, which describe what a specifier can reach, not what gets
-// analyzed.
+// analyzed. A later pass reads TypeScript-shaped members of the
+// resolvable set for the narrow augmentation scan only.
 //
 // dist/ is NEVER entered by this pass, unconditionally - not only under
 // `analysisOnly` (see below). A real, measured case this fixes: a build
@@ -1126,6 +1130,28 @@ export type FileImportWalk = {
   moduleAugmentationSpecifiers: ModuleAugmentationSpecifier[];
 };
 
+// A top-level string-named module declaration carries the only syntax the
+// scoped safety guard needs. Keeping this extraction separate is required
+// because non-analyzed files must not pay for the full import walk.
+function moduleAugmentationSpecifiers(
+  sf: ts.SourceFile,
+  compilerOptions: ts.CompilerOptions,
+  includeScripts: boolean,
+): ModuleAugmentationSpecifier[] {
+  // A script declaration defines an ambient module. The analyzed-file walk
+  // refuses to label it as an augmentation because the script is a root.
+  if (!includeScripts && !ts.isExternalModule(sf)) return [];
+  const result: ModuleAugmentationSpecifier[] = [];
+  for (const statement of sf.statements) {
+    if (!ts.isModuleDeclaration(statement) || !ts.isStringLiteral(statement.name)) continue;
+    result.push({
+      specifier: statement.name.text,
+      mode: ts.getModeForUsageLocation(sf, statement.name, compilerOptions),
+    });
+  }
+  return result;
+}
+
 // TypeScript's own default (ensureScriptKind, applied when a caller of
 // ts.createSourceFile omits scriptKind) already maps every analyzed
 // extension this way - .tsx to TSX, everything else (.ts/.mts/.cts) to
@@ -1223,22 +1249,11 @@ export function walkFileImports(sf: ts.SourceFile, compilerOptions: ts.CompilerO
   const isScript = !ts.isExternalModule(sf);
   const hasAmbientDeclarations = sf.statements.some((statement) =>
     isGlobalAugmentationOrAmbientModule(statement) || (isScript && isTopLevelDeclaration(statement)));
-  // A script's string-named declaration defines an ambient module. Recording
-  // it as an augmentation is refused because the script is already a root.
-  const moduleAugmentationSpecifiers: ModuleAugmentationSpecifier[] = [];
-  if (!isScript) {
-    for (const statement of sf.statements) {
-      if (!ts.isModuleDeclaration(statement) || !ts.isStringLiteral(statement.name)) continue;
-      moduleAugmentationSpecifiers.push({
-        specifier: statement.name.text,
-        mode: ts.getModeForUsageLocation(sf, statement.name, compilerOptions),
-      });
-    }
-  }
+  const augmentations = moduleAugmentationSpecifiers(sf, compilerOptions, false);
   return {
     imports, unsupportedSyntaxCount, isScript, hasAmbientDeclarations,
-    hasModuleAugmentation: moduleAugmentationSpecifiers.length > 0,
-    moduleAugmentationSpecifiers,
+    hasModuleAugmentation: augmentations.length > 0,
+    moduleAugmentationSpecifiers: augmentations,
   };
 }
 
@@ -1350,6 +1365,7 @@ type GraphCommons = {
   resolveModule(specifier: string, containingFile: string, mode: ts.ResolutionMode, redirectedReference?: ts.ResolvedProjectReference): ts.ResolvedModuleWithFailedLookupLocations;
   analyzedSet: ReadonlySet<string>;
   defaultFileWalk(fileName: string): FileImportWalk | undefined;
+  scanModuleAugmentations(fileName: string): ModuleAugmentationSpecifier[] | undefined;
 };
 
 function makeGraphCommons(prepared: ReturnType<typeof prepareGraph>, overrides: GraphBuildOverrides): GraphCommons {
@@ -1385,6 +1401,23 @@ function makeGraphCommons(prepared: ReturnType<typeof prepareGraph>, overrides: 
     return parseFileForImports(fileName, text, languageVersion, host, options, resolutionCacheFor(options).getPackageJsonInfoCache());
   };
 
+  // Most non-analyzed project files contain no augmentation. Reading their
+  // text is cheaper than parsing them all, so only a matching file gets an AST.
+  // The prefilter keys on `module` followed by a quote, with only whitespace
+  // or comments between them. Requiring `declare` is refused: a declaration
+  // file applies `module "x" {}` without it, and a comment can sit between
+  // the keywords. A false match costs one parse; a missed one hides a leak.
+  const scanModuleAugmentations = (fileName: string): ModuleAugmentationSpecifier[] | undefined => {
+    const text = host.readFile(fileName);
+    if (text === undefined) return undefined;
+    if (!/\bmodule(?:\s|\/\*[\s\S]*?\*\/|\/\/[^\n]*\n)*["']/.test(text)) return [];
+    const options = compilerOptionsForFile(fileName);
+    const packageJsonInfoCache = resolutionCacheFor(options).getPackageJsonInfoCache();
+    const impliedNodeFormat = ts.getImpliedNodeFormatForFile(fileName, packageJsonInfoCache, host, options);
+    const sf = ts.createSourceFile(fileName, text, { languageVersion, impliedNodeFormat }, true, scriptKindForFile(fileName));
+    return moduleAugmentationSpecifiers(sf, options, true);
+  };
+
   // Every specifier resolution in this build goes through this one
   // function - the edge walk below, and (via optionsForContainingFile)
   // both branches of ensureProgram's own closureHost. `mode` decides
@@ -1394,7 +1427,10 @@ function makeGraphCommons(prepared: ReturnType<typeof prepareGraph>, overrides: 
   // (an ImportRecord already carrying its own mode, or a live AST literal
   // node) getModeForUsageLocation needs to compute it - see
   // walkFileImports' own header for where that happens for an analyzed
-  // file's own specifier.
+  // file's own specifier. A scanned non-analyzed file resolves its
+  // augmentation target here too, under the same options the full Program
+  // gives it. Its nearest tsconfig is refused because the full Program never
+  // reads that tsconfig, so the scan would guard a target the Program misses.
   const analyzedSet = new Set(rootNames);
   const optionsForContainingFile = (containingFile: string, redirectedReference?: ts.ResolvedProjectReference): ts.CompilerOptions =>
     analyzedSet.has(containingFile) ? compilerOptionsForFile(containingFile) : (redirectedReference?.commandLine.options ?? compilerOptions);
@@ -1408,7 +1444,7 @@ function makeGraphCommons(prepared: ReturnType<typeof prepareGraph>, overrides: 
     return ts.resolveModuleName(specifier, containingFile, options, host, resolutionCacheFor(options), redirectedReference, mode);
   };
 
-  return { host, resolutionCacheFor, optionsForContainingFile, resolveModule, analyzedSet, defaultFileWalk };
+  return { host, resolutionCacheFor, optionsForContainingFile, resolveModule, analyzedSet, defaultFileWalk, scanModuleAugmentations };
 }
 
 // One import's own edge (or the reason it has none yet) - shared by the
@@ -1458,10 +1494,23 @@ type WalkResult = {
     hasModuleAugmentation: boolean;
     moduleAugmentationSpecifiers: ModuleAugmentationSpecifier[];
   }>;
+  // A full Program can reach these files from an omitted surface. Treating
+  // them as ambient roots is refused because the focused closure may not reach them.
+  nonAnalyzedModuleAugmentations: Map<string, ModuleAugmentationSpecifier[]>;
   unsupportedSyntaxCount: number;
   unresolvedSpecifierCount: number;
   unresolvedSpecifiers: string[];
 };
+
+// Only TypeScript-shaped files can contain a declaration that changes the
+// checker. Scanning JavaScript and JSON is refused because they cannot hold it.
+function nonAnalyzedAugmentationCandidates(
+  resolvableFiles: readonly string[],
+  analyzedSet: ReadonlySet<string>,
+): string[] {
+  return resolvableFiles.filter((file) =>
+    !analyzedSet.has(file) && ANALYZED_EXTENSIONS.some((extension) => file.endsWith(extension)));
+}
 
 // The cold, always-resolve walk: every rootName is parsed (via `fileWalk`)
 // and every one of its specifiers is resolved through `commons.resolveModule`,
@@ -1470,7 +1519,7 @@ type WalkResult = {
 // this function entirely for a file whose parse and resolutions are both
 // still valid.
 function walkAllFiles(prepared: ReturnType<typeof prepareGraph>, commons: GraphCommons, fileWalk: (fileName: string) => FileImportWalk | undefined): WalkResult {
-  const { rootNames, modules, resolveModuleForFile, projectRoot } = prepared;
+  const { rootNames, modules, resolveModuleForFile, projectRoot, resolvableFiles } = prepared;
   const outsideFiles: string[] = [];
   const edges: Edge[] = [];
   let unsupportedSyntaxCount = 0;
@@ -1488,6 +1537,7 @@ function walkAllFiles(prepared: ReturnType<typeof prepareGraph>, commons: GraphC
     hasModuleAugmentation: boolean;
     moduleAugmentationSpecifiers: ModuleAugmentationSpecifier[];
   }>();
+  const nonAnalyzedModuleAugmentations = new Map<string, ModuleAugmentationSpecifier[]>();
 
   for (const fileName of rootNames) {
     const walked = fileWalk(fileName);
@@ -1530,7 +1580,15 @@ function walkAllFiles(prepared: ReturnType<typeof prepareGraph>, commons: GraphC
     }
   }
 
-  return { edges, outsideFiles, fileFlags, unsupportedSyntaxCount, unresolvedSpecifierCount, unresolvedSpecifiers };
+  for (const fileName of nonAnalyzedAugmentationCandidates(resolvableFiles, commons.analyzedSet)) {
+    const augmentations = commons.scanModuleAugmentations(fileName);
+    if (augmentations !== undefined && augmentations.length > 0) {
+      nonAnalyzedModuleAugmentations.set(fileName, augmentations);
+    }
+  }
+
+  return { edges, outsideFiles, fileFlags, nonAnalyzedModuleAugmentations,
+    unsupportedSyntaxCount, unresolvedSpecifierCount, unresolvedSpecifiers };
 }
 
 // The rest of a graph build - crossModuleEdges and the lazy Program/rule-6
@@ -1542,7 +1600,8 @@ function walkAllFiles(prepared: ReturnType<typeof prepareGraph>, commons: GraphC
 // different closure facts for cached and uncached graphs.
 function assembleGraph(prepared: ReturnType<typeof prepareGraph>, commons: GraphCommons, walked: WalkResult, overrides: GraphBuildOverrides): PreparedModuleGraph {
   const { modules, surface, rootDir, rootNames, compilerOptions } = prepared;
-  const { edges, outsideFiles, fileFlags, unsupportedSyntaxCount, unresolvedSpecifierCount, unresolvedSpecifiers } = walked;
+  const { edges, outsideFiles, fileFlags, nonAnalyzedModuleAugmentations,
+    unsupportedSyntaxCount, unresolvedSpecifierCount, unresolvedSpecifiers } = walked;
   const { host, analyzedSet, optionsForContainingFile, resolveModule, resolutionCacheFor } = commons;
 
   const crossModuleEdges = edges.filter(
@@ -1720,11 +1779,24 @@ function assembleGraph(prepared: ReturnType<typeof prepareGraph>, commons: Graph
     return program;
   };
 
-  // A project-file augmentation can add names outside the focused closure.
-  // Falling back for external targets is refused because they add no project name.
-  function hasAnalyzedModuleAugmentation(): boolean {
+  // An augmentation can hide a name only when the syntax-only public-name
+  // walk depends on its target. Falling back for every analyzed target is
+  // refused because each augmenting file is already an ambient closure root.
+  function hasAugmentationOf(visitedFiles: ReadonlySet<string>): boolean {
     for (const [file, flags] of fileFlags) {
       for (const augmentation of flags.moduleAugmentationSpecifiers) {
+        const target = resolveModule(augmentation.specifier, file, augmentation.mode).resolvedModule?.resolvedFileName;
+        if (target !== undefined && visitedFiles.has(target)) return true;
+      }
+    }
+    return false;
+  }
+
+  // A full Program can reach a non-analyzed augmentation through an omitted
+  // surface. Assuming it stays absent is refused because that can hide a leak.
+  function hasNonAnalyzedProjectAugmentation(): boolean {
+    for (const [file, augmentations] of nonAnalyzedModuleAugmentations) {
+      for (const augmentation of augmentations) {
         const target = resolveModule(augmentation.specifier, file, augmentation.mode).resolvedModule?.resolvedFileName;
         if (target !== undefined && analyzedSet.has(target)) return true;
       }
@@ -1783,10 +1855,12 @@ function assembleGraph(prepared: ReturnType<typeof prepareGraph>, commons: Graph
       // partial key set is refused because the omitted name creates a false leak.
       const fallbackReason = named.unresolvable
         ? "the syntactic public-name resolver could not resolve every declaration"
-        // An analyzed augmentation can add a name absent from surface syntax.
-        // Continuing with syntactic keys is refused because the name stays invisible.
-        : hasAnalyzedModuleAugmentation()
-          ? "an analyzed module augmentation can add public names"
+        : hasNonAnalyzedProjectAugmentation()
+          ? "a non-analyzed project file can apply a module augmentation to an analyzed file"
+        // An augmentation of a visited target can add a name absent from syntax.
+        // Continuing with syntactic keys is refused because that name stays invisible.
+        : hasAugmentationOf(named.visitedFiles)
+          ? "a module augmentation can add public names to another surface's export chain"
           : undefined;
       if (fallbackReason !== undefined) {
         // The unscoped checker supplies every name and the note exposes the cost.
@@ -2060,8 +2134,10 @@ function fileParseValid(
   optionsJson: string,
   oldOptionsTable: readonly string[],
   impliedNodeFormat: ts.ResolutionMode,
+  augmentationScanOnly: boolean,
 ): oldEntry is CachedFileEntry {
   return oldEntry !== undefined && stat !== undefined &&
+    oldEntry.augmentationScanOnly === augmentationScanOnly &&
     oldEntry.mtimeMs === stat.mtimeMs && oldEntry.size === stat.size &&
     oldEntry.optionsIndex < oldOptionsTable.length && oldOptionsTable[oldEntry.optionsIndex] === optionsJson &&
     oldEntry.impliedNodeFormat === impliedNodeFormat;
@@ -2082,6 +2158,8 @@ export function buildModuleGraphForRules(options: BuildOptions): ModuleGraph {
   const prepared = prepareGraph(options);
   const commons = makeGraphCommons(prepared, {});
   const { projectRoot, rootNames, modules, resolveModuleForFile, compilerOptionsForFile, resolvableFiles, packageJsonFiles, nodeModulesDirs } = prepared;
+  const augmentationScanFiles = nonAnalyzedAugmentationCandidates(resolvableFiles, commons.analyzedSet);
+  const cachedFiles = [...rootNames, ...augmentationScanFiles];
   const path = join(projectRoot, "node_modules/.cache/archstrict/edges.json");
   const cached = readEdgeCache(path, projectRoot);
   // A package version or code-version mismatch drops the whole cache -
@@ -2103,7 +2181,7 @@ export function buildModuleGraphForRules(options: BuildOptions): ModuleGraph {
   const optionsJsonByFile = new Map<string, string>();
   const optionsIndexByFile = new Map<string, number>();
   const impliedFormatByFile = new Map<string, ts.ResolutionMode>();
-  for (const file of rootNames) {
+  for (const file of cachedFiles) {
     const opts = compilerOptionsForFile(file);
     const json = optionsJson(opts);
     optionsJsonByFile.set(file, json);
@@ -2123,7 +2201,7 @@ export function buildModuleGraphForRules(options: BuildOptions): ModuleGraph {
   const resolutionsValid = versionOk && cached.resolutionFingerprint === fingerprint;
 
   const stats = new Map<string, { mtimeMs: number; size: number } | undefined>();
-  for (const file of rootNames) {
+  for (const file of cachedFiles) {
     try { const st = statSync(file); stats.set(file, { mtimeMs: st.mtimeMs, size: st.size }); }
     catch { stats.set(file, undefined); }
   }
@@ -2137,6 +2215,7 @@ export function buildModuleGraphForRules(options: BuildOptions): ModuleGraph {
     hasModuleAugmentation: boolean;
     moduleAugmentationSpecifiers: ModuleAugmentationSpecifier[];
   }>();
+  const nonAnalyzedModuleAugmentations = new Map<string, ModuleAugmentationSpecifier[]>();
   let unsupportedSyntaxCount = 0;
   let unresolvedSpecifierCount = 0;
   const unresolvedSpecifiers: string[] = [];
@@ -2160,7 +2239,7 @@ export function buildModuleGraphForRules(options: BuildOptions): ModuleGraph {
     const oldEntry = versionOk ? cached.files[file] : undefined;
     const optionsIndex = optionsIndexByFile.get(file)!;
     const impliedNodeFormat = impliedFormatByFile.get(file);
-    const parseValid = fileParseValid(oldEntry, stat, optionsJsonByFile.get(file)!, oldOptionsTable, impliedNodeFormat);
+    const parseValid = fileParseValid(oldEntry, stat, optionsJsonByFile.get(file)!, oldOptionsTable, impliedNodeFormat, false);
     if (!parseValid) { dirty = true; dirtyPaths.add(file); }
 
     let imports: ImportRecord[];
@@ -2196,7 +2275,8 @@ export function buildModuleGraphForRules(options: BuildOptions): ModuleGraph {
       newFiles[file] = { mtimeMs: stat!.mtimeMs, size: stat!.size, optionsIndex,
         ...(impliedNodeFormat !== undefined ? { impliedNodeFormat } : {}),
         imports: [], unsupportedSyntaxCount: 0, isScript: false, hasAmbientDeclarations: false,
-        hasModuleAugmentation: false, moduleAugmentationSpecifiers: [], unreadable: true, resolutions: {} };
+        hasModuleAugmentation: false, moduleAugmentationSpecifiers: [], augmentationScanOnly: false,
+        unreadable: true, resolutions: {} };
       continue;
     }
 
@@ -2258,11 +2338,40 @@ export function buildModuleGraphForRules(options: BuildOptions): ModuleGraph {
     newFiles[file] = { mtimeMs: stat!.mtimeMs, size: stat!.size, optionsIndex,
       ...(impliedNodeFormat !== undefined ? { impliedNodeFormat } : {}),
       imports, unsupportedSyntaxCount: unsupportedForFile, isScript, hasAmbientDeclarations,
-      hasModuleAugmentation, moduleAugmentationSpecifiers, resolutions };
+      hasModuleAugmentation, moduleAugmentationSpecifiers, augmentationScanOnly: false, resolutions };
+  }
+
+  // These files can enter only the full Program through an omitted surface.
+  // Reusing an analyzed-file walk is refused because configuration can move a
+  // file across the analysis boundary without changing its bytes.
+  for (const file of augmentationScanFiles) {
+    const stat = stats.get(file);
+    const oldEntry = versionOk ? cached.files[file] : undefined;
+    const optionsIndex = optionsIndexByFile.get(file)!;
+    const impliedNodeFormat = impliedFormatByFile.get(file);
+    const parseValid = fileParseValid(
+      oldEntry, stat, optionsJsonByFile.get(file)!, oldOptionsTable, impliedNodeFormat, true,
+    );
+    if (!parseValid) { dirty = true; dirtyPaths.add(file); }
+    if (stat === undefined) continue;
+
+    const augmentations = parseValid
+      ? oldEntry.moduleAugmentationSpecifiers
+      : commons.scanModuleAugmentations(file);
+    const unreadable = augmentations === undefined ? true as const : undefined;
+    const specifiers = augmentations ?? [];
+    if (specifiers.length > 0) nonAnalyzedModuleAugmentations.set(file, specifiers);
+    newFiles[file] = {
+      mtimeMs: stat.mtimeMs, size: stat.size, optionsIndex,
+      ...(impliedNodeFormat !== undefined ? { impliedNodeFormat } : {}),
+      imports: [], unsupportedSyntaxCount: 0, isScript: false, hasAmbientDeclarations: false,
+      hasModuleAugmentation: specifiers.length > 0, moduleAugmentationSpecifiers: specifiers,
+      augmentationScanOnly: true, ...(unreadable ? { unreadable } : {}), resolutions: {},
+    };
   }
 
   // Do not label an analysis with mtimes/sizes from a concurrent edit.
-  const stillStable = rootNames.every((file) => {
+  const stillStable = cachedFiles.every((file) => {
     const before = stats.get(file);
     if (before === undefined) return false;
     try { const now = statSync(file); return now.mtimeMs === before.mtimeMs && now.size === before.size; }
@@ -2281,6 +2390,7 @@ export function buildModuleGraphForRules(options: BuildOptions): ModuleGraph {
       versionOk ? cached.shards : undefined, dirtyPaths, deletedPaths, !versionOk || !resolutionsValid);
   }
 
-  const walked: WalkResult = { edges, outsideFiles, fileFlags, unsupportedSyntaxCount, unresolvedSpecifierCount, unresolvedSpecifiers };
+  const walked: WalkResult = { edges, outsideFiles, fileFlags, nonAnalyzedModuleAugmentations,
+    unsupportedSyntaxCount, unresolvedSpecifierCount, unresolvedSpecifiers };
   return assembleGraph(prepared, commons, walked, {});
 }

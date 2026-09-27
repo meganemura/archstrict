@@ -15,9 +15,10 @@ rest of the cache.
 
 The cache stores one entry per analyzed file, keyed by its absolute path: that file's own
 syntactic import list (never its AST), its resolved specifiers, and the compiler options and
-package.json "type" it was parsed under. A file whose own mtime, size, effective compiler
-options, and implied module format all still match is not reparsed; only a changed or new file is
-reparsed, and only that one file.
+package.json "type" it was parsed under. It also stores a scan-only entry for each resolvable
+TypeScript file outside analysis. That entry records top-level string-named module declarations.
+A file whose own mtime, size, effective compiler options, and implied module format all still
+match is not reparsed; only a changed or new file is reparsed, and only that one file.
 
 Resolutions are reused outright while nothing that can affect a resolution answer has moved:
 the analyzed file set, every package.json outside node_modules, the nearest lockfile, every

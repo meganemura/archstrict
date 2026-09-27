@@ -65,9 +65,8 @@ describe("the closure's own round bound and fallback", () => {
       const result = await check(root, join(root, "src/a/index.ts"), {
         buildGraph: (options) => buildPreparedGraph(prepareGraph(options), { forceClosureFallbackForTests: true }),
       });
-      expect(result.notes).toHaveLength(2);
-      expect(result.notes![0]).toContain("module augmentation");
-      expect(result.notes![1]).toContain("could not resolve every referenced import");
+      expect(result.notes).toHaveLength(1);
+      expect(result.notes![0]).toContain("could not resolve every referenced import");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

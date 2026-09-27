@@ -191,6 +191,8 @@ describe("computeSyntacticNamedDeclarations", () => {
       const result = computeSyntacticNamedDeclarations(inputs, surfaceFiles);
       expect(result.unresolvable).toBe(false);
       expectNamedAnswersEqual(root, declaredModules, surfaceFiles, result.keys);
+      expect(result.visitedFiles.has(realpathSync(join(root, "src/m/nsTarget.ts")))).toBe(true);
+      expect(result.visitedFiles.has(realpathSync(join(root, "src/m/cycleB.ts")))).toBe(true);
       // A real assertion that this fixture actually exercises the merge
       // and the cycle, not just an empty agreement.
       expect(result.keys.size).toBeGreaterThanOrEqual(8);

@@ -86,7 +86,13 @@ test("focused findings equal a whole-project Program's, over generated re-export
       // checks the closure's own file set directly, below.
       const includeAmbientRoot = tc.draw(gen.booleans());
       const namedByOtherModule = tc.draw(gen.sampledFrom(namingShapes));
-      const moduleAugmentation = tc.draw(gen.sampledFrom(["none", "analyzed", "unresolved"] as const));
+      const moduleAugmentation = tc.draw(gen.sampledFrom([
+        "none", "focused", "otherVisited", "unrelated", "unresolved",
+      ] as const));
+      // Location and member type vary independently. Coupling them is refused
+      // because the safety decision cannot depend on whether this payload leaks.
+      const nonAnalyzedAugmentation = tc.draw(gen.sampledFrom(["none", "declaration", "excluded"] as const));
+      const augmentationUsesInternalType = tc.draw(gen.booleans());
       if (includeAmbientRoot) {
         writeFileSync(join(root, "src/m/ambient-used.ts"), "export const used = 1;\n");
         writeFileSync(join(root, "src/m/ambient-heavy.ts"), "export const heavy = 1;\n");
@@ -136,22 +142,51 @@ test("focused findings equal a whole-project Program's, over generated re-export
 
       mkdirSync(join(root, "src/other"), { recursive: true });
       const other = otherSurface(namedByOtherModule);
-      writeFileSync(join(root, "src/other/index.ts"), other.index);
+      const nonAnalyzedReference = nonAnalyzedAugmentation === "declaration"
+        ? '/// <reference path="./non-analyzed-augment.d.ts" />\n'
+        : nonAnalyzedAugmentation === "excluded"
+          ? 'import "./non-analyzed-augment.js";\n'
+          : "";
+      writeFileSync(join(root, "src/other/index.ts"), nonAnalyzedReference + other.index);
       if (other.mid !== undefined) writeFileSync(join(root, "src/other/mid.ts"), other.mid);
+      if (moduleAugmentation === "unrelated") {
+        writeFileSync(join(root, "src/other/unrelated.ts"), "export interface Unrelated { value: number }\n");
+      }
       if (moduleAugmentation !== "none") {
-        const target = moduleAugmentation === "analyzed" ? "../m/index.js" : "missing-external-package";
+        // The draw separates augmentation reachability from project membership.
+        // A binary analyzed/external split is refused because it misses this guard.
+        const target = moduleAugmentation === "focused"
+          ? "../m/index.js"
+          : moduleAugmentation === "otherVisited"
+            ? "../m/secret.js"
+            : moduleAugmentation === "unrelated"
+              ? "./unrelated.js"
+              : "missing-external-package";
         writeFileSync(join(root, "src/other/augment.ts"), `export {};\ndeclare module "${target}" { interface Added { value: number } }\n`);
+      }
+      if (nonAnalyzedAugmentation !== "none") {
+        const extension = nonAnalyzedAugmentation === "declaration" ? ".d.ts" : ".ts";
+        const memberType = augmentationUsesInternalType ? "AugmentationHidden" : "string";
+        if (augmentationUsesInternalType) {
+          writeFileSync(join(root, "src/m/augmentation-hidden.ts"), "export interface AugmentationHidden { value: number }\n");
+        }
+        writeFileSync(join(root, `src/other/non-analyzed-augment${extension}`), [
+          ...(augmentationUsesInternalType ? ['import type { AugmentationHidden } from "../m/augmentation-hidden.js";'] : ["export {};"]),
+          `declare module "../m/index.js" { interface Augmented { augmentation: ${memberType} } }`,
+        ].join("\n") + "\n");
+        writeFileSync(join(root, "src/m/index.ts"), surface + "export interface Augmented {}\n");
       }
 
       const declaredModules: DeclaredModule[] = [
         { name: "m", glob: "src/m/**" },
         { name: "other", glob: "src/other/**" },
       ];
-      const graph = buildModuleGraph({ projectRoot: root, declaredModules });
+      const exclude = nonAnalyzedAugmentation === "excluded" ? ["src/other/non-analyzed-augment.ts"] : [];
+      const graph = buildModuleGraph({ projectRoot: root, declaredModules, exclude });
       assert.equal(graph.unresolvedSpecifierCount, 0);
       const closure = keysOf(graph.typeLeaksForFocus("m"));
 
-      const prepared = prepareGraph({ projectRoot: root, declaredModules });
+      const prepared = prepareGraph({ projectRoot: root, declaredModules, exclude });
       const program = ts.createProgram({ rootNames: prepared.rootNames, options: prepared.compilerOptions });
       const whole = keysOf(checkTypeLeaks({ modules: graph.modules, program, checker: program.getTypeChecker(), rootDir: graph.rootDir })
         .filter((violation) => violation.todoModule === "m"));
@@ -162,12 +197,14 @@ test("focused findings equal a whole-project Program's, over generated re-export
       // present - either way, an empty match on both sides for the wrong
       // reason is what this checks apart.
       const namespaceOnly = namedByOtherModule === "starAs" || namedByOtherModule === "namespaceImport";
-      if (givePublicName || !namespaceOnly) assert.equal(closure.length, 0, "expected no leak once Secret has a public name");
+      if (nonAnalyzedAugmentation !== "none" && augmentationUsesInternalType) {
+        assert.ok(closure.some((finding) => finding.includes("AugmentationHidden")), "the augmentation's internal member type must leak");
+      } else if (givePublicName || !namespaceOnly) assert.equal(closure.length, 0, "expected no leak once Secret has a public name");
       else assert.ok(closure.length >= 1, "a namespace name must not name its first declaration");
 
-      if (moduleAugmentation === "analyzed") {
+      if (nonAnalyzedAugmentation !== "none" || moduleAugmentation === "otherVisited") {
         assert.ok(graph.focusedTypeLeakNotes.some((note) => note.includes("module augmentation") && note.includes("fell back")));
-      } else if (moduleAugmentation === "unresolved") {
+      } else if (moduleAugmentation !== "none") {
         assert.ok(!graph.focusedTypeLeakNotes.some((note) => note.includes("module augmentation")));
       }
 
