@@ -913,6 +913,32 @@ export function moduleForDeclaredFile(
   );
 }
 
+// parseJsonConfigFileContent's real job (`include`/`exclude` -> a file
+// list) is work this function throws away: it returns only `.options`.
+// Given plain `ts.sys`, it still walks the whole subtree under `include`
+// to build that discarded list - measured on a 23,000-file project at 234
+// ms across the two calls loadCompilerOptions and makeCompilerOptionsForFile
+// make per run (a root tsconfig.json's own `include` covering most of the
+// tree, and a leaf one). `readDirectory: () => []` stops that walk: parsing
+// still needs a real directory-read call, but "no entries" makes every
+// glob match nothing, so the file list comes back empty rather than
+// walking the tree to build one. `paths`/`baseUrl`/`extends` never expand
+// `include`/`exclude` at all, so they resolve identically either way - a
+// leaf tsconfig's own `paths` alias still resolves against ITS OWN
+// directory (this function's own basePath, unaffected by the host).
+// `fileExists`/`readFile` stay real: `extends` resolves another tsconfig
+// file through them, and a stubbed one would silently fail to find it.
+// An empty file list also makes parseJsonConfigFileContent add a "no
+// inputs were found" diagnostic (TS18003) to its own `.errors` array -
+// this function already discards `.errors`, keeping only `.options`, so
+// that diagnostic never reaches a caller either way.
+const noExpandParseConfigHost: ts.ParseConfigHost = {
+  useCaseSensitiveFileNames: ts.sys.useCaseSensitiveFileNames,
+  readDirectory: () => [],
+  fileExists: (p) => ts.sys.fileExists(p),
+  readFile: (p) => ts.sys.readFile(p),
+};
+
 function readCompilerOptions(configPath: string): ts.CompilerOptions {
   const { config } = ts.readConfigFile(configPath, (p) => readFileSync(p, "utf8"));
   // basePath = the config's own directory - a leaf tsconfig's own `paths`
@@ -921,7 +947,7 @@ function readCompilerOptions(configPath: string): ts.CompilerOptions {
   // `pathsBasePath` from it. Hand-merging option objects instead of
   // reusing this real TypeScript call would resolve `paths` against the
   // wrong root and produce a different wrong answer, not a correct one.
-  return ts.parseJsonConfigFileContent(config, ts.sys, dirname(configPath)).options;
+  return ts.parseJsonConfigFileContent(config, noExpandParseConfigHost, dirname(configPath)).options;
 }
 
 function loadCompilerOptions(startDir: string): { configPath: string | undefined; options: ts.CompilerOptions } {
