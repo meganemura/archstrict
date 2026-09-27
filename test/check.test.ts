@@ -3,7 +3,7 @@ import * as hegel from "@hegeldev/hegel";
 import * as gen from "@hegeldev/hegel/generators";
 import ts from "typescript";
 import { assertEdgesShapeValid } from "../src/config.js";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { init } from "../src/verbs/init.js";
@@ -860,6 +860,7 @@ describe("check", () => {
       expect(result.notes![0]).toContain("fell back");
       expect(result.violations.filter((violation) => violation.rule === "type-leak"))
         .toEqual(full.violations.filter((violation) => violation.rule === "type-leak" && violation.path === realpathSync(focus)));
+      expect(existsSync(join(root, "node_modules/.cache/archstrict/augmentations.json"))).toBe(false);
     });
   });
 
@@ -899,6 +900,118 @@ describe("check", () => {
       const target = closureProgram.getSourceFile(realpathSync(join(root, "src", "a", "target.ts")))!;
       const targetSymbol = closureProgram.getTypeChecker().getSymbolAtLocation(target)!;
       expect(closureProgram.getTypeChecker().getExportsOfModule(targetSymbol).map((symbol) => symbol.name)).toContain("Added");
+    });
+  });
+
+  test("check <surface file> ignores a non-analyzed augmentation whose target cannot affect the focused answer", async () => {
+    await withTempProject(async (root) => {
+      for (const name of ["a", "b", "o"]) mkdirSync(join(root, "src", name), { recursive: true });
+      writeFileSync(join(root, "tsconfig.json"), '{"compilerOptions":{"module":"nodenext","moduleResolution":"nodenext","strict":true,"skipLibCheck":true}}');
+      writeFileSync(join(root, "package.json"), '{"type":"module"}');
+      writeFileSync(join(root, "src", "a", "hidden.ts"), "export interface Hidden { value: number }\n");
+      writeFileSync(join(root, "src", "a", "index.ts"), 'import type { Hidden } from "./hidden.js";\nexport interface A { value: Hidden }\n');
+      writeFileSync(join(root, "src", "b", "target.ts"), "export interface Target {}\n");
+      writeFileSync(join(root, "src", "b", "index.ts"), "export interface B {}\n");
+      writeFileSync(join(root, "src", "o", "aug.d.ts"), 'export {};\ndeclare module "../b/target.js" { interface Target { extra: string } }\n');
+      writeFileSync(join(root, "src", "o", "index.ts"), '/// <reference path="./aug.d.ts" />\nexport interface O {}\n');
+      const declaredModules = [
+        { name: "a", glob: "src/a/**", surface: "index.ts" },
+        { name: "b", glob: "src/b/**", surface: "index.ts" },
+        { name: "o", glob: "src/o/**", surface: "index.ts" },
+      ];
+      writeFileSync(join(root, "archstrict.config.ts"), `export default ${JSON.stringify({
+        declaredModules, exclude: ["archstrict.config.ts", "tsconfig.json"], because: "test architecture",
+      })};`);
+
+      const focus = realpathSync(join(root, "src", "a", "index.ts"));
+      const full = await check(root);
+      const result = await check(root, focus);
+      expect(result.notes ?? []).toEqual([]);
+      expect(result.violations.filter((violation) => violation.rule === "type-leak"))
+        .toEqual(full.violations.filter((violation) => violation.rule === "type-leak" && violation.path === focus));
+    });
+  });
+
+  test("check <surface file> keeps an imported non-analyzed augmentation in the focused Program", async () => {
+    await withTempProject(async (root) => {
+      mkdirSync(join(root, "src", "a"), { recursive: true });
+      mkdirSync(join(root, "src", "o"), { recursive: true });
+      writeFileSync(join(root, "tsconfig.json"), '{"compilerOptions":{"module":"nodenext","moduleResolution":"nodenext","strict":true,"skipLibCheck":true}}');
+      writeFileSync(join(root, "package.json"), '{"type":"module"}');
+      writeFileSync(join(root, "src", "a", "hidden.ts"), "export interface Hidden { value: number }\n");
+      writeFileSync(join(root, "src", "a", "index.ts"), 'import "../o/aug.js";\nexport interface Foo {}\n');
+      writeFileSync(join(root, "src", "o", "aug.d.ts"), [
+        'import type { Hidden } from "../a/hidden.js";',
+        'declare module "../a/index.js" { interface Foo { extra: Hidden } }',
+      ].join("\n") + "\n");
+      writeFileSync(join(root, "src", "o", "index.ts"), "export interface O {}\n");
+      const declaredModules = [
+        { name: "a", glob: "src/a/**", surface: "index.ts" },
+        { name: "o", glob: "src/o/**", surface: "index.ts" },
+      ];
+      writeFileSync(join(root, "archstrict.config.ts"), `export default ${JSON.stringify({
+        declaredModules, exclude: ["archstrict.config.ts", "tsconfig.json"], because: "test architecture",
+      })};`);
+
+      const focus = realpathSync(join(root, "src", "a", "index.ts"));
+      const full = await check(root);
+      const result = await check(root, focus);
+      expect(result.notes ?? []).toEqual([]);
+      expect(result.violations.filter((violation) => violation.rule === "type-leak"))
+        .toEqual(full.violations.filter((violation) => violation.rule === "type-leak" && violation.path === focus));
+      expect(result.violations.some((violation) => violation.rule === "type-leak" && violation.evidence.includes("Hidden"))).toBe(true);
+    });
+  });
+
+  test("only a surface check creates and reuses the lazy augmentation cache", async () => {
+    await withTempProject(async (root) => {
+      mkdirSync(join(root, "src", "m"), { recursive: true });
+      mkdirSync(join(root, "src", "o"), { recursive: true });
+      writeFileSync(join(root, "tsconfig.json"), '{"compilerOptions":{"module":"nodenext","moduleResolution":"nodenext","strict":true,"skipLibCheck":true}}');
+      writeFileSync(join(root, "package.json"), '{"type":"module"}');
+      writeFileSync(join(root, "src", "m", "hidden.ts"), "export interface Hidden { value: number }\n");
+      writeFileSync(join(root, "src", "m", "index.ts"), 'import type { Hidden } from "./hidden.js";\nexport interface M { value: Hidden }\n');
+      const augmentation = join(root, "src", "o", "aug.d.ts");
+      writeFileSync(augmentation, 'export {};\ndeclare module "external-one" { interface Client {} }\n');
+      writeFileSync(join(root, "src", "o", "index.ts"), "export interface O {}\n");
+      const declaredModules = [
+        { name: "m", glob: "src/m/**", surface: "index.ts" },
+        { name: "o", glob: "src/o/**", surface: "index.ts" },
+      ];
+      const exclude = ["archstrict.config.ts", "tsconfig.json"];
+      writeFileSync(join(root, "archstrict.config.ts"), `export default ${JSON.stringify({
+        declaredModules, exclude, because: "test architecture",
+      })};`);
+      const cachePath = join(root, "node_modules/.cache/archstrict/augmentations.json");
+
+      await check(root);
+      expect(existsSync(cachePath)).toBe(false);
+      await check(root, join(root, "src", "m", "hidden.ts"));
+      expect(existsSync(cachePath)).toBe(false);
+
+      let reads: string[] = [];
+      const buildGraph = (options: Parameters<typeof prepareGraph>[0]) => buildPreparedGraph(prepareGraph(options), {
+        onAugmentationCandidateReadForTests: (file) => reads.push(file),
+      });
+      const focus = join(root, "src", "m", "index.ts");
+      await check(root, focus, { buildGraph });
+      expect(existsSync(cachePath)).toBe(true);
+      expect(reads).toEqual([
+        realpathSync(join(root, "archstrict.config.ts")),
+        realpathSync(augmentation),
+      ]);
+
+      reads = [];
+      await check(root, focus, { buildGraph });
+      expect(reads).toEqual([]);
+
+      writeFileSync(augmentation, 'export {};\ndeclare module "external-package-with-a-longer-name" { interface Client {} }\n');
+      reads = [];
+      await check(root, focus, { buildGraph });
+      expect(reads).toEqual([realpathSync(augmentation)]);
+      const cache = JSON.parse(readFileSync(cachePath, "utf8"));
+      expect(cache.files[realpathSync(augmentation)].specifiers.map((item: { specifier: string }) => item.specifier))
+        .toEqual(["external-package-with-a-longer-name"]);
     });
   });
 

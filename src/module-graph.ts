@@ -11,9 +11,9 @@
 // `checkTypeLeaks` because duplicate alias logic can omit required roots.
 // The focused builder computes absent public names because loading every
 // surface would remove the performance benefit of its smaller Program.
-// It also scans resolvable TypeScript files outside analysis for module
-// augmentations. Ignoring them is refused because an omitted surface can
-// make the full Program reach one and expose an otherwise hidden type.
+// It also scans resolvable TypeScript files outside analysis when a focused
+// result can depend on them. Eager scanning is refused because other graph
+// consumers do not use module-augmentation syntax from those files.
 // Rule 6's closure Program resolves imports with each file's nearest tsconfig
 // (`compilerOptionsForFile`, the same one the edge walk uses), not the
 // project root's compiler options for every file alike, so a nested
@@ -49,6 +49,7 @@
 import ts from "typescript";
 import { createHash } from "node:crypto";
 import { readEdgeCache, writeEdgeCache, resolutionKey, type EdgeCache, type CachedFileEntry, type CachedResolution } from "./edge-cache.js";
+import { readAugmentationCache, writeAugmentationCache, type CachedAugmentationEntry } from "./augmentation-cache.js";
 import { existsSync, readFileSync, readdirSync, realpathSync, statSync, type Dirent } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { builtinModules } from "node:module";
@@ -1338,6 +1339,10 @@ export type GraphBuildOverrides = {
   // round actually ran) through this seam instead of guessing it from the
   // final graph alone. Never read outside this module.
   onClosureRoundForTests?: (round: number, closureFiles: readonly string[]) => void;
+  // Test-only: identifies a real candidate read without coupling a test to
+  // TypeScript's compiler host. Production instrumentation is refused because
+  // the cache behavior does not belong in the public graph interface.
+  onAugmentationCandidateReadForTests?: (fileName: string) => void;
 };
 
 // A file's own ambient and augmentation flags (walkFileImports' own header) -
@@ -1366,6 +1371,7 @@ type GraphCommons = {
   analyzedSet: ReadonlySet<string>;
   defaultFileWalk(fileName: string): FileImportWalk | undefined;
   scanModuleAugmentations(fileName: string): ModuleAugmentationSpecifier[] | undefined;
+  augmentationScanMetadata(fileName: string): { optionsHash: string; impliedNodeFormat: ts.ResolutionMode };
 };
 
 function makeGraphCommons(prepared: ReturnType<typeof prepareGraph>, overrides: GraphBuildOverrides): GraphCommons {
@@ -1418,6 +1424,18 @@ function makeGraphCommons(prepared: ReturnType<typeof prepareGraph>, overrides: 
     return moduleAugmentationSpecifiers(sf, options, true);
   };
 
+  // A cached syntax answer is valid only under the parse options and module
+  // format that produce its usage modes. Reusing by file metadata alone is
+  // refused because a config or package type change can change those modes.
+  const augmentationScanMetadata = (fileName: string) => {
+    const options = compilerOptionsForFile(fileName);
+    const packageJsonInfoCache = resolutionCacheFor(options).getPackageJsonInfoCache();
+    return {
+      optionsHash: createHash("sha256").update(JSON.stringify(options)).digest("hex"),
+      impliedNodeFormat: ts.getImpliedNodeFormatForFile(fileName, packageJsonInfoCache, host, options),
+    };
+  };
+
   // Every specifier resolution in this build goes through this one
   // function - the edge walk below, and (via optionsForContainingFile)
   // both branches of ensureProgram's own closureHost. `mode` decides
@@ -1444,7 +1462,8 @@ function makeGraphCommons(prepared: ReturnType<typeof prepareGraph>, overrides: 
     return ts.resolveModuleName(specifier, containingFile, options, host, resolutionCacheFor(options), redirectedReference, mode);
   };
 
-  return { host, resolutionCacheFor, optionsForContainingFile, resolveModule, analyzedSet, defaultFileWalk, scanModuleAugmentations };
+  return { host, resolutionCacheFor, optionsForContainingFile, resolveModule, analyzedSet,
+    defaultFileWalk, scanModuleAugmentations, augmentationScanMetadata };
 }
 
 // One import's own edge (or the reason it has none yet) - shared by the
@@ -1494,9 +1513,6 @@ type WalkResult = {
     hasModuleAugmentation: boolean;
     moduleAugmentationSpecifiers: ModuleAugmentationSpecifier[];
   }>;
-  // A full Program can reach these files from an omitted surface. Treating
-  // them as ambient roots is refused because the focused closure may not reach them.
-  nonAnalyzedModuleAugmentations: Map<string, ModuleAugmentationSpecifier[]>;
   unsupportedSyntaxCount: number;
   unresolvedSpecifierCount: number;
   unresolvedSpecifiers: string[];
@@ -1512,6 +1528,61 @@ function nonAnalyzedAugmentationCandidates(
     !analyzedSet.has(file) && ANALYZED_EXTENSIONS.some((extension) => file.endsWith(extension)));
 }
 
+// Only a focused rule-6 call consumes this scan. Adding it to the graph walk
+// is refused because full checks and non-surface checks cannot use the result.
+function scanNonAnalyzedModuleAugmentations(
+  prepared: ReturnType<typeof prepareGraph>,
+  commons: GraphCommons,
+  overrides: GraphBuildOverrides,
+): Map<string, ModuleAugmentationSpecifier[]> {
+  const path = join(prepared.projectRoot, "node_modules/.cache/archstrict/augmentations.json");
+  const cached = readAugmentationCache(path, ARCHSTRICT_VERSION);
+  const candidates = nonAnalyzedAugmentationCandidates(prepared.resolvableFiles, commons.analyzedSet);
+  const files: Record<string, CachedAugmentationEntry> = {};
+  const result = new Map<string, ModuleAugmentationSpecifier[]>();
+  let dirty = false;
+
+  for (const file of candidates) {
+    let before: { mtimeMs: number; size: number };
+    try { const value = statSync(file); before = { mtimeMs: value.mtimeMs, size: value.size }; }
+    catch { if (cached?.files[file] !== undefined) dirty = true; continue; }
+    const metadata = commons.augmentationScanMetadata(file);
+    const old = cached?.files[file];
+    let specifiers: ModuleAugmentationSpecifier[] | undefined;
+    let scanned = false;
+    if (old !== undefined && old.mtimeMs === before.mtimeMs && old.size === before.size &&
+        old.optionsHash === metadata.optionsHash && old.impliedNodeFormat === metadata.impliedNodeFormat) {
+      specifiers = old.specifiers;
+    } else {
+      overrides.onAugmentationCandidateReadForTests?.(file);
+      specifiers = commons.scanModuleAugmentations(file);
+      scanned = true;
+    }
+    // An unreadable file must be retried. Caching an empty answer is refused
+    // because a later call can read the same unchanged file successfully.
+    if (specifiers === undefined) { if (old !== undefined) dirty = true; continue; }
+    let stable = false;
+    try { const after = statSync(file); stable = after.mtimeMs === before.mtimeMs && after.size === before.size; }
+    catch { /* The next call retries a file that disappeared during the scan. */ }
+    if (stable) {
+      files[file] = { ...before, ...metadata, specifiers };
+      if (scanned) dirty = true;
+    } else if (old !== undefined) dirty = true;
+    if (specifiers.length > 0) result.set(file, specifiers);
+  }
+  if (cached !== undefined) {
+    const oldPaths = Object.keys(cached.files);
+    if (oldPaths.length !== Object.keys(files).length || oldPaths.some((file) => files[file] === undefined)) dirty = true;
+  }
+  if (dirty) {
+    try { writeAugmentationCache(path, ARCHSTRICT_VERSION, files); } catch {
+      // The scan is authoritative for this call. Failing the check for an
+      // optional cache write is refused because the next call can scan again.
+    }
+  }
+  return result;
+}
+
 // The cold, always-resolve walk: every rootName is parsed (via `fileWalk`)
 // and every one of its specifiers is resolved through `commons.resolveModule`,
 // with no cache of any kind consulted. buildModuleGraphForRules' own
@@ -1519,7 +1590,7 @@ function nonAnalyzedAugmentationCandidates(
 // this function entirely for a file whose parse and resolutions are both
 // still valid.
 function walkAllFiles(prepared: ReturnType<typeof prepareGraph>, commons: GraphCommons, fileWalk: (fileName: string) => FileImportWalk | undefined): WalkResult {
-  const { rootNames, modules, resolveModuleForFile, projectRoot, resolvableFiles } = prepared;
+  const { rootNames, modules, resolveModuleForFile, projectRoot } = prepared;
   const outsideFiles: string[] = [];
   const edges: Edge[] = [];
   let unsupportedSyntaxCount = 0;
@@ -1537,7 +1608,6 @@ function walkAllFiles(prepared: ReturnType<typeof prepareGraph>, commons: GraphC
     hasModuleAugmentation: boolean;
     moduleAugmentationSpecifiers: ModuleAugmentationSpecifier[];
   }>();
-  const nonAnalyzedModuleAugmentations = new Map<string, ModuleAugmentationSpecifier[]>();
 
   for (const fileName of rootNames) {
     const walked = fileWalk(fileName);
@@ -1580,15 +1650,7 @@ function walkAllFiles(prepared: ReturnType<typeof prepareGraph>, commons: GraphC
     }
   }
 
-  for (const fileName of nonAnalyzedAugmentationCandidates(resolvableFiles, commons.analyzedSet)) {
-    const augmentations = commons.scanModuleAugmentations(fileName);
-    if (augmentations !== undefined && augmentations.length > 0) {
-      nonAnalyzedModuleAugmentations.set(fileName, augmentations);
-    }
-  }
-
-  return { edges, outsideFiles, fileFlags, nonAnalyzedModuleAugmentations,
-    unsupportedSyntaxCount, unresolvedSpecifierCount, unresolvedSpecifiers };
+  return { edges, outsideFiles, fileFlags, unsupportedSyntaxCount, unresolvedSpecifierCount, unresolvedSpecifiers };
 }
 
 // The rest of a graph build - crossModuleEdges and the lazy Program/rule-6
@@ -1600,8 +1662,7 @@ function walkAllFiles(prepared: ReturnType<typeof prepareGraph>, commons: GraphC
 // different closure facts for cached and uncached graphs.
 function assembleGraph(prepared: ReturnType<typeof prepareGraph>, commons: GraphCommons, walked: WalkResult, overrides: GraphBuildOverrides): PreparedModuleGraph {
   const { modules, surface, rootDir, rootNames, compilerOptions } = prepared;
-  const { edges, outsideFiles, fileFlags, nonAnalyzedModuleAugmentations,
-    unsupportedSyntaxCount, unresolvedSpecifierCount, unresolvedSpecifiers } = walked;
+  const { edges, outsideFiles, fileFlags, unsupportedSyntaxCount, unresolvedSpecifierCount, unresolvedSpecifiers } = walked;
   const { host, analyzedSet, optionsForContainingFile, resolveModule, resolutionCacheFor } = commons;
 
   const crossModuleEdges = edges.filter(
@@ -1655,7 +1716,7 @@ function assembleGraph(prepared: ReturnType<typeof prepareGraph>, commons: Graph
     surfaceFiles: readonly string[],
     focusModuleName?: string,
     extraNamedDeclarationKeys?: ReadonlySet<string>,
-  ): { program: ts.Program; violations?: TypeLeakViolation[]; notes: string[] } => {
+  ): { program: ts.Program; violations?: TypeLeakViolation[]; notes: string[]; closureFiles?: ReadonlySet<string> } => {
     // The Program's own module-resolution host, not `noResolve`: `noResolve`
     // also stops TypeScript from following node_modules/@types imports and
     // triple-slash references, so an external dependency's own generic type
@@ -1753,7 +1814,9 @@ function assembleGraph(prepared: ReturnType<typeof prepareGraph>, commons: Graph
       if (overrides.forceClosureFallbackForTests === true) missing.add("\0forced-missing-for-tests");
       // A complete alias walk makes the candidate safe. Another round is
       // refused because another round adds work without a missing root.
-      if (missing.size === 0) return { program: candidate, violations: roundViolations, notes: [] };
+      if (missing.size === 0) {
+        return { program: candidate, violations: roundViolations, notes: [], closureFiles: closureSet };
+      }
       if (round >= MAX_CLOSURE_ROUNDS) {
         // The bound prevents an unending recovery loop. A partial result is
         // refused because an omitted public name creates a false leak.
@@ -1792,13 +1855,21 @@ function assembleGraph(prepared: ReturnType<typeof prepareGraph>, commons: Graph
     return false;
   }
 
-  // A full Program can reach a non-analyzed augmentation through an omitted
-  // surface. Assuming it stays absent is refused because that can hide a leak.
-  function hasNonAnalyzedProjectAugmentation(): boolean {
-    for (const [file, augmentations] of nonAnalyzedModuleAugmentations) {
+  // A non-analyzed augmentation matters only when its target contributes to
+  // this answer and the focused Program omits the augmenting file. Falling
+  // back for every analyzed target is refused because unrelated targets and
+  // augmentations already loaded by this Program cannot change the answer.
+  function hasNonAnalyzedProjectAugmentation(
+    focusedProgram: ts.Program,
+    closureFiles: ReadonlySet<string>,
+    visitedFiles: ReadonlySet<string>,
+  ): boolean {
+    for (const [file, augmentations] of scanNonAnalyzedModuleAugmentations(prepared, commons, overrides)) {
+      if (focusedProgram.getSourceFile(file) !== undefined) continue;
       for (const augmentation of augmentations) {
         const target = resolveModule(augmentation.specifier, file, augmentation.mode).resolvedModule?.resolvedFileName;
-        if (target !== undefined && analyzedSet.has(target)) return true;
+        if (target !== undefined && analyzedSet.has(target) &&
+            (visitedFiles.has(target) || closureFiles.has(target))) return true;
       }
     }
     return false;
@@ -1855,8 +1926,6 @@ function assembleGraph(prepared: ReturnType<typeof prepareGraph>, commons: Graph
       // partial key set is refused because the omitted name creates a false leak.
       const fallbackReason = named.unresolvable
         ? "the syntactic public-name resolver could not resolve every declaration"
-        : hasNonAnalyzedProjectAugmentation()
-          ? "a non-analyzed project file can apply a module augmentation to an analyzed file"
         // An augmentation of a visited target can add a name absent from syntax.
         // Continuing with syntactic keys is refused because that name stays invisible.
         : hasAugmentationOf(named.visitedFiles)
@@ -1873,6 +1942,17 @@ function assembleGraph(prepared: ReturnType<typeof prepareGraph>, commons: Graph
         return violations;
       }
       const built = runProgramRounds(module.surfaceFiles, moduleName, named.keys);
+      if (built.closureFiles !== undefined && hasNonAnalyzedProjectAugmentation(
+        built.program, built.closureFiles, named.visitedFiles,
+      )) {
+        // The unscoped checker supplies augmentation effects that this focused
+        // Program omits. Keeping its partial result is refused because it can
+        // miss a leak from an added member.
+        const focusedNote = "rule 6 could not safely scope this surface because a non-analyzed project file can apply a module augmentation to an analyzed file; fell back to the whole-project type closure for this check";
+        const violations = checkTypeLeaks(graph).filter((violation) => violation.todoModule === moduleName);
+        scopedNotes = [focusedNote, ...notes];
+        return violations;
+      }
       scopedNotes = built.notes;
       // A successful round already returns its findings. Rewalking is refused
       // unless the bounded fallback returns only a whole-project Program.
@@ -2134,10 +2214,8 @@ function fileParseValid(
   optionsJson: string,
   oldOptionsTable: readonly string[],
   impliedNodeFormat: ts.ResolutionMode,
-  augmentationScanOnly: boolean,
 ): oldEntry is CachedFileEntry {
   return oldEntry !== undefined && stat !== undefined &&
-    oldEntry.augmentationScanOnly === augmentationScanOnly &&
     oldEntry.mtimeMs === stat.mtimeMs && oldEntry.size === stat.size &&
     oldEntry.optionsIndex < oldOptionsTable.length && oldOptionsTable[oldEntry.optionsIndex] === optionsJson &&
     oldEntry.impliedNodeFormat === impliedNodeFormat;
@@ -2158,8 +2236,6 @@ export function buildModuleGraphForRules(options: BuildOptions): ModuleGraph {
   const prepared = prepareGraph(options);
   const commons = makeGraphCommons(prepared, {});
   const { projectRoot, rootNames, modules, resolveModuleForFile, compilerOptionsForFile, resolvableFiles, packageJsonFiles, nodeModulesDirs } = prepared;
-  const augmentationScanFiles = nonAnalyzedAugmentationCandidates(resolvableFiles, commons.analyzedSet);
-  const cachedFiles = [...rootNames, ...augmentationScanFiles];
   const path = join(projectRoot, "node_modules/.cache/archstrict/edges.json");
   const cached = readEdgeCache(path, projectRoot);
   // A package version or code-version mismatch drops the whole cache -
@@ -2181,7 +2257,7 @@ export function buildModuleGraphForRules(options: BuildOptions): ModuleGraph {
   const optionsJsonByFile = new Map<string, string>();
   const optionsIndexByFile = new Map<string, number>();
   const impliedFormatByFile = new Map<string, ts.ResolutionMode>();
-  for (const file of cachedFiles) {
+  for (const file of rootNames) {
     const opts = compilerOptionsForFile(file);
     const json = optionsJson(opts);
     optionsJsonByFile.set(file, json);
@@ -2201,7 +2277,7 @@ export function buildModuleGraphForRules(options: BuildOptions): ModuleGraph {
   const resolutionsValid = versionOk && cached.resolutionFingerprint === fingerprint;
 
   const stats = new Map<string, { mtimeMs: number; size: number } | undefined>();
-  for (const file of cachedFiles) {
+  for (const file of rootNames) {
     try { const st = statSync(file); stats.set(file, { mtimeMs: st.mtimeMs, size: st.size }); }
     catch { stats.set(file, undefined); }
   }
@@ -2215,7 +2291,6 @@ export function buildModuleGraphForRules(options: BuildOptions): ModuleGraph {
     hasModuleAugmentation: boolean;
     moduleAugmentationSpecifiers: ModuleAugmentationSpecifier[];
   }>();
-  const nonAnalyzedModuleAugmentations = new Map<string, ModuleAugmentationSpecifier[]>();
   let unsupportedSyntaxCount = 0;
   let unresolvedSpecifierCount = 0;
   const unresolvedSpecifiers: string[] = [];
@@ -2239,7 +2314,7 @@ export function buildModuleGraphForRules(options: BuildOptions): ModuleGraph {
     const oldEntry = versionOk ? cached.files[file] : undefined;
     const optionsIndex = optionsIndexByFile.get(file)!;
     const impliedNodeFormat = impliedFormatByFile.get(file);
-    const parseValid = fileParseValid(oldEntry, stat, optionsJsonByFile.get(file)!, oldOptionsTable, impliedNodeFormat, false);
+    const parseValid = fileParseValid(oldEntry, stat, optionsJsonByFile.get(file)!, oldOptionsTable, impliedNodeFormat);
     if (!parseValid) { dirty = true; dirtyPaths.add(file); }
 
     let imports: ImportRecord[];
@@ -2275,7 +2350,7 @@ export function buildModuleGraphForRules(options: BuildOptions): ModuleGraph {
       newFiles[file] = { mtimeMs: stat!.mtimeMs, size: stat!.size, optionsIndex,
         ...(impliedNodeFormat !== undefined ? { impliedNodeFormat } : {}),
         imports: [], unsupportedSyntaxCount: 0, isScript: false, hasAmbientDeclarations: false,
-        hasModuleAugmentation: false, moduleAugmentationSpecifiers: [], augmentationScanOnly: false,
+        hasModuleAugmentation: false, moduleAugmentationSpecifiers: [],
         unreadable: true, resolutions: {} };
       continue;
     }
@@ -2338,40 +2413,11 @@ export function buildModuleGraphForRules(options: BuildOptions): ModuleGraph {
     newFiles[file] = { mtimeMs: stat!.mtimeMs, size: stat!.size, optionsIndex,
       ...(impliedNodeFormat !== undefined ? { impliedNodeFormat } : {}),
       imports, unsupportedSyntaxCount: unsupportedForFile, isScript, hasAmbientDeclarations,
-      hasModuleAugmentation, moduleAugmentationSpecifiers, augmentationScanOnly: false, resolutions };
-  }
-
-  // These files can enter only the full Program through an omitted surface.
-  // Reusing an analyzed-file walk is refused because configuration can move a
-  // file across the analysis boundary without changing its bytes.
-  for (const file of augmentationScanFiles) {
-    const stat = stats.get(file);
-    const oldEntry = versionOk ? cached.files[file] : undefined;
-    const optionsIndex = optionsIndexByFile.get(file)!;
-    const impliedNodeFormat = impliedFormatByFile.get(file);
-    const parseValid = fileParseValid(
-      oldEntry, stat, optionsJsonByFile.get(file)!, oldOptionsTable, impliedNodeFormat, true,
-    );
-    if (!parseValid) { dirty = true; dirtyPaths.add(file); }
-    if (stat === undefined) continue;
-
-    const augmentations = parseValid
-      ? oldEntry.moduleAugmentationSpecifiers
-      : commons.scanModuleAugmentations(file);
-    const unreadable = augmentations === undefined ? true as const : undefined;
-    const specifiers = augmentations ?? [];
-    if (specifiers.length > 0) nonAnalyzedModuleAugmentations.set(file, specifiers);
-    newFiles[file] = {
-      mtimeMs: stat.mtimeMs, size: stat.size, optionsIndex,
-      ...(impliedNodeFormat !== undefined ? { impliedNodeFormat } : {}),
-      imports: [], unsupportedSyntaxCount: 0, isScript: false, hasAmbientDeclarations: false,
-      hasModuleAugmentation: specifiers.length > 0, moduleAugmentationSpecifiers: specifiers,
-      augmentationScanOnly: true, ...(unreadable ? { unreadable } : {}), resolutions: {},
-    };
+      hasModuleAugmentation, moduleAugmentationSpecifiers, resolutions };
   }
 
   // Do not label an analysis with mtimes/sizes from a concurrent edit.
-  const stillStable = cachedFiles.every((file) => {
+  const stillStable = rootNames.every((file) => {
     const before = stats.get(file);
     if (before === undefined) return false;
     try { const now = statSync(file); return now.mtimeMs === before.mtimeMs && now.size === before.size; }
@@ -2390,7 +2436,7 @@ export function buildModuleGraphForRules(options: BuildOptions): ModuleGraph {
       versionOk ? cached.shards : undefined, dirtyPaths, deletedPaths, !versionOk || !resolutionsValid);
   }
 
-  const walked: WalkResult = { edges, outsideFiles, fileFlags, nonAnalyzedModuleAugmentations,
+  const walked: WalkResult = { edges, outsideFiles, fileFlags,
     unsupportedSyntaxCount, unresolvedSpecifierCount, unresolvedSpecifiers };
   return assembleGraph(prepared, commons, walked, {});
 }

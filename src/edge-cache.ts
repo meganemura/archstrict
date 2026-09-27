@@ -1,8 +1,6 @@
 // Responsibility: store and validate a per-file, incrementally-updatable
 // snapshot of each analyzed file's own syntactic import walk, module
-// augmentations, and resolved specifiers. It also stores the narrower
-// augmentation scan for resolvable TypeScript files outside analysis.
-// Shards avoid whole-cache I/O.
+// augmentations, and resolved specifiers. Shards avoid whole-cache I/O.
 // Boundary: cache failures fall back to analysis; this module never parses
 // a file or resolves an import itself - module-graph.ts owns both, and
 // hands this module only the results to persist or read back.
@@ -34,9 +32,8 @@
 //
 // Correctness contract - every input that can change a resolved edge, and
 // where it is covered:
-// - A file's own text (syntax, imports, exports, `require(...)`, or the
-//   augmentation scan of a non-analyzed TypeScript file) - covered by
-//   that file's own mtimeMs+size (module-graph.ts's own reparse gate).
+// - A file's own text (syntax, imports, exports, `require(...)`) - covered
+//   by that file's own mtimeMs+size (module-graph.ts's own reparse gate).
 //   Limit: an edit that keeps the exact same byte size AND whose mtime is
 //   restored (or never advances - some filesystems and some tools truncate
 //   mtime precision) is invisible to this gate; nothing else in this
@@ -70,9 +67,9 @@
 // - Every file outside node_modules with a resolvable extension
 //   (.ts/.tsx/.mts/.cts/.d.ts/.d.mts/.d.cts/.js/.mjs/.cjs/.jsx/.json),
 //   analyzed or not, excluded or not, in dist/ or not - a specifier can
-//   resolve to any of these. Existence is covered by
-//   `resolutionFingerprint`'s own `resolvableFilesHash`. A non-analyzed
-//   TypeScript file's augmentation syntax is covered by its own entry.
+//   resolve to any of these, and only its existence (never its content)
+//   matters - covered by `resolutionFingerprint`'s own
+//   `resolvableFilesHash`.
 // - The lockfile in use (which real dependency version - and so which
 //   real files - a bare specifier resolves to) - covered by
 //   `resolutionFingerprint`'s own `lockPath`/`lockMtime`, the nearest
@@ -112,7 +109,7 @@
 // A changed `resolutionFingerprint` alone (nothing in this file's own
 // reparse gate) re-resolves every specifier project-wide, from each file's
 // own already-cached `imports` - no file is reparsed just for that. Every
-// analyzed file gets a resolution record for every one of its own
+// walked file gets a resolution record for every one of its own
 // specifiers, whether or not it currently belongs to a declared module,
 // and a specifier with no record is resolved rather than assumed
 // unresolved - see module-graph.ts's own per-file loop for why.
@@ -129,7 +126,7 @@ import type { ImportRecord, ModuleAugmentationSpecifier } from "./module-graph.j
 // Bumped whenever the on-disk shape (header or shard encoding) changes -
 // an old cache is then a silent miss (parseHeader rejects the unknown
 // schema number), never a crash on a shape this code no longer produces.
-export const CACHE_SCHEMA = 9;
+export const CACHE_SCHEMA = 10;
 
 // Fixed, not derived from project size - see this module's own header.
 // module-graph.ts's own per-file loop marks a shard dirty by this same
@@ -178,9 +175,6 @@ export type CachedFileEntry = {
   hasAmbientDeclarations: boolean;
   hasModuleAugmentation: boolean;
   moduleAugmentationSpecifiers: ModuleAugmentationSpecifier[];
-  // A scan-only entry prevents an excluded file from masquerading as an
-  // analyzed import walk if configuration later moves it into analysis.
-  augmentationScanOnly: boolean;
   unreadable?: true;
   // Keyed by `${specifier}\u0000${mode ?? ""}` - two imports of the same
   // specifier under two different resolution modes (rare, but legal) must
@@ -251,7 +245,6 @@ function isFileEntry(value: unknown): value is CachedFileEntry {
   if (!Array.isArray(value.moduleAugmentationSpecifiers) ||
       !value.moduleAugmentationSpecifiers.every(isModuleAugmentationSpecifier) ||
       value.hasModuleAugmentation !== (value.moduleAugmentationSpecifiers.length > 0)) return false;
-  if (typeof value.augmentationScanOnly !== "boolean") return false;
   if (value.unreadable !== undefined && value.unreadable !== true) return false;
   if (!record(value.resolutions) || !Object.values(value.resolutions).every(isResolution)) return false;
   return true;
@@ -307,7 +300,6 @@ const FLAG_IS_SCRIPT = 1;
 const FLAG_HAS_AMBIENT_DECLARATIONS = 2;
 const FLAG_UNREADABLE = 4;
 const FLAG_HAS_MODULE_AUGMENTATION = 8;
-const FLAG_AUGMENTATION_SCAN_ONLY = 16;
 
 function makeStringTable() {
   const table: string[] = [];
@@ -336,8 +328,7 @@ function encodeShard(entries: ReadonlyMap<string, CachedFileEntry>, projectRoot:
   for (const relPath of [...entries.keys()].sort()) {
     const entry = entries.get(relPath)!;
     const flags = (entry.isScript ? FLAG_IS_SCRIPT : 0) | (entry.hasAmbientDeclarations ? FLAG_HAS_AMBIENT_DECLARATIONS : 0) |
-      (entry.unreadable ? FLAG_UNREADABLE : 0) | (entry.hasModuleAugmentation ? FLAG_HAS_MODULE_AUGMENTATION : 0) |
-      (entry.augmentationScanOnly ? FLAG_AUGMENTATION_SCAN_ONLY : 0);
+      (entry.unreadable ? FLAG_UNREADABLE : 0) | (entry.hasModuleAugmentation ? FLAG_HAS_MODULE_AUGMENTATION : 0);
     const encodedImports: EncodedImport[] = entry.imports.map((imp) => {
       const key = resolutionKey(imp);
       const res = Object.hasOwn(entry.resolutions, key) ? entry.resolutions[key] : undefined;
@@ -429,7 +420,6 @@ function decodeShard(raw: unknown, projectRoot: string, optionsCount: number): M
       hasAmbientDeclarations: ((flags as number) & FLAG_HAS_AMBIENT_DECLARATIONS) !== 0,
       hasModuleAugmentation: ((flags as number) & FLAG_HAS_MODULE_AUGMENTATION) !== 0,
       moduleAugmentationSpecifiers,
-      augmentationScanOnly: ((flags as number) & FLAG_AUGMENTATION_SCAN_ONLY) !== 0,
       ...(((flags as number) & FLAG_UNREADABLE) !== 0 ? { unreadable: true as const } : {}),
       resolutions,
     };
