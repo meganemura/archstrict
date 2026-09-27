@@ -95,9 +95,12 @@ export type CheckResult = {
   // is in the thousands.
   unresolvedSpecifierBreakdown: { prefix: string; count: number }[];
   unsupportedSyntax: number;
-  // How many type-leak violations rule 6 found - 0 means it ran and found
-  // none, a result, not silence. null means rule 6 did not run at all
-  // this call (a `check <file>` scoped to a file that is not any
+  // How many type-leak violations rule 6 found. A surface-focused call
+  // counts only findings at the requested surface because the Program checks one closure.
+  // A project-wide count is refused because that run does not compute one.
+  // 0 means it ran and found none.
+  // null means rule 6 did not run at all this call (a `check <file>`
+  // scoped to a file that is not any
   // module's own surface - see check()'s own `skipTypeLeak`): "not
   // evaluated" is a different fact than "evaluated, found none", and the
   // two must never share one number.
@@ -318,6 +321,10 @@ export type RunRulesOptions = {
   // has no file scope, and its `before`/`after` diff needs every rule
   // evaluated on both sides.
   skipTypeLeak?: boolean;
+  // The module whose surface contains `focus`. Rule 6 needs the module name
+  // to build one closure. Inferring the name inside the rule is refused because the
+  // rule does not own path canonicalization or module-surface selection.
+  focusedTypeLeakModule?: string;
   // Called right after rule 6 and before every other rule. check() uses
   // it to drop rule 6's Program there, so the Program and the other
   // rules' violations never sit in memory together: on a large codebase
@@ -367,11 +374,20 @@ export function runRules(graph: ModuleGraph, config: Config, options: RunRulesOp
   // and CheckResult.typeLeaks's own comment is the field this distinction
   // exists for. Rule 6 runs first so that its Program can be released
   // (options.afterTypeLeak) before the other rules build their own
-  // violations; its findings still go last in the report. Its own COUNT
-  // (`typeLeaks: typeLeaks.length` below) stays the full, whole-project
-  // number even on a scoped run - it comes straight from this array,
-  // never from the (possibly focus-narrowed) `violations` list below.
-  const typeLeaks = options.skipTypeLeak ? undefined : checkTypeLeaks(graph);
+  // violations; its findings still go last in the report. The `typeLeaks`
+  // count stays whole-project for a full
+  // run. A surface-focused run counts only findings at that surface.
+  // A non-surface focus cannot receive a rule-6 finding, so evaluation is
+  // refused. A surface focus uses the separate scoped graph path because an
+  // all-surface closure found 53 leaks to report 4 on a 23,000-file project.
+  const allTypeLeaks = options.skipTypeLeak ? undefined : options.focusedTypeLeakModule === undefined
+    ? checkTypeLeaks(graph)
+    : graph.typeLeaksForFocus(options.focusedTypeLeakModule);
+  // A focused module can have several surfaces. Counting every surface is
+  // refused because `check <file>` reports facts about one requested file.
+  const typeLeaks = allTypeLeaks === undefined || options.focus === undefined
+    ? allTypeLeaks
+    : allTypeLeaks.filter((violation) => reportedAtFocus(violation.path, options.focus!));
   options.afterTypeLeak?.();
   const focus = options.focus;
 
@@ -405,11 +421,8 @@ export function runRules(graph: ModuleGraph, config: Config, options: RunRulesOp
   // rule) - this pass is what makes the two the same either way: it keeps
   // exactly what `filterToFile` would keep from a fully unscoped run, so
   // `runRules`'s own return value is already the scoped result, not an
-  // approximation of it. Every other field (modules, edges,
-  // unresolvedSpecifiers, typeLeaks, edgeRuleCoverage, ...) is a
-  // whole-project fact and stays that way regardless of `focus` - only
-  // `violations` (and, through it, `applyTodo`'s own `todo` count) is
-  // ever scoped.
+  // approximation of it. Graph counts and edge coverage stay whole-project
+  // facts. Violations, todo, and a surface run's type-leak count are scoped.
   const scopedViolations = focus === undefined ? violations : violations.filter((v) => reportedAtFocus(v.path, focus));
 
   return {
@@ -652,23 +665,31 @@ function tryRealpath(file: string): string | undefined {
   }
 }
 
-function focusesSurfaceFile(graph: ModuleGraph, file: string): boolean {
+// Rule 6 scopes only when the requested regular file is an actual surface.
+// Textual path comparison is refused because symlinks can name the same file.
+function surfaceModuleForFocus(graph: ModuleGraph, file: string): string | undefined {
   let target: string;
   try {
     target = realpathSync(resolve(file));
   } catch {
-    return false;
+    // Missing and non-resolvable paths must keep the existing unscoped error path.
+    // Guessing a module is refused because `filterToFile` owns the missing-path error.
+    return undefined;
   }
   for (const module of graph.modules.values()) {
     for (const surfacePath of module.surfaceFiles) {
       try {
-        if (realpathSync(surfacePath) === target) return true;
+        // The module name selects the scoped closure. Returning a boolean is
+        // refused because the rule would then need to repeat the path lookup.
+        if (realpathSync(surfacePath) === target) return module.name;
       } catch {
         // A configured surface glob can name a path that doesn't exist yet; not a match either way.
       }
     }
   }
-  return false;
+  // A regular non-surface file cannot own a rule-6 report. Building any
+  // Program is refused because `filterToFile` would discard every finding.
+  return undefined;
 }
 
 export async function check(projectRoot: string, focusFile?: string, options: CheckOptions = {}): Promise<CheckResult> {
@@ -702,7 +723,12 @@ export async function check(projectRoot: string, focusFile?: string, options: Ch
   // would filter it out regardless) - skip the rule so a whole-project
   // ts.Program is never built just to throw its answer away. Plain
   // `check` (no focusFile) always evaluates it.
-  const skipTypeLeak = focusFile !== undefined && !focusesSurfaceFile(graph, focusFile);
+  // Only a named surface selects scoped rule 6. Scoping a full check is
+  // refused because an unscoped caller requires every module's findings.
+  const focusedTypeLeakModule = focusFile === undefined ? undefined : surfaceModuleForFocus(graph, focusFile);
+  // A named non-surface file cannot receive a type-leak violation. Running
+  // rule 6 is refused because its complete answer would be discarded.
+  const skipTypeLeak = focusFile !== undefined && focusedTypeLeakModule === undefined;
   const focus = focusFile === undefined ? undefined : tryRealpath(focusFile);
   // Rule 6 is the only rule that touches `graph.program`/`graph.checker`,
   // and runRules runs it first - release the Program right after it, so
@@ -713,9 +739,12 @@ export async function check(projectRoot: string, focusFile?: string, options: Ch
   let programNotes: readonly string[] = [];
   const evaluated = runRules(graph, config, {
     skipTypeLeak,
+    focusedTypeLeakModule,
     focus,
     afterTypeLeak: () => {
-      programNotes = [...graph.programNotes];
+      // Scoped and unscoped notes have separate lifetimes. Combining them is
+      // refused because a reused graph must not expose a scoped fallback later.
+      programNotes = [...(focusedTypeLeakModule === undefined ? graph.programNotes : graph.focusedTypeLeakNotes)];
       graph.releaseProgram();
     },
   });

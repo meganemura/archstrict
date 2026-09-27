@@ -56,6 +56,7 @@ describe("checkTypeLeaks", () => {
   test("a module with no surface has nothing to check - no entry point to walk", () => {
     const graph = buildModuleGraph({ projectRoot: FIXTURE, declaredModules, surface: "nonexistent.ts" });
     expect(checkTypeLeaks(graph)).toHaveLength(0);
+    expect(graph.typeLeaksForFocus("all")).toHaveLength(0);
   });
 });
 
@@ -76,6 +77,7 @@ describe("checkTypeLeaks (declared-module boundary)", () => {
     });
     expect(graph.unresolvedSpecifierCount).toBe(0);
     expect(checkTypeLeaks(graph)).toHaveLength(0);
+    expect(graph.typeLeaksForFocus("all")).toHaveLength(0);
   });
 
   test("a type declared inside a DIFFERENT declared module still counts - a cross-module leak is still real", () => {
@@ -90,7 +92,9 @@ describe("checkTypeLeaks (declared-module boundary)", () => {
       ],
     });
     const violations = checkTypeLeaks(graph);
+    const focused = graph.typeLeaksForFocus("m");
     expect(violations).toHaveLength(1);
+    expect(focused).toEqual(violations);
     expect(violations[0]!.evidence).toContain("RootType");
   });
 });
@@ -143,7 +147,9 @@ describe("checkTypeLeaks (a consumer already has a name from another declared mo
     expect(graph.unresolvedSpecifierCount).toBe(0);
 
     const violations = checkTypeLeaks(graph);
+    const focused = graph.typeLeaksForFocus("a");
     expect(violations).toHaveLength(1);
+    expect(focused).toEqual(violations);
     const leak = violations[0]!;
     expect(leak.evidence.startsWith("'Hidden'")).toBe(true);
     expect(leak.todoModule).toBe("a");

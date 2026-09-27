@@ -118,7 +118,7 @@ describe("check <file> scoping equals filtering the full result", () => {
         rmSync(root, { recursive: true, force: true });
       }
     }, { testCases: 25 });
-  });
+  }, 30_000);
 });
 
 // The property above goes through runRules/applyTodo directly, close to
@@ -333,6 +333,12 @@ describe("check() end-to-end: a scoped call equals filterToFile(a full call)", (
           assert.deepEqual((actual as Record<string, unknown>)[key], (full as Record<string, unknown>)[key], `field ${key}`);
         }
         assert.deepEqual(sortViolations(actual.violations), sortViolations(expected.violations));
+        if (actual.typeLeaks !== null) {
+          const expectedTypeLeaks = full.violations.filter(
+            (violation) => violation.rule === "type-leak" && resolve(violation.path) === realpathSync(resolve(focusFile)),
+          ).length;
+          assert.equal(actual.typeLeaks, expectedTypeLeaks);
+        }
 
         if (isRegularFile(focusFile)) {
           const focus = realpathSync(resolve(focusFile));

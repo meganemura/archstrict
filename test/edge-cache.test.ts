@@ -114,7 +114,7 @@ test("rules writes a per-file cache entry and reuses it without a per-file walk 
   expect(ts.createProgram).not.toHaveBeenCalled();
   expect(calls.checker).not.toHaveBeenCalled();
   const cache = readCache(root);
-  expect(cache.schema).toBe(6);
+  expect(cache.schema).toBe(8);
   expect(cache.files[path]!.mtimeMs).toBe(statSync(path).mtimeMs);
   expect(cache.files[path]!.imports[0]!.specifier).toBe("../b/index.js");
   const resolution = cache.files[path]!.resolutions["../b/index.js\u000099"];
@@ -127,6 +127,19 @@ test("rules writes a per-file cache entry and reuses it without a per-file walk 
   expect(await rules(root, path)).toEqual(first);
   expect(ts.createSourceFile).not.toHaveBeenCalled(); // a real cache hit re-parses nothing
   expect(ts.createProgram).not.toHaveBeenCalled();
+}));
+
+test("module-augmentation specifiers survive a cache hit without a reparse", async () => project(async (root, options) => {
+  const augmentation = join(root, "src/b/augment.ts");
+  writeFileSync(augmentation, 'export {}; declare module "../a/index.js" { interface A { extra: string } }\n');
+  buildModuleGraphForRules(options);
+  expect(readCache(root).files[augmentation]!.hasModuleAugmentation).toBe(true);
+  expect(readCache(root).files[augmentation]!.moduleAugmentationSpecifiers.map((item) => item.specifier))
+    .toEqual(["../a/index.js"]);
+  vi.clearAllMocks();
+  buildModuleGraphForRules(options);
+  expect(ts.createSourceFile).not.toHaveBeenCalled();
+  expect(readCache(root).files[augmentation]!.hasModuleAugmentation).toBe(true);
 }));
 
 // One file's own edit reparses exactly that file - never the rest of the
@@ -313,7 +326,8 @@ test("a header naming a shard by another writer's stale hash still only re-walks
 // slot, `"unresolved"`, a real resolution with and without
 // isExternalLibraryImport/packageName, every mode this project's own
 // walker produces (undefined/CommonJS/ESNext-shaped), and an unreadable
-// file's own empty imports/resolutions.
+// file's own empty imports/resolutions, and every cached module-augmentation
+// specifier with its resolution mode.
 test("a shard's own encoding round-trips its entries exactly", async () => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "archstrict-edge-cache-roundtrip-")));
   try {
@@ -342,6 +356,9 @@ test("a shard's own encoding round-trips its entries exactly", async () => {
           resolutions[key] = { resolvedFile: join(root, "../outside/dep/index.d.ts"), isExternalLibraryImport: true, packageName: "@scope/pkg" };
         }
         const impliedNodeFormat = tc.draw(gen.sampledFrom(modes));
+        const moduleAugmentationSpecifiers = tc.draw(gen.arrays(
+          gen.tuples(gen.sampledFrom(specifiers), gen.sampledFrom(modes)), { maxSize: 3 },
+        )).map(([specifier, mode]) => ({ specifier, mode }));
         files[join(root, rel)] = {
           mtimeMs: 1_700_000_000_000 + tc.draw(gen.integers({ minValue: 0, maxValue: 999 })) / 10,
           size: tc.draw(gen.integers({ minValue: 0, maxValue: 5000 })),
@@ -349,6 +366,8 @@ test("a shard's own encoding round-trips its entries exactly", async () => {
           ...(impliedNodeFormat !== undefined ? { impliedNodeFormat } : {}),
           imports, unsupportedSyntaxCount: tc.draw(gen.integers({ minValue: 0, maxValue: 3 })),
           isScript: tc.draw(gen.booleans()), hasAmbientDeclarations: tc.draw(gen.booleans()),
+          hasModuleAugmentation: moduleAugmentationSpecifiers.length > 0,
+          moduleAugmentationSpecifiers,
           ...(unreadable ? { unreadable: true as const } : {}),
           resolutions,
         };
@@ -474,6 +493,18 @@ test("version mismatches, malformed caches and declaration changes rebuild", asy
   expect(facts(buildModuleGraphForRules(changed))).toEqual(facts(buildModuleGraph(changed)));
 }));
 
+test("a schema 7 cache is a miss after augmentation specifiers join each file entry", async () => project((root, options) => {
+  buildModuleGraphForRules(options);
+  const path = cachePath(root);
+  const cache = JSON.parse(readFileSync(path, "utf8"));
+  cache.schema = 7;
+  writeFileSync(path, JSON.stringify(cache));
+  vi.clearAllMocks();
+  buildModuleGraphForRules(options);
+  expect(ts.createSourceFile).toHaveBeenCalled();
+  expect(JSON.parse(readFileSync(path, "utf8")).schema).toBe(8);
+}));
+
 // A corrupt cache file is a silent miss, never an error - the run behaves
 // exactly like a fresh, uncached one, and its own successful write
 // replaces the corrupt bytes.
@@ -483,7 +514,7 @@ test("a corrupt cache file is ignored, not an error", async () => project((root,
   writeFileSync(path, "{not json");
   const graph = buildModuleGraphForRules(options);
   expect(graph.edges.some((edge) => edge.toModule === "b")).toBe(true);
-  expect(JSON.parse(readFileSync(path, "utf8")).schema).toBe(6);
+  expect(JSON.parse(readFileSync(path, "utf8")).schema).toBe(8);
 }));
 
 test("package exports changes refresh both target edges and derived surfaces, re-resolving without re-parsing the unedited importer", async () => project((root, options) => {

@@ -1,16 +1,13 @@
 // Responsibility: computeSyntacticNamedDeclarations (type-closure.ts) must
-// find exactly the same declarations, by (file, line, column), as a real
-// checker walking `checker.getExportsOfModule` and following every alias
+// give each candidate declaration the same named answer as a real checker
+// walking `checker.getExportsOfModule` and following every alias
 // - the one correctness bar rule 6's own scoped mode (check.ts's focus,
 // module-graph.ts's own ensureProgram) depends on: a name the checker
 // would find but the syntactic walk misses reads an already-named
 // declaration as unnamed the next time it's checked, a false leak.
-// Boundary: the checker-side oracle (declarationKeysFromChecker below)
-// lives only in this test file, mirroring type-leak.ts's own
-// collectNamedDeclarations but converting each declaration to the same
-// (file, line, column) key computeSyntacticNamedDeclarations itself uses,
-// via declarationKey - so the two are compared by value, never by
-// pretending a syntactic parse's node could ever equal a checker's own.
+// Boundary: the checker-side oracle lives only in this test file. Set
+// equality is refused because a SourceFile and the first declaration can
+// hide a collision. Each declaration receives its own boolean comparison.
 import { describe, expect, test } from "vitest";
 import * as hegel from "@hegeldev/hegel";
 import * as gen from "@hegeldev/hegel/generators";
@@ -20,16 +17,10 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import ts from "typescript";
 import { buildModuleGraph, prepareGraph, scriptKindForFile, type DeclaredModule, type ModuleGraph } from "../src/module-graph.js";
-import { computeSyntacticNamedDeclarations, declarationKey, type TypeClosureInputs } from "../src/type-closure.js";
+import { computeSyntacticNamedDeclarations, declarationKey, sourceFileKey, type TypeClosureInputs } from "../src/type-closure.js";
 
-function declarationKeysFromChecker(program: ts.Program, checker: ts.TypeChecker, surfaceFiles: readonly string[]): Set<string> {
-  const keys = new Set<string>();
-  const keyOfNode = (node: ts.Node): void => {
-    const sf = node.getSourceFile();
-    const start = node.getStart(sf);
-    const { line, character } = sf.getLineAndCharacterOfPosition(start);
-    keys.add(declarationKey(sf.fileName, line + 1, character + 1));
-  };
+function namedDeclarationsFromChecker(program: ts.Program, checker: ts.TypeChecker, surfaceFiles: readonly string[]): Set<ts.Node> {
+  const declarations = new Set<ts.Node>();
   for (const path of surfaceFiles) {
     const sf = program.getSourceFile(path);
     if (sf === undefined) continue;
@@ -42,10 +33,33 @@ function declarationKeysFromChecker(program: ts.Program, checker: ts.TypeChecker
         if (next === current) break;
         current = next;
       }
-      for (const decl of current.getDeclarations() ?? []) keyOfNode(decl);
+      for (const decl of current.getDeclarations() ?? []) declarations.add(decl);
     }
   }
-  return keys;
+  return declarations;
+}
+
+function keyOfNode(node: ts.Node): string {
+  if (ts.isSourceFile(node)) return sourceFileKey(node.fileName);
+  const sf = node.getSourceFile();
+  const start = node.getStart(sf);
+  const { line, character } = sf.getLineAndCharacterOfPosition(start);
+  return declarationKey(sf.fileName, line + 1, character + 1);
+}
+
+function candidateDeclarations(program: ts.Program): ts.Node[] {
+  const candidates: ts.Node[] = [];
+  for (const sf of program.getSourceFiles()) {
+    if (!program.getRootFileNames().includes(sf.fileName)) continue;
+    for (const statement of sf.statements) {
+      if (ts.isVariableStatement(statement)) candidates.push(...statement.declarationList.declarations);
+      else if (ts.isInterfaceDeclaration(statement) || ts.isTypeAliasDeclaration(statement) ||
+          ts.isClassDeclaration(statement) || ts.isFunctionDeclaration(statement) ||
+          ts.isEnumDeclaration(statement) || ts.isModuleDeclaration(statement) ||
+          ts.isImportEqualsDeclaration(statement) || ts.isExportAssignment(statement)) candidates.push(statement);
+    }
+  }
+  return candidates;
 }
 
 // Builds the same TypeClosureInputs shape module-graph.ts's own
@@ -69,10 +83,19 @@ function inputsFor(graph: ModuleGraph, root: string, modules: readonly DeclaredM
   };
 }
 
-function checkerKeysFor(graph: ModuleGraph, root: string, modules: readonly DeclaredModule[], surfaceFiles: readonly string[]): Set<string> {
+function expectNamedAnswersEqual(
+  root: string,
+  modules: readonly DeclaredModule[],
+  surfaceFiles: readonly string[],
+  syntacticKeys: ReadonlySet<string>,
+): void {
   const prepared = prepareGraph({ projectRoot: root, declaredModules: modules });
   const program = ts.createProgram({ rootNames: prepared.rootNames, options: prepared.compilerOptions });
-  return declarationKeysFromChecker(program, program.getTypeChecker(), surfaceFiles);
+  const checkerNamed = namedDeclarationsFromChecker(program, program.getTypeChecker(), surfaceFiles);
+  for (const declaration of candidateDeclarations(program)) {
+    expect(syntacticKeys.has(keyOfNode(declaration)), keyOfNode(declaration))
+      .toBe(checkerNamed.has(declaration));
+  }
 }
 
 const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), "fixtures/type-leak-closure");
@@ -85,8 +108,7 @@ describe("computeSyntacticNamedDeclarations", () => {
     const inputs = inputsFor(graph, FIXTURE, declaredModules);
     const result = computeSyntacticNamedDeclarations(inputs, surfaceFiles);
     expect(result.unresolvable).toBe(false);
-    const checkerKeys = checkerKeysFor(graph, FIXTURE, declaredModules, surfaceFiles);
-    expect([...result.keys].sort()).toEqual([...checkerKeys].sort());
+    expectNamedAnswersEqual(FIXTURE, declaredModules, surfaceFiles, result.keys);
     expect(result.keys.size).toBeGreaterThan(0);
   });
 
@@ -168,8 +190,7 @@ describe("computeSyntacticNamedDeclarations", () => {
       const inputs = inputsFor(graph, root, declaredModules);
       const result = computeSyntacticNamedDeclarations(inputs, surfaceFiles);
       expect(result.unresolvable).toBe(false);
-      const checkerKeys = checkerKeysFor(graph, root, declaredModules, surfaceFiles);
-      expect([...result.keys].sort()).toEqual([...checkerKeys].sort());
+      expectNamedAnswersEqual(root, declaredModules, surfaceFiles, result.keys);
       // A real assertion that this fixture actually exercises the merge
       // and the cycle, not just an empty agreement.
       expect(result.keys.size).toBeGreaterThanOrEqual(8);
@@ -240,11 +261,16 @@ describe("computeSyntacticNamedDeclarations", () => {
         const inputs = inputsFor(graph, root, declaredModules);
         const result = computeSyntacticNamedDeclarations(inputs, surfaceFiles);
         expect(result.unresolvable).toBe(false);
-        const checkerKeys = checkerKeysFor(graph, root, declaredModules, surfaceFiles);
-        expect([...result.keys].sort()).toEqual([...checkerKeys].sort());
+        expectNamedAnswersEqual(root, declaredModules, surfaceFiles, result.keys);
       } finally {
         rmSync(root, { recursive: true, force: true });
       }
     }, { testCases: 25 });
   }, 30_000);
+
+  test("uses disjoint SourceFile keys and normalizes every file path", () => {
+    expect(sourceFileKey("C:\\repo\\first.ts")).toBe("C:/repo/first.ts\0<sourcefile>");
+    expect(declarationKey("C:\\repo\\first.ts", 1, 1)).toBe(["C:/repo/first.ts", "1", "1"].join("\0"));
+    expect(sourceFileKey("C:\\repo\\first.ts")).not.toBe(declarationKey("C:\\repo\\first.ts", 1, 1));
+  });
 });

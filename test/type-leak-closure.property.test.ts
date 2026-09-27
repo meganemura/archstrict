@@ -1,10 +1,6 @@
-// Responsibility: generated small projects (a re-export chain of varying
-// length and alias use, wrapped one of several ways: an annotated
-// structural property, an unannotated inferred one, a namespace import,
-// `export * as ns`, or given a public name outright, the one no-leak
-// case) - the closure's own findings must equal a whole-project
-// Program's, on every generated shape, not just the fixed cases
-// test/type-leak-closure.test.ts covers.
+// Responsibility: generated small projects vary the leak path, declaration
+// kind and position, and every cross-module naming shape. Focused findings
+// must equal a whole-project Program's findings on every generated shape.
 // Boundary: same oracle convention as that file - a whole-project
 // ts.Program built here only, never in src/.
 import { test } from "vitest";
@@ -22,7 +18,41 @@ function keysOf(violations: readonly Violation[]): string[] {
   return violations.map((v) => `${v.path}:${v.line}:${v.column} ${v.evidence}`).sort();
 }
 
-test("closure findings equal a whole-project Program's, over generated re-export chains and inference shapes", async () => {
+const namingShapes = ["named", "alias", "star", "starChain", "starAs", "namespaceImport", "default", "defaultAs"] as const;
+const declarationKinds = ["interface", "jsdocInterface", "typeAlias", "classInterface", "defaultInterface", "namespaceInterface"] as const;
+
+function secretSource(kind: typeof declarationKinds[number], first: boolean): string {
+  const prefix = first ? "" : "export interface Earlier { value: number }\n";
+  switch (kind) {
+    case "interface":
+      return prefix + "export interface Secret { value: number }\nexport type { Secret as default };\n";
+    case "jsdocInterface":
+      return prefix + "/** A documented declaration. */\nexport interface Secret { value: number }\nexport type { Secret as default };\n";
+    case "typeAlias":
+      return prefix + "export type Secret = { value: number };\nexport type { Secret as default };\n";
+    case "classInterface":
+      return prefix + "export interface Secret { value: number }\nexport class Secret { value = 1 }\nexport default Secret;\n";
+    case "defaultInterface":
+      return prefix + "export default interface Secret { value: number }\nexport type { Secret };\n";
+    case "namespaceInterface":
+      return prefix + "export namespace Secret { export const value = 1 }\nexport interface Secret { value: number }\nexport default Secret;\n";
+  }
+}
+
+function otherSurface(shape: typeof namingShapes[number]): { index: string; mid?: string } {
+  switch (shape) {
+    case "named": return { index: 'export type { Secret } from "../m/secret.js";\n' };
+    case "alias": return { index: 'export type { Secret as Public } from "../m/secret.js";\n' };
+    case "star": return { index: 'export * from "../m/secret.js";\n' };
+    case "starChain": return { index: 'export * from "./mid.js";\n', mid: 'export * from "../m/secret.js";\n' };
+    case "starAs": return { index: 'export * as ns from "../m/secret.js";\n' };
+    case "namespaceImport": return { index: 'import * as NS from "../m/secret.js";\nexport { NS };\n' };
+    case "default": return { index: 'export type { default } from "../m/secret.js";\n' };
+    case "defaultAs": return { index: 'export type { default as Public } from "../m/secret.js";\n' };
+  }
+}
+
+test("focused findings equal a whole-project Program's, over generated re-export chains and inference shapes", async () => {
   // Real filesystem, real compiler, one full graph build per case (like
   // test/init.property.test.ts's own P8) - small trees and a bounded case
   // count keep this well under the timeout on a loaded machine.
@@ -33,7 +63,9 @@ test("closure findings equal a whole-project Program's, over generated re-export
         compilerOptions: { target: "esnext", module: "nodenext", moduleResolution: "nodenext", strict: true, skipLibCheck: true, noEmit: true },
       }));
       mkdirSync(join(root, "src/m"), { recursive: true });
-      writeFileSync(join(root, "src/m/secret.ts"), "export interface Secret { value: number }\n");
+      const declarationKind = tc.draw(gen.sampledFrom(declarationKinds));
+      const leakedDeclarationIsFirst = tc.draw(gen.booleans());
+      writeFileSync(join(root, "src/m/secret.ts"), secretSource(declarationKind, leakedDeclarationIsFirst));
 
       const chainLength = tc.draw(gen.integers({ minValue: 0, maxValue: 3 }));
       const useAlias = tc.draw(gen.booleans());
@@ -53,6 +85,8 @@ test("closure findings equal a whole-project Program's, over generated re-export
       // in (a whole-project Program has every file anyway) - this case
       // checks the closure's own file set directly, below.
       const includeAmbientRoot = tc.draw(gen.booleans());
+      const namedByOtherModule = tc.draw(gen.sampledFrom(namingShapes));
+      const moduleAugmentation = tc.draw(gen.sampledFrom(["none", "analyzed", "unresolved"] as const));
       if (includeAmbientRoot) {
         writeFileSync(join(root, "src/m/ambient-used.ts"), "export const used = 1;\n");
         writeFileSync(join(root, "src/m/ambient-heavy.ts"), "export const heavy = 1;\n");
@@ -100,22 +134,42 @@ test("closure findings equal a whole-project Program's, over generated re-export
       if (givePublicName) surface += `export { ${name} } from "${specifier}";\n`;
       writeFileSync(join(root, "src/m/index.ts"), surface);
 
-      const declaredModules: DeclaredModule[] = [{ name: "m", glob: "src/m/**" }];
+      mkdirSync(join(root, "src/other"), { recursive: true });
+      const other = otherSurface(namedByOtherModule);
+      writeFileSync(join(root, "src/other/index.ts"), other.index);
+      if (other.mid !== undefined) writeFileSync(join(root, "src/other/mid.ts"), other.mid);
+      if (moduleAugmentation !== "none") {
+        const target = moduleAugmentation === "analyzed" ? "../m/index.js" : "missing-external-package";
+        writeFileSync(join(root, "src/other/augment.ts"), `export {};\ndeclare module "${target}" { interface Added { value: number } }\n`);
+      }
+
+      const declaredModules: DeclaredModule[] = [
+        { name: "m", glob: "src/m/**" },
+        { name: "other", glob: "src/other/**" },
+      ];
       const graph = buildModuleGraph({ projectRoot: root, declaredModules });
       assert.equal(graph.unresolvedSpecifierCount, 0);
-      const closure = keysOf(checkTypeLeaks(graph));
+      const closure = keysOf(graph.typeLeaksForFocus("m"));
 
       const prepared = prepareGraph({ projectRoot: root, declaredModules });
       const program = ts.createProgram({ rootNames: prepared.rootNames, options: prepared.compilerOptions });
-      const whole = keysOf(checkTypeLeaks({ modules: graph.modules, program, checker: program.getTypeChecker(), rootDir: graph.rootDir }));
+      const whole = keysOf(checkTypeLeaks({ modules: graph.modules, program, checker: program.getTypeChecker(), rootDir: graph.rootDir })
+        .filter((violation) => violation.todoModule === "m"));
 
       assert.deepEqual(closure, whole);
       // Given a public name, Secret must never leak regardless of which
       // wrapper mode also reaches it; otherwise a real leak must be
       // present - either way, an empty match on both sides for the wrong
       // reason is what this checks apart.
-      if (givePublicName) assert.equal(closure.length, 0, "expected no leak once Secret has a public name");
-      else assert.ok(closure.length >= 1, "expected at least one leak in every generated case");
+      const namespaceOnly = namedByOtherModule === "starAs" || namedByOtherModule === "namespaceImport";
+      if (givePublicName || !namespaceOnly) assert.equal(closure.length, 0, "expected no leak once Secret has a public name");
+      else assert.ok(closure.length >= 1, "a namespace name must not name its first declaration");
+
+      if (moduleAugmentation === "analyzed") {
+        assert.ok(graph.focusedTypeLeakNotes.some((note) => note.includes("module augmentation") && note.includes("fell back")));
+      } else if (moduleAugmentation === "unresolved") {
+        assert.ok(!graph.focusedTypeLeakNotes.some((note) => note.includes("module augmentation")));
+      }
 
       if (includeAmbientRoot) {
         const rootFiles = graph.program.getRootFileNames();
@@ -126,4 +180,4 @@ test("closure findings equal a whole-project Program's, over generated re-export
       rmSync(root, { recursive: true, force: true });
     }
   }, { testCases: 30 });
-}, 30_000);
+}, 90_000);

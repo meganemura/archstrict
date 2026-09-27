@@ -21,6 +21,7 @@
 // checker) and a boundary root. No I/O, no output formatting.
 import ts from "typescript";
 import { relative } from "node:path";
+import { declarationKey, sourceFileKey } from "../type-closure.js";
 
 export type Via = "inferred-return" | "generic-parameter" | "structural";
 
@@ -132,6 +133,16 @@ function collectNamedDeclarations(
   return declarations;
 }
 
+// Namespace exports resolve to a SourceFile, which can share the first
+// declaration's offset. A common position key is refused because it aliases them.
+function namedDeclarationKey(node: ts.Node): string {
+  if (ts.isSourceFile(node)) return sourceFileKey(node.fileName);
+  const sf = node.getSourceFile();
+  const start = node.getStart(sf);
+  const { line, character } = sf.getLineAndCharacterOfPosition(start);
+  return declarationKey(sf.fileName, line + 1, character + 1);
+}
+
 // A generic type reference (Promise<Internal>, Map<K, Internal>,
 // Array<Internal>) is an Object type carrying the Reference object flag -
 // a plain object literal type carries Object but not Reference.
@@ -161,6 +172,10 @@ export function detectTypeLeaks(
   // for the seam this is. Absent for a standalone caller (the nukadoko
   // harness): a real, whole-project Program never has this problem.
   report?: ReportUnresolvedReference,
+  // Public names from other surfaces arrive without checker nodes because
+  // loading their closures removes the scope benefit. Object identity is
+  // refused, so declarations match by stable file, line, and column keys.
+  externallyNamedDeclarationKeys: ReadonlySet<string> = new Set(),
 ): LeakFinding[] {
   const boundaryRoots = typeof boundaryRoot === "string" ? [boundaryRoot] : boundaryRoot;
   const moduleSymbol = checker.getSymbolAtLocation(entrySf);
@@ -212,7 +227,14 @@ export function detectTypeLeaks(
     // Has a public name somewhere - this surface's own re-export (any
     // name, any alias depth) or another declared module's surface.
     const declarations = symbol.getDeclarations();
-    if (declarations?.some((d) => namedDeclarations.has(d))) return undefined;
+    if (declarations?.some((d) => {
+      // Checker-owned names keep their exact node identity. Converting all
+      // names to strings is refused because the unscoped path already has nodes.
+      if (namedDeclarations.has(d)) return true;
+      // Other surfaces have no nodes in this Program. Loading them is refused
+      // because it rebuilds the all-surface closure that focus avoids.
+      return externallyNamedDeclarationKeys.has(namedDeclarationKey(d));
+    })) return undefined;
     // TS file names are always forward-slash; boundaryRoot comes from
     // node:path's own join/dirname, which uses the platform separator on
     // Windows - a plain startsWith would then read every declaration as
@@ -530,7 +552,17 @@ export function checkTypeLeaks(graph: {
   // given: that call wants a fresh walk with its own reports, not a
   // stale answer from a possibly earlier round.
   cachedTypeLeaks?: Violation[];
-}, options: { report?: ReportUnresolvedReference } = {}): Violation[] {
+}, options: {
+  // The closure safety loop needs unresolved aliases. Silent omission is
+  // refused because it can leave a required declaration outside the Program.
+  report?: ReportUnresolvedReference;
+  // A focused run checks one owner only. Checking every module is refused
+  // because the caller would discard all findings from other surfaces.
+  focusModuleName?: string;
+  // Other modules still provide public names. Omitting those names is refused
+  // because an already named declaration would become a false leak.
+  extraNamedDeclarationKeys?: ReadonlySet<string>;
+} = {}): Violation[] {
   // Forces graph.program/graph.checker first (as this always did): on a
   // graph whose Program was not built yet, that is what populates
   // `cachedTypeLeaks` as a side effect, in time for the check right after.
@@ -550,6 +582,9 @@ export function checkTypeLeaks(graph: {
   const namedDeclarations = collectNamedDeclarations(graph.program, graph.checker, allSurfaceFiles, options.report);
 
   for (const [name, module] of graph.modules) {
+    // The focused Program owns only one module's surface closure. Walking other
+    // modules is refused because their absent source files cannot give safe results.
+    if (options.focusModuleName !== undefined && name !== options.focusModuleName) continue;
     // A module's surface can be more than one file (a glob, not a single
     // name) - each is walked independently, but grouped together below:
     // the same internal type leaking through two different surface files
@@ -565,6 +600,7 @@ export function checkTypeLeaks(graph: {
         module.surfaceFiles.filter(p => p !== surfacePath),
         namedDeclarations,
         options.report,
+        options.extraNamedDeclarationKeys,
       );
       for (const [key, group] of groupByInternalType(findings, surfacePath)) {
         const existing = groups.get(key);

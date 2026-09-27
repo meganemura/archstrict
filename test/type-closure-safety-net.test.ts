@@ -45,6 +45,33 @@ describe("the closure's own round bound and fallback", () => {
     expect(JSON.parse(JSON.stringify(result)).notes).toEqual(result.notes);
     expect(formatText(result)).toContain(`note: ${result.notes![0]}`);
   });
+
+  test("a focused safety fallback keeps the unscoped closure note", async () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "archstrict-focused-fallback-notes-")));
+    try {
+      writeFileSync(join(root, "tsconfig.json"), '{"compilerOptions":{"module":"nodenext","moduleResolution":"nodenext","strict":true,"skipLibCheck":true}}');
+      writeFileSync(join(root, "package.json"), '{"type":"module"}');
+      mkdirSync(join(root, "src/a"), { recursive: true });
+      mkdirSync(join(root, "src/b"), { recursive: true });
+      writeFileSync(join(root, "src/a/secret.ts"), "export interface Secret { value: number }\n");
+      writeFileSync(join(root, "src/a/index.ts"), 'import type { Secret } from "./secret.js";\nexport interface A { value: Secret }\n');
+      writeFileSync(join(root, "src/b/index.ts"), "export interface B { value: number }\n");
+      writeFileSync(join(root, "src/b/augment.ts"), 'export {};\ndeclare module "../a/index.js" { interface A { extra: string } }\n');
+      writeFileSync(join(root, "archstrict.config.ts"), `export default ${JSON.stringify({
+        declaredModules: [{ name: "a", glob: "src/a/**" }, { name: "b", glob: "src/b/**" }],
+        exclude: ["archstrict.config.ts", "tsconfig.json"], because: "test architecture",
+      })};`);
+
+      const result = await check(root, join(root, "src/a/index.ts"), {
+        buildGraph: (options) => buildPreparedGraph(prepareGraph(options), { forceClosureFallbackForTests: true }),
+      });
+      expect(result.notes).toHaveLength(2);
+      expect(result.notes![0]).toContain("module augmentation");
+      expect(result.notes![1]).toContain("could not resolve every referenced import");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
 // The safety net's own one direction: an unresolved alias, carrying a

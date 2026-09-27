@@ -43,6 +43,18 @@ describe("buildModuleGraph (package-specifier resolution)", () => {
   });
 });
 
+test("a script's string-named ambient module is not a module augmentation", () => {
+  const sf = ts.createSourceFile(
+    "ambient.ts", 'declare module "external-pkg" { export const value: number }\n',
+    ts.ScriptTarget.ESNext, true, ts.ScriptKind.TS,
+  );
+  const walked = walkFileImports(sf, { module: ts.ModuleKind.CommonJS, moduleResolution: ts.ModuleResolutionKind.Node10 });
+  expect(walked.isScript).toBe(true);
+  expect(walked.hasAmbientDeclarations).toBe(true);
+  expect(walked.hasModuleAugmentation).toBe(false);
+  expect(walked.moduleAugmentationSpecifiers).toEqual([]);
+});
+
 // A minimal reference walk kept in this file only (not exported from
 // src/): parses through a real ts.Program's own getSourceFiles(), a
 // second, independent path to the same per-file imports buildPreparedGraph

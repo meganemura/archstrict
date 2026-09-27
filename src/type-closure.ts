@@ -106,14 +106,6 @@ type FileSummary = {
   exportEquals: boolean;
   exportEqualsInfo: DeclInfo | undefined;
   ambient: DeclInfo[]; // `declare global` / `declare module "..."` bodies
-  // This file's own SourceFile, at its own start position (skipping
-  // leading trivia - a comment, a blank line - the same as any other
-  // node's `getStart` would) - what the checker reports as a namespace
-  // symbol's own declaration (`export * as ns`, a re-exported namespace
-  // import). Computed once here, at parse time, and kept only as a
-  // position: this module's own header still holds ("the AST is
-  // dropped") - a position is three plain values, not a retained node.
-  sourceFileStart: { file: string; line: number; column: number };
 };
 
 export type TypeClosureInputs = {
@@ -334,7 +326,7 @@ function summarize(inputs: TypeClosureInputs, summaries: Summaries, file: string
     const empty: FileSummary = {
       missing: true, isScript: false, imports: new Map(), exportsLocal: new Map(), reexports: new Map(),
       stars: [], decls: new Map(), defaultInfo: undefined, defaultAlias: undefined, exportEquals: false,
-      exportEqualsInfo: undefined, ambient: [], sourceFileStart: { file, line: 1, column: 1 },
+      exportEqualsInfo: undefined, ambient: [],
     };
     summaries.set(file, empty);
     return empty;
@@ -343,7 +335,7 @@ function summarize(inputs: TypeClosureInputs, summaries: Summaries, file: string
   const summary: FileSummary = {
     missing: false, isScript: !ts.isExternalModule(sf), imports: new Map(), exportsLocal: new Map(),
     reexports: new Map(), stars: [], decls: new Map(), defaultInfo: undefined, defaultAlias: undefined,
-    exportEquals: false, exportEqualsInfo: undefined, ambient: [], sourceFileStart: positionOf(sf, sf, file),
+    exportEquals: false, exportEqualsInfo: undefined, ambient: [],
   };
   const addDecl = (name: string, info: DeclInfo): void => {
     const existing = summary.decls.get(name);
@@ -709,7 +701,13 @@ export type NamedDeclarationsResult = { keys: ReadonlySet<string>; unresolvable:
 // never share one file's one offset, so a declared NAME is never part of
 // the key at all.
 export function declarationKey(file: string, line: number, column: number): string {
-  return `${file}\0${line}\0${column}`;
+  return `${file.replaceAll("\\", "/")}\0${line}\0${column}`;
+}
+
+// A SourceFile and its first declaration can start at the same offset.
+// Reusing a position key is refused because it can make that declaration public.
+export function sourceFileKey(file: string): string {
+  return `${file.replaceAll("\\", "/")}\0<sourcefile>`;
 }
 
 // The syntactic twin of type-leak.ts's own `collectNamedDeclarations`:
@@ -753,14 +751,10 @@ export function computeSyntacticNamedDeclarations(
     keys.add(declarationKey(info.position.file, info.position.line, info.position.column));
   }
 
-  // A namespace-shaped resolution (`export * as ns`, a re-exported
-  // namespace import): the checker's own declaration is `target`'s own
-  // SourceFile, at ITS OWN start position (`sourceFileStart`'s own
-  // comment on why a plain `(target, 1, 1)` is wrong whenever the file
-  // starts with a comment or a blank line).
+  // A namespace-shaped resolution names the target SourceFile. A position
+  // key is refused because the first declaration can start at the same offset.
   function addSourceFileKey(target: string): void {
-    const start = summarize(inputs, summaries, target).sourceFileStart;
-    keys.add(declarationKey(start.file, start.line, start.column));
+    keys.add(sourceFileKey(target));
   }
 
   // `export default <expr>` where `expr` is a single identifier

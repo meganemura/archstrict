@@ -6,14 +6,12 @@
 // Boundary: no rule logic here. A rule is a predicate over this graph's
 // edges and modules; this module only builds the graph and says what it
 // could not analyze (unresolved specifiers, unsupported syntax, files
-// outside the modules glob) as counts, never as silence. One deliberate
-// exception: `ensureProgram`'s own safety net (below) calls rule 6
-// (`checkTypeLeaks`) to build its own closure Program correctly, since
-// rule 6 is the only code that already walks every alias a Program needs
-// - see `ensureProgram`'s own comment for the seam this is, and
-// rules/type-leak.ts's own `ReportUnresolvedReference` for the other side
-// of it. Also by design: rule 6's own closure Program resolves each
-// file's own imports through that file's own nearest tsconfig
+// outside the modules glob) as counts, never as silence.
+// Two deliberate exceptions support rule 6. The Program builders call
+// `checkTypeLeaks` because duplicate alias logic can omit required roots.
+// The focused builder computes absent public names because loading every
+// surface would remove the performance benefit of its smaller Program.
+// Rule 6's closure Program resolves imports with each file's nearest tsconfig
 // (`compilerOptionsForFile`, the same one the edge walk uses), not the
 // project root's compiler options for every file alike, so a nested
 // tsconfig's own `paths` resolves there the same way the edge walk
@@ -52,7 +50,7 @@ import { existsSync, readFileSync, readdirSync, realpathSync, statSync, type Dir
 import { dirname, join, relative, sep } from "node:path";
 import { builtinModules } from "node:module";
 import { compileGlob, mostSpecificMatch } from "./classify.js";
-import { buildTypeClosure } from "./type-closure.js";
+import { buildTypeClosure, computeSyntacticNamedDeclarations, type TypeClosureInputs } from "./type-closure.js";
 import { checkTypeLeaks, type Violation as TypeLeakViolation } from "./rules/type-leak.js";
 
 // A node builtin (`fs`, `node:fs`, ...) never has a real resolvedModule:
@@ -215,6 +213,9 @@ export type ModuleGraph = {
   // actually been accessed; a caller that never touches either sees an
   // empty array here regardless.
   readonly programNotes: readonly string[];
+  // A reused graph can serve an unscoped caller after a focused run.
+  // Sharing `programNotes` is refused because scoped notes would leak across calls.
+  readonly focusedTypeLeakNotes: readonly string[];
   // Rule 6's own findings against the exact Program `program` now holds -
   // set only when building that Program already ran rule 6's own walk to
   // do so (the closure's safety net), so `checkTypeLeaks(graph)` can reuse
@@ -222,6 +223,10 @@ export type ModuleGraph = {
   // whenever that has not happened (no surface-owning module at all, or
   // the whole-project fallback, which does not run this walk itself).
   readonly cachedTypeLeaks?: TypeLeakViolation[];
+  // An all-surface closure found 53 leaks to report 4 on a 23,000-file project.
+  // `typeLeaksForFocus` rejects post-filtering and builds only focused roots.
+  // A separate result prevents reused graphs from serving focused findings to unscoped callers.
+  typeLeaksForFocus(moduleName: string): TypeLeakViolation[];
 };
 
 export type BuildOptions = {
@@ -1097,6 +1102,11 @@ export type ImportRecord = {
   mode: ts.ResolutionMode;
 };
 
+export type ModuleAugmentationSpecifier = {
+  specifier: string;
+  mode: ts.ResolutionMode;
+};
+
 export type FileImportWalk = {
   imports: ImportRecord[];
   unsupportedSyntaxCount: number;
@@ -1108,6 +1118,12 @@ export type FileImportWalk = {
   // a file just to answer this - see walkFileImports' own header.
   isScript: boolean;
   hasAmbientDeclarations: boolean;
+  // A module augmentation can add names outside a focused Program. A later
+  // reparse is refused because this walk already has the required syntax.
+  hasModuleAugmentation: boolean;
+  // The guard resolves only these syntax-owned targets. Treating every
+  // augmentation as local is refused because external packages are common.
+  moduleAugmentationSpecifiers: ModuleAugmentationSpecifier[];
 };
 
 // TypeScript's own default (ensureScriptKind, applied when a caller of
@@ -1207,7 +1223,23 @@ export function walkFileImports(sf: ts.SourceFile, compilerOptions: ts.CompilerO
   const isScript = !ts.isExternalModule(sf);
   const hasAmbientDeclarations = sf.statements.some((statement) =>
     isGlobalAugmentationOrAmbientModule(statement) || (isScript && isTopLevelDeclaration(statement)));
-  return { imports, unsupportedSyntaxCount, isScript, hasAmbientDeclarations };
+  // A script's string-named declaration defines an ambient module. Recording
+  // it as an augmentation is refused because the script is already a root.
+  const moduleAugmentationSpecifiers: ModuleAugmentationSpecifier[] = [];
+  if (!isScript) {
+    for (const statement of sf.statements) {
+      if (!ts.isModuleDeclaration(statement) || !ts.isStringLiteral(statement.name)) continue;
+      moduleAugmentationSpecifiers.push({
+        specifier: statement.name.text,
+        mode: ts.getModeForUsageLocation(sf, statement.name, compilerOptions),
+      });
+    }
+  }
+  return {
+    imports, unsupportedSyntaxCount, isScript, hasAmbientDeclarations,
+    hasModuleAugmentation: moduleAugmentationSpecifiers.length > 0,
+    moduleAugmentationSpecifiers,
+  };
 }
 
 // Parses one file and walks it for imports, in one place both real parse
@@ -1293,12 +1325,16 @@ export type GraphBuildOverrides = {
   onClosureRoundForTests?: (round: number, closureFiles: readonly string[]) => void;
 };
 
-// A file's own isScript/hasAmbientDeclarations flags (walkFileImports' own
-// header) - exposed only for buildModuleGraphForRules's own edge-cache
-// write below, not part of the public ModuleGraph shape every rule and
-// verb reads.
+// A file's own ambient and augmentation flags (walkFileImports' own header) -
+// exposed only for the edge cache and the focused rule 6 safety guard.
+// The public ModuleGraph shape does not expose these syntax details.
 export type PreparedModuleGraph = ModuleGraph & {
-  fileFlags: ReadonlyMap<string, { isScript: boolean; hasAmbientDeclarations: boolean }>;
+  fileFlags: ReadonlyMap<string, {
+    isScript: boolean;
+    hasAmbientDeclarations: boolean;
+    hasModuleAugmentation: boolean;
+    moduleAugmentationSpecifiers: ModuleAugmentationSpecifier[];
+  }>;
 };
 
 // Everything a graph build needs that does NOT depend on which files were
@@ -1416,7 +1452,12 @@ type WalkResult = {
   // file's own two flags (walkFileImports' own header), regardless of
   // module membership: an ambient file binds names no import ever names,
   // whether or not any declared module claims it.
-  fileFlags: Map<string, { isScript: boolean; hasAmbientDeclarations: boolean }>;
+  fileFlags: Map<string, {
+    isScript: boolean;
+    hasAmbientDeclarations: boolean;
+    hasModuleAugmentation: boolean;
+    moduleAugmentationSpecifiers: ModuleAugmentationSpecifier[];
+  }>;
   unsupportedSyntaxCount: number;
   unresolvedSpecifierCount: number;
   unresolvedSpecifiers: string[];
@@ -1441,12 +1482,22 @@ function walkAllFiles(prepared: ReturnType<typeof prepareGraph>, commons: GraphC
   // consumer that cares about a stable order sorts at its own site rather
   // than leaning on this order (see each rule's own comment where that
   // applies); this loop makes no ordering promise beyond "rootNames order".
-  const fileFlags = new Map<string, { isScript: boolean; hasAmbientDeclarations: boolean }>();
+  const fileFlags = new Map<string, {
+    isScript: boolean;
+    hasAmbientDeclarations: boolean;
+    hasModuleAugmentation: boolean;
+    moduleAugmentationSpecifiers: ModuleAugmentationSpecifier[];
+  }>();
 
   for (const fileName of rootNames) {
     const walked = fileWalk(fileName);
     if (walked === undefined) continue; // unreadable: invisible, matching a Program that never got a SourceFile for it either
-    fileFlags.set(fileName, { isScript: walked.isScript, hasAmbientDeclarations: walked.hasAmbientDeclarations });
+    fileFlags.set(fileName, {
+      isScript: walked.isScript,
+      hasAmbientDeclarations: walked.hasAmbientDeclarations,
+      hasModuleAugmentation: walked.hasModuleAugmentation,
+      moduleAugmentationSpecifiers: walked.moduleAugmentationSpecifiers,
+    });
 
     const fromModule = resolveModuleForFile(fileName);
     if (fromModule === undefined) {
@@ -1487,8 +1538,8 @@ function walkAllFiles(prepared: ReturnType<typeof prepareGraph>, commons: GraphC
 // disk-cache reconciliation (buildModuleGraphForRules): both hand this the
 // same shape (edges + fileFlags + counts), so ensureProgram's own closure
 // never needs to know whether its input came from a fresh parse or a
-// cache hit, and a cache hit never rebuilds the whole graph through a
-// second, uncached pass just to reach a Program.
+// cache hit. Separate assemblers are refused because they can give rule 6
+// different closure facts for cached and uncached graphs.
 function assembleGraph(prepared: ReturnType<typeof prepareGraph>, commons: GraphCommons, walked: WalkResult, overrides: GraphBuildOverrides): PreparedModuleGraph {
   const { modules, surface, rootDir, rootNames, compilerOptions } = prepared;
   const { edges, outsideFiles, fileFlags, unsupportedSyntaxCount, unresolvedSpecifierCount, unresolvedSpecifiers } = walked;
@@ -1516,20 +1567,36 @@ function assembleGraph(prepared: ReturnType<typeof prepareGraph>, commons: Graph
   // `ModuleGraph.program`/`releaseProgram` field comments for why.
   let program: ts.Program | undefined;
   let notes: string[] = [];
+  // A reused graph can next serve an unscoped caller without a release.
+  // Sharing `notes` is refused because scoped notes would leak across calls.
+  let scopedNotes: string[] = [];
   let cachedTypeLeaks: TypeLeakViolation[] | undefined;
-  const ensureProgram = (): ts.Program => {
-    if (program !== undefined) return program;
-    const resolvedSpecifiers = new Map<string, Map<string, string>>();
-    for (const edge of edges) {
-      let perFile = resolvedSpecifiers.get(edge.fromFile);
-      if (perFile === undefined) { perFile = new Map(); resolvedSpecifiers.set(edge.fromFile, perFile); }
-      perFile.set(edge.specifier, edge.resolvedFile);
-    }
-    const surfaceFiles = [...modules.values()].flatMap((m) => m.surfaceFiles);
-    const readFile = (file: string): string | undefined => host.readFile(file);
-    const languageVersion = compilerOptions.target ?? ts.ScriptTarget.ESNext;
-    const baseHost = overrides.host ?? host;
+  // Both Program paths need identical edge resolutions. A second resolver map
+  // is refused because separate answers could diverge from the graph's edges.
+  const resolvedSpecifiers = new Map<string, Map<string, string>>();
+  for (const edge of edges) {
+    let perFile = resolvedSpecifiers.get(edge.fromFile);
+    if (perFile === undefined) { perFile = new Map(); resolvedSpecifiers.set(edge.fromFile, perFile); }
+    perFile.set(edge.specifier, edge.resolvedFile);
+  }
+  const readFile = (file: string): string | undefined => host.readFile(file);
+  const languageVersion = compilerOptions.target ?? ts.ScriptTarget.ESNext;
+  const baseHost = overrides.host ?? host;
+  const ambientFiles = [...fileFlags].filter(([, f]) => f.isScript || f.hasAmbientDeclarations).map(([file]) => file);
+  // Both Program paths require the same closure facts. A duplicated input
+  // assembly is refused because ambient roots and resolutions must stay equal.
+  const closureInputs = (surfaceFiles: readonly string[], extraRoots: readonly string[] = []): TypeClosureInputs => ({
+    readFile, languageVersion, scriptKindFor: scriptKindForFile, ambientFiles,
+    surfaceFiles, resolvedSpecifiers, extraRoots,
+  });
 
+  // Both Program paths need the same bounded safety loop. Separate loops are
+  // refused because a missed alias must trigger the same fallback in each path.
+  const runProgramRounds = (
+    surfaceFiles: readonly string[],
+    focusModuleName?: string,
+    extraNamedDeclarationKeys?: ReadonlySet<string>,
+  ): { program: ts.Program; violations?: TypeLeakViolation[]; notes: string[] } => {
     // The Program's own module-resolution host, not `noResolve`: `noResolve`
     // also stops TypeScript from following node_modules/@types imports and
     // triple-slash references, so an external dependency's own generic type
@@ -1588,11 +1655,7 @@ function assembleGraph(prepared: ReturnType<typeof prepareGraph>, commons: Graph
 
     let extraRoots: string[] = [];
     for (let round = 0; ; round++) {
-      const closure = buildTypeClosure({
-        readFile, languageVersion, scriptKindFor: scriptKindForFile,
-        ambientFiles: [...fileFlags].filter(([, f]) => f.isScript || f.hasAmbientDeclarations).map(([file]) => file),
-        surfaceFiles, resolvedSpecifiers, extraRoots,
-      });
+      const closure = buildTypeClosure(closureInputs(surfaceFiles, extraRoots));
       // Test-only: see GraphBuildOverrides' own comment. Round 0 only -
       // a later round's own `extraRoots` (added for real, by the safety
       // net below) must stick.
@@ -1613,12 +1676,13 @@ function assembleGraph(prepared: ReturnType<typeof prepareGraph>, commons: Graph
       // specifier it failed on - resolved from the same edge records the
       // closure itself used, no re-resolution.
       //
-      // This call's own return value is cached as `cachedTypeLeaks` once
-      // the loop settles (below) - `checkTypeLeaks(graph)` prefers that
-      // cache over walking the identical final Program a second time, so
-      // this pass is the only full rule-6 walk a normal `check` pays for.
+      // The unscoped caller caches this return value as `cachedTypeLeaks`.
+      // The focused caller returns it directly. Neither caller walks the
+      // identical final Program a second time after a successful round.
       const missing = new Set<string>();
       const roundViolations = checkTypeLeaks({ modules, program: candidate, checker: candidate.getTypeChecker(), rootDir }, {
+        focusModuleName,
+        extraNamedDeclarationKeys,
         report: ({ file, specifier }) => {
           const resolved = resolvedSpecifiers.get(file)?.get(specifier);
           if (resolved !== undefined && analyzedSet.has(resolved) && !closureSet.has(resolved)) missing.add(resolved);
@@ -1628,18 +1692,47 @@ function assembleGraph(prepared: ReturnType<typeof prepareGraph>, commons: Graph
       // is never a real file - only `missing.size` past this point
       // matters, not what it names.
       if (overrides.forceClosureFallbackForTests === true) missing.add("\0forced-missing-for-tests");
-      if (missing.size === 0) { program = candidate; cachedTypeLeaks = roundViolations; break; }
+      // A complete alias walk makes the candidate safe. Another round is
+      // refused because another round adds work without a missing root.
+      if (missing.size === 0) return { program: candidate, violations: roundViolations, notes: [] };
       if (round >= MAX_CLOSURE_ROUNDS) {
-        notes = [`rule 6's type closure could not resolve every referenced import after ${MAX_CLOSURE_ROUNDS} rounds; fell back to the whole-project program for this check`];
-        program = ts.createProgram({ rootNames, options: compilerOptions, host: baseHost, oldProgram: overrides.oldProgram });
-        break;
+        // The bound prevents an unending recovery loop. A partial result is
+        // refused because an omitted public name creates a false leak.
+        return {
+          notes: [`rule 6's type closure could not resolve every referenced import after ${MAX_CLOSURE_ROUNDS} rounds; fell back to the whole-project program for this check`],
+          program: ts.createProgram({ rootNames, options: compilerOptions, host: baseHost, oldProgram: overrides.oldProgram }),
+        };
       }
       extraRoots = [...extraRoots, ...missing];
     }
+  };
+
+  // Unscoped callers share one Program and cache. Reusing a focused Program is
+  // refused because an MCP caller can request an unscoped answer on the graph.
+  const ensureProgram = (): ts.Program => {
+    // Unscoped callers share the memoized Program. Rebuilding the Program is refused
+    // because it repeats binding work without changing the requested scope.
+    if (program !== undefined) return program;
+    const built = runProgramRounds([...modules.values()].flatMap((m) => m.surfaceFiles));
+    program = built.program;
+    notes = built.notes;
+    cachedTypeLeaks = built.violations;
     return program;
   };
 
-  return {
+  // A project-file augmentation can add names outside the focused closure.
+  // Falling back for external targets is refused because they add no project name.
+  function hasAnalyzedModuleAugmentation(): boolean {
+    for (const [file, flags] of fileFlags) {
+      for (const augmentation of flags.moduleAugmentationSpecifiers) {
+        const target = resolveModule(augmentation.specifier, file, augmentation.mode).resolvedModule?.resolvedFileName;
+        if (target !== undefined && analyzedSet.has(target)) return true;
+      }
+    }
+    return false;
+  }
+
+  const graph: PreparedModuleGraph = {
     modules,
     edges,
     crossModuleEdges,
@@ -1659,16 +1752,64 @@ function assembleGraph(prepared: ReturnType<typeof prepareGraph>, commons: Graph
     releaseProgram() {
       program = undefined;
       notes = [];
+      // A release ends both result lifetimes. Retaining scoped notes is refused
+      // because a later focused call can have a different fallback reason.
+      scopedNotes = [];
       cachedTypeLeaks = undefined;
     },
     get programNotes() {
       return notes;
     },
+    get focusedTypeLeakNotes() {
+      // The getter exposes notes assembled for the latest focused call.
+      // Returning `notes` directly is refused because it lacks scoped reasons.
+      return scopedNotes;
+    },
     get cachedTypeLeaks() {
       return cachedTypeLeaks;
     },
+    typeLeaksForFocus(moduleName: string) {
+      const module = modules.get(moduleName);
+      // A missing module has no surface roots. Building an unscoped Program is
+      // refused because it cannot produce a finding owned by the missing module.
+      if (module === undefined) return [];
+      // Other surfaces contribute public names, but their closures are omitted.
+      // Loading the other closures is refused because full loading recreates the measured cost.
+      const otherSurfaceFiles = [...modules.values()]
+        .filter((candidate) => candidate.name !== moduleName)
+        .flatMap((candidate) => candidate.surfaceFiles);
+      const named = computeSyntacticNamedDeclarations(closureInputs(otherSurfaceFiles), otherSurfaceFiles);
+      // An unresolved export chain can hide a public name. Continuing with a
+      // partial key set is refused because the omitted name creates a false leak.
+      const fallbackReason = named.unresolvable
+        ? "the syntactic public-name resolver could not resolve every declaration"
+        // An analyzed augmentation can add a name absent from surface syntax.
+        // Continuing with syntactic keys is refused because the name stays invisible.
+        : hasAnalyzedModuleAugmentation()
+          ? "an analyzed module augmentation can add public names"
+          : undefined;
+      if (fallbackReason !== undefined) {
+        // The unscoped checker supplies every name and the note exposes the cost.
+        // Silent scoped evaluation is refused because it can report a false leak.
+        const focusedNote = `rule 6 could not safely scope this surface because ${fallbackReason}; fell back to the whole-project type closure for this check`;
+        const violations = checkTypeLeaks(graph).filter((violation) => violation.todoModule === moduleName);
+        // The whole-project builder can add its own fallback note. Dropping it is
+        // refused because the focused result must explain every fallback it used.
+        scopedNotes = [focusedNote, ...notes];
+        return violations;
+      }
+      const built = runProgramRounds(module.surfaceFiles, moduleName, named.keys);
+      scopedNotes = built.notes;
+      // A successful round already returns its findings. Rewalking is refused
+      // unless the bounded fallback returns only a whole-project Program.
+      const violations = built.violations ?? checkTypeLeaks({
+        modules, program: built.program, checker: built.program.getTypeChecker(), rootDir,
+      }, { focusModuleName: moduleName, extraNamedDeclarationKeys: named.keys });
+      return violations;
+    },
     fileFlags,
   };
+  return graph;
 }
 
 export function buildPreparedGraph(prepared: ReturnType<typeof prepareGraph>, overrides: GraphBuildOverrides = {}): PreparedModuleGraph {
@@ -1990,7 +2131,12 @@ export function buildModuleGraphForRules(options: BuildOptions): ModuleGraph {
   const newFiles: EdgeCache["files"] = {};
   const edges: Edge[] = [];
   const outsideFiles: string[] = [];
-  const fileFlags = new Map<string, { isScript: boolean; hasAmbientDeclarations: boolean }>();
+  const fileFlags = new Map<string, {
+    isScript: boolean;
+    hasAmbientDeclarations: boolean;
+    hasModuleAugmentation: boolean;
+    moduleAugmentationSpecifiers: ModuleAugmentationSpecifier[];
+  }>();
   let unsupportedSyntaxCount = 0;
   let unresolvedSpecifierCount = 0;
   const unresolvedSpecifiers: string[] = [];
@@ -2021,9 +2167,12 @@ export function buildModuleGraphForRules(options: BuildOptions): ModuleGraph {
     let unsupportedForFile: number;
     let isScript: boolean;
     let hasAmbientDeclarations: boolean;
+    let hasModuleAugmentation: boolean;
+    let moduleAugmentationSpecifiers: ModuleAugmentationSpecifier[];
     let unreadable: true | undefined;
     if (parseValid) {
-      ({ imports, unsupportedSyntaxCount: unsupportedForFile, isScript, hasAmbientDeclarations, unreadable } = oldEntry);
+      ({ imports, unsupportedSyntaxCount: unsupportedForFile, isScript, hasAmbientDeclarations,
+        hasModuleAugmentation, moduleAugmentationSpecifiers, unreadable } = oldEntry);
     } else if (stat === undefined) {
       // Listed by the scan, gone (or unstattable) by the time this build
       // reached it - a race, not a real file to analyze this build.
@@ -2031,9 +2180,11 @@ export function buildModuleGraphForRules(options: BuildOptions): ModuleGraph {
     } else {
       const walked = commons.defaultFileWalk(file);
       if (walked === undefined) {
-        imports = []; unsupportedForFile = 0; isScript = false; hasAmbientDeclarations = false; unreadable = true;
+        imports = []; unsupportedForFile = 0; isScript = false; hasAmbientDeclarations = false;
+        hasModuleAugmentation = false; moduleAugmentationSpecifiers = []; unreadable = true;
       } else {
-        ({ imports, unsupportedSyntaxCount: unsupportedForFile, isScript, hasAmbientDeclarations } = walked);
+        ({ imports, unsupportedSyntaxCount: unsupportedForFile, isScript, hasAmbientDeclarations,
+          hasModuleAugmentation, moduleAugmentationSpecifiers } = walked);
       }
     }
 
@@ -2044,11 +2195,12 @@ export function buildModuleGraphForRules(options: BuildOptions): ModuleGraph {
       // resolve for a file that was never really read.
       newFiles[file] = { mtimeMs: stat!.mtimeMs, size: stat!.size, optionsIndex,
         ...(impliedNodeFormat !== undefined ? { impliedNodeFormat } : {}),
-        imports: [], unsupportedSyntaxCount: 0, isScript: false, hasAmbientDeclarations: false, unreadable: true, resolutions: {} };
+        imports: [], unsupportedSyntaxCount: 0, isScript: false, hasAmbientDeclarations: false,
+        hasModuleAugmentation: false, moduleAugmentationSpecifiers: [], unreadable: true, resolutions: {} };
       continue;
     }
 
-    fileFlags.set(file, { isScript, hasAmbientDeclarations });
+    fileFlags.set(file, { isScript, hasAmbientDeclarations, hasModuleAugmentation, moduleAugmentationSpecifiers });
     const fromModule = resolveModuleForFile(file);
     if (fromModule === undefined) outsideFiles.push(file);
     else { modules.get(fromModule)?.files.push(file); unsupportedSyntaxCount += unsupportedForFile; }
@@ -2105,7 +2257,8 @@ export function buildModuleGraphForRules(options: BuildOptions): ModuleGraph {
     // when it's undefined.
     newFiles[file] = { mtimeMs: stat!.mtimeMs, size: stat!.size, optionsIndex,
       ...(impliedNodeFormat !== undefined ? { impliedNodeFormat } : {}),
-      imports, unsupportedSyntaxCount: unsupportedForFile, isScript, hasAmbientDeclarations, resolutions };
+      imports, unsupportedSyntaxCount: unsupportedForFile, isScript, hasAmbientDeclarations,
+      hasModuleAugmentation, moduleAugmentationSpecifiers, resolutions };
   }
 
   // Do not label an analysis with mtimes/sizes from a concurrent edit.

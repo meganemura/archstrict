@@ -1,7 +1,6 @@
 // Responsibility: store and validate a per-file, incrementally-updatable
-// snapshot of each analyzed file's own syntactic import walk and resolved
-// specifiers, sharded on disk so a build never reads or writes the whole
-// snapshot at once.
+// snapshot of each analyzed file's own syntactic import walk, module
+// augmentations, and resolved specifiers. Shards avoid whole-cache I/O.
 // Boundary: cache failures fall back to analysis; this module never parses
 // a file or resolves an import itself - module-graph.ts owns both, and
 // hands this module only the results to persist or read back.
@@ -122,12 +121,12 @@ import { readFileSync, mkdirSync, writeFileSync, renameSync, rmSync } from "node
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import type ts from "typescript";
-import type { ImportRecord } from "./module-graph.js";
+import type { ImportRecord, ModuleAugmentationSpecifier } from "./module-graph.js";
 
 // Bumped whenever the on-disk shape (header or shard encoding) changes -
 // an old cache is then a silent miss (parseHeader rejects the unknown
 // schema number), never a crash on a shape this code no longer produces.
-export const CACHE_SCHEMA = 6;
+export const CACHE_SCHEMA = 8;
 
 // Fixed, not derived from project size - see this module's own header.
 // module-graph.ts's own per-file loop marks a shard dirty by this same
@@ -174,6 +173,8 @@ export type CachedFileEntry = {
   unsupportedSyntaxCount: number;
   isScript: boolean;
   hasAmbientDeclarations: boolean;
+  hasModuleAugmentation: boolean;
+  moduleAugmentationSpecifiers: ModuleAugmentationSpecifier[];
   unreadable?: true;
   // Keyed by `${specifier}\u0000${mode ?? ""}` - two imports of the same
   // specifier under two different resolution modes (rare, but legal) must
@@ -222,6 +223,9 @@ function isImportRecord(value: unknown): value is ImportRecord {
     isMode(value.mode) &&
     [value.fromPosition.line, value.fromPosition.column].every((n) => Number.isInteger(n) && Number(n) > 0);
 }
+function isModuleAugmentationSpecifier(value: unknown): value is ModuleAugmentationSpecifier {
+  return record(value) && typeof value.specifier === "string" && isMode(value.mode);
+}
 function isResolution(value: unknown): value is CachedResolution {
   if (value === "unresolved") return true;
   return record(value) && typeof value.resolvedFile === "string" &&
@@ -236,7 +240,11 @@ function isFileEntry(value: unknown): value is CachedFileEntry {
   if (!isMode(value.impliedNodeFormat)) return false;
   if (!Array.isArray(value.imports) || !value.imports.every(isImportRecord)) return false;
   if (!Number.isInteger(value.unsupportedSyntaxCount) || Number(value.unsupportedSyntaxCount) < 0) return false;
-  if (typeof value.isScript !== "boolean" || typeof value.hasAmbientDeclarations !== "boolean") return false;
+  if (typeof value.isScript !== "boolean" || typeof value.hasAmbientDeclarations !== "boolean" ||
+      typeof value.hasModuleAugmentation !== "boolean") return false;
+  if (!Array.isArray(value.moduleAugmentationSpecifiers) ||
+      !value.moduleAugmentationSpecifiers.every(isModuleAugmentationSpecifier) ||
+      value.hasModuleAugmentation !== (value.moduleAugmentationSpecifiers.length > 0)) return false;
   if (value.unreadable !== undefined && value.unreadable !== true) return false;
   if (!record(value.resolutions) || !Object.values(value.resolutions).every(isResolution)) return false;
   return true;
@@ -280,16 +288,18 @@ type EncodedImport = [
   isTypeOnly: 0 | 1, isDynamic: 0 | 1, mode: number | null,
   resolution: EncodedResolution,
 ];
+type EncodedModuleAugmentation = [specifierIndex: number, mode: number | null];
 type EncodedFileEntry = [
   pathIndex: number, mtimeMs: number, size: number, optionsIndex: number,
   impliedNodeFormat: number | null, unsupportedSyntaxCount: number, flags: number,
-  imports: EncodedImport[],
+  imports: EncodedImport[], moduleAugmentations: EncodedModuleAugmentation[],
 ];
 type EncodedShard = { paths: string[]; specifiers: string[]; packageNames: string[]; files: EncodedFileEntry[] };
 
 const FLAG_IS_SCRIPT = 1;
 const FLAG_HAS_AMBIENT_DECLARATIONS = 2;
 const FLAG_UNREADABLE = 4;
+const FLAG_HAS_MODULE_AUGMENTATION = 8;
 
 function makeStringTable() {
   const table: string[] = [];
@@ -318,7 +328,7 @@ function encodeShard(entries: ReadonlyMap<string, CachedFileEntry>, projectRoot:
   for (const relPath of [...entries.keys()].sort()) {
     const entry = entries.get(relPath)!;
     const flags = (entry.isScript ? FLAG_IS_SCRIPT : 0) | (entry.hasAmbientDeclarations ? FLAG_HAS_AMBIENT_DECLARATIONS : 0) |
-      (entry.unreadable ? FLAG_UNREADABLE : 0);
+      (entry.unreadable ? FLAG_UNREADABLE : 0) | (entry.hasModuleAugmentation ? FLAG_HAS_MODULE_AUGMENTATION : 0);
     const encodedImports: EncodedImport[] = entry.imports.map((imp) => {
       const key = resolutionKey(imp);
       const res = Object.hasOwn(entry.resolutions, key) ? entry.resolutions[key] : undefined;
@@ -328,9 +338,12 @@ function encodeShard(entries: ReadonlyMap<string, CachedFileEntry>, projectRoot:
         res === undefined ? null : encodeResolution(res),
       ];
     });
+    const encodedModuleAugmentations: EncodedModuleAugmentation[] = entry.moduleAugmentationSpecifiers.map(
+      (augmentation) => [specifiers.index(augmentation.specifier), augmentation.mode ?? null],
+    );
     files.push([
       paths.index(relPath), entry.mtimeMs, entry.size, entry.optionsIndex,
-      entry.impliedNodeFormat ?? null, entry.unsupportedSyntaxCount, flags, encodedImports,
+      entry.impliedNodeFormat ?? null, entry.unsupportedSyntaxCount, flags, encodedImports, encodedModuleAugmentations,
     ]);
   }
   return { paths: paths.table, specifiers: specifiers.table, packageNames: packageNames.table, files };
@@ -347,13 +360,14 @@ function decodeShard(raw: unknown, projectRoot: string, optionsCount: number): M
   if (!strings(paths) || !strings(specifiers) || !strings(packageNames) || !Array.isArray(files)) return undefined;
   const result = new Map<string, CachedFileEntry>();
   for (const tuple of files) {
-    if (!Array.isArray(tuple) || tuple.length !== 8) return undefined;
-    const [pathIdx, mtimeMs, size, optionsIndex, impliedRaw, unsupportedSyntaxCount, flags, importsRaw] = tuple as unknown[];
+    if (!Array.isArray(tuple) || tuple.length !== 9) return undefined;
+    const [pathIdx, mtimeMs, size, optionsIndex, impliedRaw, unsupportedSyntaxCount, flags, importsRaw, augmentationsRaw] = tuple as unknown[];
     if (!Number.isInteger(pathIdx) || (pathIdx as number) < 0 || (pathIdx as number) >= paths.length) return undefined;
     if (!Number.isInteger(optionsIndex) || (optionsIndex as number) < 0 || (optionsIndex as number) >= optionsCount) return undefined;
     if (!isMode(impliedRaw === null ? undefined : impliedRaw)) return undefined;
     if (typeof flags !== "number") return undefined;
     if (!Array.isArray(importsRaw)) return undefined;
+    if (!Array.isArray(augmentationsRaw)) return undefined;
     const imports: ImportRecord[] = [];
     const resolutions: Record<string, CachedResolution> = {};
     let ok = true;
@@ -387,12 +401,25 @@ function decodeShard(raw: unknown, projectRoot: string, optionsCount: number): M
       resolutions[resolutionKey(imp)] = resolution;
     }
     if (!ok) return undefined;
+    const moduleAugmentationSpecifiers: ModuleAugmentationSpecifier[] = [];
+    for (const augmentationTuple of augmentationsRaw) {
+      if (!Array.isArray(augmentationTuple) || augmentationTuple.length !== 2) return undefined;
+      const [specifierIdx, modeRaw] = augmentationTuple as unknown[];
+      if (!Number.isInteger(specifierIdx) || (specifierIdx as number) < 0 ||
+          (specifierIdx as number) >= specifiers.length || !isMode(modeRaw === null ? undefined : modeRaw)) return undefined;
+      moduleAugmentationSpecifiers.push({
+        specifier: specifiers[specifierIdx as number]!,
+        mode: (modeRaw === null ? undefined : modeRaw) as ts.ResolutionMode,
+      });
+    }
     const entry: CachedFileEntry = {
       mtimeMs: mtimeMs as number, size: size as number, optionsIndex: optionsIndex as number,
       ...(impliedRaw !== null ? { impliedNodeFormat: impliedRaw as ts.ResolutionMode } : {}),
       imports, unsupportedSyntaxCount: unsupportedSyntaxCount as number,
       isScript: ((flags as number) & FLAG_IS_SCRIPT) !== 0,
       hasAmbientDeclarations: ((flags as number) & FLAG_HAS_AMBIENT_DECLARATIONS) !== 0,
+      hasModuleAugmentation: ((flags as number) & FLAG_HAS_MODULE_AUGMENTATION) !== 0,
+      moduleAugmentationSpecifiers,
       ...(((flags as number) & FLAG_UNREADABLE) !== 0 ? { unreadable: true as const } : {}),
       resolutions,
     };

@@ -59,6 +59,7 @@ describe("rule 6's closure Program", () => {
     expect(graph.unresolvedSpecifierCount).toBe(0);
 
     const closureViolations = checkTypeLeaks(graph);
+    const focusedViolations = graph.typeLeaksForFocus("m");
     // One violation: every one of the thirteen reference mechanisms below
     // leaks the SAME internal type (Secret, never exported by name from
     // this module's surface), grouped into one fact by (module, internal
@@ -98,6 +99,7 @@ describe("rule 6's closure Program", () => {
     // The oracle: the same findings, from a whole-project Program with no
     // `noResolve` - the only correctness bar this closure has to clear.
     expect(keysOf(closureViolations)).toEqual(wholeProgramFindings(graph, FIXTURE, declaredModules));
+    expect(keysOf(focusedViolations)).toEqual(keysOf(closureViolations));
   });
 
   test("excludes a file reachable only through a value-only import (the memory point)", () => {
@@ -115,6 +117,31 @@ describe("rule 6's closure Program", () => {
     checkTypeLeaks(graph);
     expect(graph.programNotes).toEqual([]);
   });
+
+  test("scope2: a namespace export does not name the target file's first declaration", () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "archstrict-scope2-")));
+    try {
+      writeFileSync(join(root, "tsconfig.json"), '{"compilerOptions":{"noLib":true,"types":[],"module":"esnext","moduleResolution":"bundler"}}');
+      mkdirSync(join(root, "src/m"), { recursive: true });
+      mkdirSync(join(root, "src/other"), { recursive: true });
+      writeFileSync(join(root, "src/m/secret.ts"), "export interface Secret { value: number }\n");
+      writeFileSync(join(root, "src/m/index.ts"), 'import type { Secret } from "./secret.js";\nexport interface Wrap { value: Secret }\n');
+      writeFileSync(join(root, "src/other/index.ts"), 'export * as ns from "../m/secret.js";\n');
+      const modules: DeclaredModule[] = [
+        { name: "m", glob: "src/m/**" },
+        { name: "other", glob: "src/other/**" },
+      ];
+      const fullGraph = buildModuleGraph({ projectRoot: root, declaredModules: modules });
+      const full = checkTypeLeaks(fullGraph).filter((violation) => violation.todoModule === "m");
+      const focusedGraph = buildModuleGraph({ projectRoot: root, declaredModules: modules });
+      const focused = focusedGraph.typeLeaksForFocus("m");
+      expect(full).toHaveLength(1);
+      expect(keysOf(focused)).toEqual(keysOf(full));
+      expect(focusedGraph.focusedTypeLeakNotes).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("the existing type-leak fixture (structural, re-export, type-argument, inferred-return, generic-parameter, optional-array)", () => {
@@ -122,7 +149,9 @@ describe("the existing type-leak fixture (structural, re-export, type-argument, 
     const root = join(dirname(fileURLToPath(import.meta.url)), "fixtures/type-leak");
     const modules: DeclaredModule[] = [{ name: "m", glob: "src/m/**" }];
     const graph = buildModuleGraph({ projectRoot: root, declaredModules: modules, surface: "public.ts" });
-    expect(keysOf(checkTypeLeaks(graph))).toEqual(wholeProgramFindings(graph, root, modules));
+    const full = keysOf(checkTypeLeaks(graph));
+    expect(full).toEqual(wholeProgramFindings(graph, root, modules));
+    expect(keysOf(graph.typeLeaksForFocus("m"))).toEqual(full);
   });
 });
 
@@ -164,9 +193,11 @@ describe("ambient roots (a script file, `declare global`)", () => {
       const graph = buildModuleGraph({ projectRoot: root, declaredModules: modules });
       expect(graph.unresolvedSpecifierCount).toBe(0);
       const closure = keysOf(checkTypeLeaks(graph));
+      const focused = keysOf(graph.typeLeaksForFocus("m"));
       expect(closure.some((k) => k.includes("ScriptSecret"))).toBe(true);
       expect(closure.some((k) => k.includes("GlobalSecret"))).toBe(true);
       expect(closure).toEqual(wholeProgramFindings(graph, root, modules));
+      expect(focused).toEqual(closure);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -198,6 +229,7 @@ describe("a .tsx surface", () => {
       expect(violations[0]!.evidence).toContain("'WrapsSecret'");
       expect(violations[0]!.evidence).not.toContain("Known");
       expect(keysOf(violations)).toEqual(wholeProgramFindings(graph, root, modules));
+      expect(keysOf(graph.typeLeaksForFocus("m"))).toEqual(keysOf(violations));
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -266,6 +298,7 @@ describe("an external dependency graph (a real installed package, @types/node, a
       // three distinct resolution paths, matching a whole-project Program.
       expect(violations).toHaveLength(2);
       expect(keysOf(violations)).toEqual(wholeProgramFindingsPerFileOptions(graph, root, modules));
+      expect(keysOf(graph.typeLeaksForFocus("m"))).toEqual(keysOf(violations));
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
