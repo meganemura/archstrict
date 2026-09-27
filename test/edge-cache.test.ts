@@ -11,11 +11,18 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, renameSync
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { buildModuleGraph, buildModuleGraphForRules, buildPreparedGraph, prepareGraph, type ModuleGraph, type BuildOptions } from "../src/module-graph.js";
+import { readEdgeCache, writeEdgeCache, shardIndexForRelativePath, SHARD_COUNT, type EdgeCache, type CachedFileEntry, type CachedResolution } from "../src/edge-cache.js";
 import { rules } from "../src/verbs/rules.js";
 import { check, filterToFile } from "../src/verbs/check.js";
 import { checkTypeLeaks } from "../src/rules/type-leak.js";
 
-const calls = vi.hoisted(() => ({ checker: vi.fn(), realpath: vi.fn() }));
+// `failRenameTo`: set to an absolute path to make exactly the next
+// `renameSync` call whose own destination is that path throw, then reset
+// itself - used to simulate a process crashing between a shard's own
+// atomic rename and the header's (writeEdgeCache writes shards first,
+// the header last; a crash in between leaves every shard's own rename
+// already committed, with the header's own rename never reached).
+const calls = vi.hoisted(() => ({ checker: vi.fn(), realpath: vi.fn(), failRenameTo: undefined as string | undefined }));
 vi.mock("typescript", async (importOriginal) => {
   const actual = await importOriginal<{ default: typeof ts }>();
   return { ...actual, default: { ...actual.default, createProgram: vi.fn((options: ts.CreateProgramOptions) => {
@@ -36,9 +43,18 @@ vi.mock("node:fs", async (importOriginal) => {
   return { ...actual, realpathSync: Object.assign(
     (...args: Parameters<typeof import("node:fs").realpathSync>) => { calls.realpath(); return actual.realpathSync(...args); },
     actual.realpathSync,
+  ), renameSync: Object.assign(
+    (...args: Parameters<typeof import("node:fs").renameSync>) => {
+      if (calls.failRenameTo !== undefined && String(args[1]) === calls.failRenameTo) {
+        calls.failRenameTo = undefined;
+        throw new Error("simulated crash before this rename");
+      }
+      return actual.renameSync(...args);
+    },
+    actual.renameSync,
   ) };
 });
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => { vi.clearAllMocks(); calls.failRenameTo = undefined; });
 
 async function project(fn: (root: string, options: BuildOptions) => void | Promise<void>) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "archstrict-edge-cache-")));
@@ -53,6 +69,16 @@ async function project(fn: (root: string, options: BuildOptions) => void | Promi
   finally { rmSync(root, { recursive: true, force: true }); }
 }
 function cachePath(root: string) { return join(root, "node_modules/.cache/archstrict/edges.json"); }
+// Routes a direct, file-level read through the real decoder - this
+// module's own on-disk shape (a header plus sharded, index-encoded
+// files) is never something a test should re-implement.
+function readCache(root: string): EdgeCache { return readEdgeCache(cachePath(root), root)!; }
+function shardFilePath(root: string, relativePath: string): string {
+  return join(root, "node_modules/.cache/archstrict/edges", `${shardIndexForRelativePath(relativePath)}.json`);
+}
+function mtimesOf(paths: readonly string[]): number[] {
+  return paths.map((p) => { try { return statSync(p).mtimeMs; } catch { return -1; } });
+}
 function bump(path: string) {
   const stat = statSync(path);
   utimesSync(path, stat.atime, new Date(stat.mtimeMs + 2000));
@@ -87,11 +113,12 @@ test("rules writes a per-file cache entry and reuses it without a per-file walk 
   expect(ts.createSourceFile).toHaveBeenCalled(); // a cache miss walks every root file
   expect(ts.createProgram).not.toHaveBeenCalled();
   expect(calls.checker).not.toHaveBeenCalled();
-  const cache = JSON.parse(readFileSync(cachePath(root), "utf8"));
-  expect(cache.schema).toBe(5);
-  expect(cache.files[path].mtimeMs).toBe(statSync(path).mtimeMs);
-  expect(cache.files[path].imports[0].specifier).toBe("../b/index.js");
-  expect(cache.files[path].resolutions["../b/index.js\u000099"].resolvedFile).toBe(join(root, "src/b/index.ts"));
+  const cache = readCache(root);
+  expect(cache.schema).toBe(6);
+  expect(cache.files[path]!.mtimeMs).toBe(statSync(path).mtimeMs);
+  expect(cache.files[path]!.imports[0]!.specifier).toBe("../b/index.js");
+  const resolution = cache.files[path]!.resolutions["../b/index.js\u000099"];
+  expect(resolution === "unresolved" ? undefined : resolution?.resolvedFile).toBe(join(root, "src/b/index.ts"));
   expect(cache.optionsTable).toHaveLength(1);
   expect(cache.resolutionFingerprint).toMatch(/^[a-f0-9]{64}$/);
   const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
@@ -138,7 +165,7 @@ test("deleting a file re-parses nothing but drops its cache entry and its import
   const graph = buildModuleGraphForRules(options);
   expect(parsedFiles()).toEqual([]);
   expect(graph.unresolvedSpecifiers).toContain("../b/index.js");
-  const cache = JSON.parse(readFileSync(cachePath(root), "utf8"));
+  const cache = readCache(root);
   expect(Object.hasOwn(cache.files, b)).toBe(false);
 }));
 
@@ -174,6 +201,170 @@ test("touching a file gives the same graph as a cold build", async () => project
   const warm = facts(buildModuleGraphForRules(options));
   expect(warm).toEqual(facts(buildModuleGraph(options)));
 }));
+
+// This fixture's own two files land in different shards (checked below,
+// not assumed) - src/a/index.ts's own edit must rewrite only its own
+// shard, never src/b/index.ts's.
+test("touching a file rewrites exactly its own shard file, plus the header", async () => project(async (root, options) => {
+  const shardA = shardFilePath(root, "src/a/index.ts");
+  const shardB = shardFilePath(root, "src/b/index.ts");
+  expect(shardA).not.toBe(shardB);
+  buildModuleGraphForRules(options);
+  const header = cachePath(root);
+  const old = new Date(Date.now() - 60_000);
+  for (const p of [shardA, shardB, header]) utimesSync(p, old, old);
+  const before = mtimesOf([shardA, shardB, header]);
+  bump(join(root, "src/a/index.ts"));
+  buildModuleGraphForRules(options);
+  const after = mtimesOf([shardA, shardB, header]);
+  expect(after[0]).not.toBe(before[0]); // shard A rewritten
+  expect(after[1]).toBe(before[1]); // shard B untouched
+  expect(after[2]).not.toBe(before[2]); // header rewritten last, every time
+}));
+
+test("a corrupt shard file re-walks only its own files, and still agrees with a cold build", async () => project(async (root, options) => {
+  const b = join(root, "src/b/index.ts");
+  buildModuleGraphForRules(options);
+  writeFileSync(shardFilePath(root, "src/b/index.ts"), "{not json");
+  vi.clearAllMocks();
+  const warm = facts(buildModuleGraphForRules(options));
+  expect(parsedFiles()).toEqual([b]); // src/a/index.ts's own valid shard is never re-walked
+  expect(warm).toEqual(facts(buildModuleGraph(options)));
+  vi.clearAllMocks();
+  expect(facts(buildModuleGraphForRules(options))).toEqual(warm);
+  expect(ts.createSourceFile).not.toHaveBeenCalled(); // the rewrite this build made is itself valid
+}));
+
+test("a missing shard file behaves the same way as a corrupt one", async () => project(async (root, options) => {
+  const b = join(root, "src/b/index.ts");
+  buildModuleGraphForRules(options);
+  rmSync(shardFilePath(root, "src/b/index.ts"));
+  vi.clearAllMocks();
+  const warm = facts(buildModuleGraphForRules(options));
+  expect(parsedFiles()).toEqual([b]);
+  expect(warm).toEqual(facts(buildModuleGraph(options)));
+}));
+
+// The shard file itself stays perfectly parseable here - only the
+// header's own recorded hash for it is wrong - so this exercises the
+// hash check specifically, not the JSON.parse failure the two tests
+// above already cover.
+test("a header naming a shard whose hash no longer matches behaves the same way", async () => project(async (root, options) => {
+  const b = join(root, "src/b/index.ts");
+  buildModuleGraphForRules(options);
+  const header = JSON.parse(readFileSync(cachePath(root), "utf8"));
+  const idx = shardIndexForRelativePath("src/b/index.ts");
+  header.shards[idx].hash = "d".repeat(64);
+  writeFileSync(cachePath(root), JSON.stringify(header));
+  vi.clearAllMocks();
+  const warm = facts(buildModuleGraphForRules(options));
+  expect(parsedFiles()).toEqual([b]);
+  expect(warm).toEqual(facts(buildModuleGraph(options)));
+}));
+
+// writeEdgeCache writes every dirty shard first (each its own atomic
+// rename), the header last - so a process that crashes in between leaves
+// every shard's own rename already committed, with the header's own
+// rename never reached. The header on disk is then the OLD one: still
+// naming this shard by its OLD hash, which no longer matches the NEW
+// shard bytes the crashed build did manage to commit.
+test("a header never rewritten because the process crashed before its own rename still only re-walks the one shard that changed", async () => project(async (root, options) => {
+  const b = join(root, "src/b/index.ts");
+  buildModuleGraphForRules(options); // build 1: a normal, fully-written cache
+  writeFileSync(b, 'import { a } from "../a/index.js"; export const b2 = a;\n');
+  bump(b);
+  calls.failRenameTo = cachePath(root); // fails only the header's own rename, once
+  buildModuleGraphForRules(options); // build 2: shard b rewritten for real; the header's own rename throws and is swallowed
+  expect(calls.failRenameTo).toBeUndefined(); // the throw fired - this build really did crash before its header write
+  vi.clearAllMocks();
+  const warm = facts(buildModuleGraphForRules(options)); // build 3: reads the stale (pre-crash) header
+  expect(parsedFiles()).toEqual([b]); // only shard b's own files miss and re-walk
+  expect(warm).toEqual(facts(buildModuleGraph(options)));
+}));
+
+// A second, concurrent cache writer can read the header before this
+// build's own write lands, then write its own header back with this
+// shard's OLD hash - a lost update, not a crash. The shard file on disk
+// still holds the bytes THIS build wrote; the header now names it by a
+// hash valid only for the version before it.
+test("a header naming a shard by another writer's stale hash still only re-walks that one shard", async () => project(async (root, options) => {
+  const b = join(root, "src/b/index.ts");
+  buildModuleGraphForRules(options); // build 1
+  const idx = shardIndexForRelativePath("src/b/index.ts");
+  const staleHash = JSON.parse(readFileSync(cachePath(root), "utf8")).shards[idx].hash;
+  writeFileSync(b, 'import { a } from "../a/index.js"; export const b2 = a;\n');
+  bump(b);
+  buildModuleGraphForRules(options); // build 2: a normal, fully-written cache with a NEW hash for shard b
+  const raced = JSON.parse(readFileSync(cachePath(root), "utf8"));
+  expect(raced.shards[idx].hash).not.toBe(staleHash); // the shard really did change
+  raced.shards[idx].hash = staleHash; // the racing writer's own, now-stale header
+  writeFileSync(cachePath(root), JSON.stringify(raced));
+  vi.clearAllMocks();
+  const warm = facts(buildModuleGraphForRules(options)); // build 3
+  expect(parsedFiles()).toEqual([b]);
+  expect(warm).toEqual(facts(buildModuleGraph(options)));
+}));
+
+// The property this codec exists to keep true: whatever writeEdgeCache
+// encodes across its own SHARD_COUNT shards, readEdgeCache decodes back
+// into the exact same in-memory files map - covering an outside-root
+// resolvedFile (a real `resolvedFile` can sit in an ancestor's own
+// node_modules, past the project root), a builtin's own null resolution
+// slot, `"unresolved"`, a real resolution with and without
+// isExternalLibraryImport/packageName, every mode this project's own
+// walker produces (undefined/CommonJS/ESNext-shaped), and an unreadable
+// file's own empty imports/resolutions.
+test("a shard's own encoding round-trips its entries exactly", async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "archstrict-edge-cache-roundtrip-")));
+  try {
+    await hegel.testAsync(async (tc) => {
+      const candidatePaths = ["src/a/index.ts", "src/b/index.ts", "src/b/nested/leaf.ts", "src/c/index.ts", "src/c/other.ts"];
+      const relPaths = [...new Set(tc.draw(gen.arrays(gen.sampledFrom(candidatePaths), { minSize: 1, maxSize: 5 })))];
+      const specifiers = ["../b/index.js", "node:fs", "missing-pkg", "@scope/pkg", "./sibling.js"];
+      const modes = [undefined, 1, 99] as const;
+      const files: Record<string, CachedFileEntry> = {};
+      for (const rel of relPaths) {
+        const unreadable = tc.draw(gen.booleans());
+        const importCount = unreadable ? 0 : tc.draw(gen.integers({ minValue: 0, maxValue: 4 }));
+        const imports: CachedFileEntry["imports"] = [];
+        const resolutions: Record<string, CachedResolution> = {};
+        for (let i = 0; i < importCount; i++) {
+          const specifier = tc.draw(gen.sampledFrom(specifiers));
+          const mode = tc.draw(gen.sampledFrom(modes));
+          const imp = { specifier, fromPosition: { line: i + 1, column: 3 },
+            isTypeOnly: tc.draw(gen.booleans()), isDynamic: tc.draw(gen.booleans()), mode };
+          imports.push(imp);
+          const key = `${specifier}\u0000${mode ?? ""}`;
+          const kind = tc.draw(gen.sampledFrom(["builtin", "unresolved", "internal", "external"] as const));
+          if (kind === "builtin") continue; // no resolutions entry at all - the encoded null slot
+          if (kind === "unresolved") { resolutions[key] = "unresolved"; continue; }
+          if (kind === "internal") { resolutions[key] = { resolvedFile: join(root, "src/b/index.ts") }; continue; }
+          resolutions[key] = { resolvedFile: join(root, "../outside/dep/index.d.ts"), isExternalLibraryImport: true, packageName: "@scope/pkg" };
+        }
+        const impliedNodeFormat = tc.draw(gen.sampledFrom(modes));
+        files[join(root, rel)] = {
+          mtimeMs: 1_700_000_000_000 + tc.draw(gen.integers({ minValue: 0, maxValue: 999 })) / 10,
+          size: tc.draw(gen.integers({ minValue: 0, maxValue: 5000 })),
+          optionsIndex: tc.draw(gen.integers({ minValue: 0, maxValue: 1 })),
+          ...(impliedNodeFormat !== undefined ? { impliedNodeFormat } : {}),
+          imports, unsupportedSyntaxCount: tc.draw(gen.integers({ minValue: 0, maxValue: 3 })),
+          isScript: tc.draw(gen.booleans()), hasAmbientDeclarations: tc.draw(gen.booleans()),
+          ...(unreadable ? { unreadable: true as const } : {}),
+          resolutions,
+        };
+      }
+      const path = join(root, "node_modules/.cache/archstrict/edges.json");
+      writeEdgeCache(path, root,
+        { archstrictVersion: "1", codeVersionHash: "h", typescriptVersion: "t", optionsTable: ["{}", '{"x":1}'], resolutionFingerprint: "f", files },
+        undefined, new Set(Object.keys(files)), new Set(), true);
+      const decoded = readEdgeCache(path, root);
+      expect(decoded?.files).toEqual(files);
+      rmSync(join(root, "node_modules"), { recursive: true, force: true });
+    }, { testCases: 30 });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 30_000);
 
 test.each(["package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lock"])(
   "%s changes invalidate cached resolutions without ever re-parsing an analyzed file",
@@ -292,7 +483,7 @@ test("a corrupt cache file is ignored, not an error", async () => project((root,
   writeFileSync(path, "{not json");
   const graph = buildModuleGraphForRules(options);
   expect(graph.edges.some((edge) => edge.toModule === "b")).toBe(true);
-  expect(JSON.parse(readFileSync(path, "utf8")).schema).toBe(5);
+  expect(JSON.parse(readFileSync(path, "utf8")).schema).toBe(6);
 }));
 
 test("package exports changes refresh both target edges and derived surfaces, re-resolving without re-parsing the unedited importer", async () => project((root, options) => {

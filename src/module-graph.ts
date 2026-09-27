@@ -47,7 +47,7 @@
 // former.
 import ts from "typescript";
 import { createHash } from "node:crypto";
-import { readEdgeCache, writeEdgeCache, type EdgeCache, type CachedFileEntry, type CachedResolution } from "./edge-cache.js";
+import { readEdgeCache, writeEdgeCache, resolutionKey, type EdgeCache, type CachedFileEntry, type CachedResolution } from "./edge-cache.js";
 import { existsSync, readFileSync, readdirSync, realpathSync, statSync, type Dirent } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { builtinModules } from "node:module";
@@ -1688,6 +1688,24 @@ function cacheMetadata(projectRoot: string, options: BuildOptions): Record<strin
   return Object.fromEntries([...new Set(packages)].sort().map((path) => [path, existsSync(path) ? statSync(path).mtimeMs : null]));
 }
 
+// Stringifies one distinct effective-options OBJECT at most once, keyed
+// by reference identity - compilerOptionsForFile memoizes per directory
+// (not per file), so the same object recurs across many files. Keying
+// solely by the JSON string would require producing that string first,
+// which needs one stringify per file regardless of how many end up
+// sharing a key. A project with one tsconfig then stringifies once, not
+// once per file - the 14 KB-per-file churn a 23,000-file project would
+// otherwise pay twice over (once here, once in buildModuleGraphForRules
+// below).
+function optionsJsonMemo() {
+  const jsonByIdentity = new Map<ts.CompilerOptions, string>();
+  return (opts: ts.CompilerOptions): string => {
+    let json = jsonByIdentity.get(opts);
+    if (json === undefined) { json = JSON.stringify(opts); jsonByIdentity.set(opts, json); }
+    return json;
+  };
+}
+
 // warm-graph.ts's own in-memory, single-process fingerprint - unrelated to
 // the persistent disk cache below (see buildModuleGraphForRules' own
 // header for that one's own, broader inputs). Kept as one opaque string
@@ -1697,10 +1715,11 @@ function cacheMetadata(projectRoot: string, options: BuildOptions): Record<strin
 // same dedup technique the disk cache uses (below).
 export function graphBuildFingerprint(options: BuildOptions, prepared: ReturnType<typeof prepareGraph>) {
   const { projectRoot, rootNames, compilerOptions, compilerOptionsForFile } = prepared;
+  const optionsJson = optionsJsonMemo();
   const optionsIndexByJson = new Map<string, number>();
   const optionsTable: string[] = [];
   const fileOptionsIndex = rootNames.map((file) => {
-    const json = JSON.stringify(compilerOptionsForFile(file));
+    const json = optionsJson(compilerOptionsForFile(file));
     let idx = optionsIndexByJson.get(json);
     if (idx === undefined) { idx = optionsTable.length; optionsTable.push(json); optionsIndexByJson.set(json, idx); }
     return idx;
@@ -1853,10 +1872,6 @@ function resolutionInputs(
   return { packages, lockPath: lockPath ?? null, lockMtime, filesHash, resolvableFilesHash, nodeModules };
 }
 
-function resolutionKey(imp: ImportRecord): string {
-  return `${imp.specifier}\u0000${imp.mode ?? ""}`;
-}
-
 // One analyzed file's own reparse gate: true while this file's own text
 // (mtime+size), its own nearest tsconfig's own effective options, and its
 // own nearest package.json "type" (impliedNodeFormat - see edge-cache.ts's
@@ -1880,18 +1895,20 @@ function fileParseValid(
 // THE one graph-build path every verb that needs a real analysis reads
 // and writes (check, check <file>, todo, rules, recommend, fix's own
 // baseline, search - see each verb's own call site). Persists to
-// node_modules/.cache/archstrict/edges.json, per file, keyed by absolute
-// path - see edge-cache.ts's own header for the full correctness contract
-// (which input invalidates which stored fact, and where). Never touched
-// by simulate.ts, which keeps its own in-memory overlay instead (a
-// proposed, not-yet-real change has no business landing in a cache other
-// commands would then read back as if it were real).
+// node_modules/.cache/archstrict/edges.json (a header) plus its own
+// edges/*.json shards, per file, keyed by absolute path once decoded -
+// see edge-cache.ts's own header for the full correctness contract
+// (which input invalidates which stored fact, and where) and for why the
+// cache is sharded at all. Never touched by simulate.ts, which keeps its
+// own in-memory overlay instead (a proposed, not-yet-real change has no
+// business landing in a cache other commands would then read back as if
+// it were real).
 export function buildModuleGraphForRules(options: BuildOptions): ModuleGraph {
   const prepared = prepareGraph(options);
   const commons = makeGraphCommons(prepared, {});
   const { projectRoot, rootNames, modules, resolveModuleForFile, compilerOptionsForFile, resolvableFiles, packageJsonFiles, nodeModulesDirs } = prepared;
   const path = join(projectRoot, "node_modules/.cache/archstrict/edges.json");
-  const cached = readEdgeCache(path);
+  const cached = readEdgeCache(path, projectRoot);
   // A package version or code-version mismatch drops the whole cache -
   // modeled here as "no old entry for any file", which the per-file logic
   // below already treats as a full reparse+resolve of that file.
@@ -1902,7 +1919,10 @@ export function buildModuleGraphForRules(options: BuildOptions): ModuleGraph {
   // Every file's own effective options and implied module format - cheap
   // even on a large tree: compilerOptionsForFile memoizes per directory
   // (not per file), and ts.getImpliedNodeFormatForFile reads only the
-  // nearest package.json, cached the same way.
+  // nearest package.json, cached the same way. optionsJson is keyed by
+  // the options OBJECT's own identity (see optionsJsonMemo's own header) -
+  // never restringified for two files sharing one directory's tsconfig.
+  const optionsJson = optionsJsonMemo();
   const optionsIndexByJson = new Map<string, number>();
   const optionsTable: string[] = [];
   const optionsJsonByFile = new Map<string, string>();
@@ -1910,7 +1930,7 @@ export function buildModuleGraphForRules(options: BuildOptions): ModuleGraph {
   const impliedFormatByFile = new Map<string, ts.ResolutionMode>();
   for (const file of rootNames) {
     const opts = compilerOptionsForFile(file);
-    const json = JSON.stringify(opts);
+    const json = optionsJson(opts);
     optionsJsonByFile.set(file, json);
     let idx = optionsIndexByJson.get(json);
     if (idx === undefined) { idx = optionsTable.length; optionsTable.push(json); optionsIndexByJson.set(json, idx); }
@@ -1947,6 +1967,13 @@ export function buildModuleGraphForRules(options: BuildOptions): ModuleGraph {
   // own mtime alone, so a caller comparing two back-to-back no-op builds
   // (or a snapshot of the project tree around one) sees no change either.
   let dirty = !versionOk || !resolutionsValid;
+  // Every file whose own entry this build actually reparsed - the exact
+  // set whose own shard (edge-cache.ts's own `shardIndexForRelativePath`)
+  // must be rewritten when `forceAll` (below) is false. A file that only
+  // had its resolutions refreshed (mustResolve true, parseValid true)
+  // does not add itself here on purpose: `forceAll` already covers that
+  // case for every file at once, the moment `resolutionsValid` is false.
+  const dirtyPaths = new Set<string>();
 
   for (const file of rootNames) {
     const stat = stats.get(file);
@@ -1954,7 +1981,7 @@ export function buildModuleGraphForRules(options: BuildOptions): ModuleGraph {
     const optionsIndex = optionsIndexByFile.get(file)!;
     const impliedNodeFormat = impliedFormatByFile.get(file);
     const parseValid = fileParseValid(oldEntry, stat, optionsJsonByFile.get(file)!, oldOptionsTable, impliedNodeFormat);
-    if (!parseValid) dirty = true;
+    if (!parseValid) { dirty = true; dirtyPaths.add(file); }
 
     let imports: ImportRecord[];
     let unsupportedForFile: number;
@@ -2055,8 +2082,16 @@ export function buildModuleGraphForRules(options: BuildOptions): ModuleGraph {
     catch { return false; }
   });
   if (dirty && stillStable) {
-    writeEdgeCache(path, { schema: 5, archstrictVersion: ARCHSTRICT_VERSION, codeVersionHash: CODE_VERSION_HASH, typescriptVersion: TYPESCRIPT_VERSION, optionsTable, resolutionFingerprint: fingerprint,
-      files: newFiles, sourceOrder: rootNames.filter((file) => Object.hasOwn(newFiles, file)) });
+    // Every file this build's own cache no longer has an entry for, but
+    // the OLD cache did (deleted, renamed away from, or dropped by the
+    // stat-race `continue` above) - its own shard must be rewritten too,
+    // to drop that now-stale entry, even though nothing marked it dirty
+    // above (there is no new entry to reparse).
+    const deletedPaths = new Set<string>();
+    if (versionOk) for (const oldPath of Object.keys(cached.files)) if (!Object.hasOwn(newFiles, oldPath)) deletedPaths.add(oldPath);
+    writeEdgeCache(path, projectRoot,
+      { archstrictVersion: ARCHSTRICT_VERSION, codeVersionHash: CODE_VERSION_HASH, typescriptVersion: TYPESCRIPT_VERSION, optionsTable, resolutionFingerprint: fingerprint, files: newFiles },
+      versionOk ? cached.shards : undefined, dirtyPaths, deletedPaths, !versionOk || !resolutionsValid);
   }
 
   const walked: WalkResult = { edges, outsideFiles, fileFlags, unsupportedSyntaxCount, unresolvedSpecifierCount, unresolvedSpecifiers };

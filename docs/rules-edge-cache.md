@@ -2,8 +2,16 @@
 
 `check`, `check <file>`, `todo`, `rules`, `recommend`, `fix`'s own baseline, and `search` all build
 their module graph through one cached path. It reads and writes
-`node_modules/.cache/archstrict/edges.json` in the analyzed project. `simulate` never reads or
-writes this cache; it keeps its own in-memory overlay instead.
+`node_modules/.cache/archstrict/edges.json` (a header) plus a fixed 64 shard files under
+`node_modules/.cache/archstrict/edges/` in the analyzed project - a file's own shard is a stable
+hash of its own project-relative path. `simulate` never reads or writes this cache; it keeps its
+own in-memory overlay instead.
+
+A build rewrites only the shards whose own files actually changed, never the whole cache: a touch
+or a one-file edit rewrites one shard plus the header. A shard that is missing, unreadable, or
+whose bytes no longer match the header's own recorded hash for it makes only that shard's own
+files a cache miss (re-walked and re-resolved); it is never an error, and it never discards the
+rest of the cache.
 
 The cache stores one entry per analyzed file, keyed by its absolute path: that file's own
 syntactic import list (never its AST), its resolved specifiers, and the compiler options and
