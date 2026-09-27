@@ -61,6 +61,25 @@ type ImportUse = { specifier: string; qualifier?: string[] };
 type DeclInfo = {
   refs: Reference[];
   imports: ImportUse[];
+  // Set on every top-level declaration `summarize` below produces (the
+  // `decls`/`defaultInfo`/`exportEqualsInfo` entries `computeSyntacticNamedDeclarations`
+  // can resolve a name to - never on an `ambient` entry, which no export
+  // chain ever resolves a name to). The same (file, line, column) the
+  // checker's own declaration node would report through `declarationKey`,
+  // computed from the SAME syntax the checker itself binds, so the two
+  // never drift apart on a shape both sides can express - see
+  // `declarationKey`'s own comment for why position alone, not a node
+  // reference, is what a syntactic parse (no bound Program, no live
+  // symbol) and a checker's own declaration can still agree on.
+  position?: { file: string; line: number; column: number };
+  // Set only for `import x = SomeNamespace.Y` (the non-`require` form,
+  // the one case `summarize` below still creates a real decl entry for -
+  // see its own comment). `computeSyntacticNamedDeclarations` cannot
+  // reproduce what the checker resolves this to without binding
+  // namespace members, which is out of this module's own syntax-only
+  // boundary - resolving a name to one of these reports "unresolvable"
+  // rather than guess.
+  isImportEquals?: boolean;
 };
 
 type ImportBinding = { specifier: string; importedName: string };
@@ -74,9 +93,27 @@ type FileSummary = {
   stars: string[]; // `export * from "..."` specifiers
   decls: Map<string, DeclInfo[]>; // local declaration name -> each of its declarations' own reference info (overloads: more than one)
   defaultInfo: DeclInfo | undefined; // `export default <expr>`
+  // `export default <expr>` where the expression is a single identifier
+  // (`export default Foo;`) is an alias to Foo's own declaration, the
+  // same as a named re-export - the checker resolves through it, never
+  // stopping at the ExportAssignment itself (measured directly). A
+  // qualified name (`export default ns.Foo;`) has no single local name
+  // to resolve and reports unresolvable instead. undefined for every
+  // other `export default <expr>` shape (a class/function expression, a
+  // literal, ...), where the ExportAssignment's own position (already on
+  // `defaultInfo` above) IS the checker's own answer.
+  defaultAlias: { name: string } | { qualified: true } | undefined;
   exportEquals: boolean;
   exportEqualsInfo: DeclInfo | undefined;
   ambient: DeclInfo[]; // `declare global` / `declare module "..."` bodies
+  // This file's own SourceFile, at its own start position (skipping
+  // leading trivia - a comment, a blank line - the same as any other
+  // node's `getStart` would) - what the checker reports as a namespace
+  // symbol's own declaration (`export * as ns`, a re-exported namespace
+  // import). Computed once here, at parse time, and kept only as a
+  // position: this module's own header still holds ("the AST is
+  // dropped") - a position is three plain values, not a retained node.
+  sourceFileStart: { file: string; line: number; column: number };
 };
 
 export type TypeClosureInputs = {
@@ -145,16 +182,35 @@ function hasDefaultModifier(node: ts.Node): boolean {
     ?.some((m) => m.kind === ts.SyntaxKind.DefaultKeyword) ?? false;
 }
 
-function bindingNames(name: ts.BindingName, out: string[]): string[] {
-  if (ts.isIdentifier(name)) { out.push(name.text); return out; }
+// Each bound name, paired with the node the checker itself reports as its
+// own declaration - a plain identifier binding (`const x = 1`) resolves to
+// the VariableDeclaration itself; a destructured one (`const { a } = x`,
+// `const [a] = x`) resolves to that ONE binding element, not the
+// declaration as a whole (measured directly against a real checker: two
+// names destructured from the same declarator get two different
+// positions) - `contextNode` starts as the declaration and becomes each
+// binding element in turn as the pattern nests.
+function bindingElements(name: ts.BindingName, contextNode: ts.Node, out: { name: string; node: ts.Node }[]): { name: string; node: ts.Node }[] {
+  if (ts.isIdentifier(name)) { out.push({ name: name.text, node: contextNode }); return out; }
   for (const element of name.elements) {
-    if (!ts.isOmittedExpression(element)) bindingNames(element.name, out);
+    if (!ts.isOmittedExpression(element)) bindingElements(element.name, element, out);
   }
   return out;
 }
 
 function newInfo(): DeclInfo {
   return { refs: [], imports: [] };
+}
+
+// The same (file, line, column) `declarationKey` (below) turns into one
+// string - kept as a plain position, not a node reference, so a
+// declaration reached through a syntax-only parse (no bound Program, no
+// live symbol) can still be compared against one the checker itself
+// returned for the identical source text.
+function positionOf(node: ts.Node, sf: ts.SourceFile, file: string): { file: string; line: number; column: number } {
+  const start = node.getStart(sf);
+  const { line, character } = sf.getLineAndCharacterOfPosition(start);
+  return { file, line: line + 1, column: character + 1 };
 }
 
 // A dynamic `import(...)` call's own string-literal argument, or
@@ -277,7 +333,8 @@ function summarize(inputs: TypeClosureInputs, summaries: Summaries, file: string
   if (text === undefined) {
     const empty: FileSummary = {
       missing: true, isScript: false, imports: new Map(), exportsLocal: new Map(), reexports: new Map(),
-      stars: [], decls: new Map(), defaultInfo: undefined, exportEquals: false, exportEqualsInfo: undefined, ambient: [],
+      stars: [], decls: new Map(), defaultInfo: undefined, defaultAlias: undefined, exportEquals: false,
+      exportEqualsInfo: undefined, ambient: [], sourceFileStart: { file, line: 1, column: 1 },
     };
     summaries.set(file, empty);
     return empty;
@@ -285,8 +342,8 @@ function summarize(inputs: TypeClosureInputs, summaries: Summaries, file: string
   const sf = ts.createSourceFile(file, text, inputs.languageVersion, false, inputs.scriptKindFor(file));
   const summary: FileSummary = {
     missing: false, isScript: !ts.isExternalModule(sf), imports: new Map(), exportsLocal: new Map(),
-    reexports: new Map(), stars: [], decls: new Map(), defaultInfo: undefined, exportEquals: false,
-    exportEqualsInfo: undefined, ambient: [],
+    reexports: new Map(), stars: [], decls: new Map(), defaultInfo: undefined, defaultAlias: undefined,
+    exportEquals: false, exportEqualsInfo: undefined, ambient: [], sourceFileStart: positionOf(sf, sf, file),
   };
   const addDecl = (name: string, info: DeclInfo): void => {
     const existing = summary.decls.get(name);
@@ -318,6 +375,8 @@ function summarize(inputs: TypeClosureInputs, summaries: Summaries, file: string
         const info = newInfo();
         const seg = segmentsOf(statement.moduleReference);
         if (seg !== undefined) info.refs.push(seg);
+        info.position = positionOf(statement, sf, file);
+        info.isImportEquals = true;
         addDecl(statement.name.text, info);
         if (hasExportModifier(statement)) summary.exportsLocal.set(statement.name.text, statement.name.text);
       }
@@ -342,8 +401,19 @@ function summarize(inputs: TypeClosureInputs, summaries: Summaries, file: string
       const info = newInfo();
       const seg = segmentsOf(statement.expression);
       if (seg !== undefined) info.refs.push(seg); else collect(statement.expression, info, true);
+      // `export default <expr>` (an anonymous expression, no separate
+      // named declaration of its own): the checker's own declaration for
+      // it is this ExportAssignment statement itself - EXCEPT when the
+      // expression is a single identifier (`export default Foo;`),
+      // which is an alias to Foo's own declaration (FileSummary's own
+      // `defaultAlias` comment; a qualified name has no local name to
+      // resolve, so it is left for the resolver to report unresolvable).
+      info.position = positionOf(statement, sf, file);
       if (statement.isExportEquals === true) { summary.exportEquals = true; summary.exportEqualsInfo = info; }
-      else summary.defaultInfo = info;
+      else {
+        summary.defaultInfo = info;
+        summary.defaultAlias = seg === undefined ? undefined : seg.length === 1 ? { name: seg[0]! } : { qualified: true };
+      }
       continue;
     }
     // `declare global` (GlobalAugmentation) and `declare module "literal
@@ -363,8 +433,12 @@ function summarize(inputs: TypeClosureInputs, summaries: Summaries, file: string
       for (const declaration of statement.declarationList.declarations) {
         const info = newInfo();
         collect(declaration, info, false);
-        for (const name of bindingNames(declaration.name, [])) {
-          addDecl(name, info);
+        // Each bound name gets its OWN position (bindingElements' own
+        // comment) - a shared `info` object would give every name
+        // destructured from the same declarator the same position,
+        // which the checker itself never does.
+        for (const { name, node } of bindingElements(declaration.name, declaration, [])) {
+          addDecl(name, { refs: info.refs, imports: info.imports, position: positionOf(node, sf, file) });
           if (hasExportModifier(statement)) summary.exportsLocal.set(name, name);
         }
       }
@@ -375,6 +449,7 @@ function summarize(inputs: TypeClosureInputs, summaries: Summaries, file: string
       const name = statement.name !== undefined && ts.isIdentifier(statement.name) ? statement.name.text : undefined;
       const info = newInfo();
       collect(statement, info, false);
+      info.position = positionOf(statement, sf, file);
       const local = name ?? "default";
       addDecl(local, info);
       if (hasExportModifier(statement)) {
@@ -391,6 +466,47 @@ function summarize(inputs: TypeClosureInputs, summaries: Summaries, file: string
   return summary;
 }
 
+// A resolved edge that isn't real Program source (module-graph.ts's own
+// resolvedSpecifiers can carry one - a resolved .js with no declaration
+// file, a JSON import, ...) is not a target either builder below can ever
+// load - lifted to module scope (not a closure over one `inputs`) so both
+// `buildTypeClosure` and `computeSyntacticNamedDeclarations` share the identical
+// answer for the identical edge, never two independently-written copies
+// that could drift.
+function resolveTarget(inputs: TypeClosureInputs, file: string, specifier: string): string | undefined {
+  const target = inputs.resolvedSpecifiers.get(file)?.get(specifier);
+  return target !== undefined && isProgramSource(target) ? target : undefined;
+}
+
+// Whether `file` exports `name` at all, following `export *` (a cyclic
+// chain answers false past its own start - the same reasoning
+// `reachExport`'s own `done` guard applies, restated per-call here since
+// this can run inside more than one root's own walk). This function
+// alone does NOT enforce real ESM's own rule that `export *` never
+// carries a "default" - it still answers true for a star target with a
+// direct default of its own (the `name === "default" &&
+// summary.defaultInfo !== undefined` disjunct below matches on THAT
+// target file directly, regardless of how it was reached). `reachExport`
+// above tolerates the resulting over-inclusion (a star-only re-export of
+// "default" it can never really satisfy still marks the target file
+// reached) since a bigger-than-needed closure is still a correct one;
+// `computeSyntacticNamedDeclarations`'s own resolveNamed cannot tolerate
+// that for a NAMED answer, so it never lets `name === "default"` reach
+// this function's own stars branch at all (`resolveNamed`'s own comment
+// on `export *` and "default" has the caller-side guard).
+function hasExport(inputs: TypeClosureInputs, summaries: Summaries, file: string, name: string, seen: Set<string> = new Set()): boolean {
+  if (seen.has(file)) return false;
+  seen.add(file);
+  const summary = summarize(inputs, summaries, file);
+  if (summary.exportEquals) return true;
+  if (summary.exportsLocal.has(name) || summary.reexports.has(name) || (name === "default" && summary.defaultInfo !== undefined)) return true;
+  if (name === "default") return false;
+  return summary.stars.some((spec) => {
+    const target = resolveTarget(inputs, file, spec);
+    return target !== undefined && hasExport(inputs, summaries, target, name, seen);
+  });
+}
+
 export function buildTypeClosure(inputs: TypeClosureInputs): TypeClosureResult {
   const summaries: Summaries = new Map();
   const closure = new Set<string>();
@@ -399,8 +515,7 @@ export function buildTypeClosure(inputs: TypeClosureInputs): TypeClosureResult {
   function mark(file: string): void { closure.add(file); }
 
   function resolve(file: string, specifier: string): string | undefined {
-    const target = inputs.resolvedSpecifiers.get(file)?.get(specifier);
-    return target !== undefined && isProgramSource(target) ? target : undefined;
+    return resolveTarget(inputs, file, specifier);
   }
 
   // A declaration actually reached: every rule-followed reference/import
@@ -463,19 +578,6 @@ export function buildTypeClosure(inputs: TypeClosureInputs): TypeClosureResult {
     if (summary.imports.has(name)) reachRef(file, [name]);
   }
 
-  function hasExport(file: string, name: string, seen: Set<string> = new Set()): boolean {
-    if (seen.has(file)) return false; // a cyclic `export *` chain has no new answer past its own start
-    seen.add(file);
-    const summary = summarize(inputs, summaries, file);
-    if (summary.exportEquals) return true;
-    if (summary.exportsLocal.has(name) || summary.reexports.has(name) || (name === "default" && summary.defaultInfo !== undefined)) return true;
-    if (name === "default") return false;
-    return summary.stars.some((spec) => {
-      const target = resolve(file, spec);
-      return target !== undefined && hasExport(target, name, seen);
-    });
-  }
-
   function reachExport(file: string, name: string, rest: readonly string[] = []): void {
     const key = `${file}\0E\0${name}\0${rest.join(".")}`;
     if (done.has(key)) return;
@@ -518,7 +620,7 @@ export function buildTypeClosure(inputs: TypeClosureInputs): TypeClosureResult {
     }
     for (const spec of summary.stars) {
       const target = resolve(file, spec);
-      if (target !== undefined && hasExport(target, name)) { mark(file); reachExport(target, name, rest); }
+      if (target !== undefined && hasExport(inputs, summaries, target, name)) { mark(file); reachExport(target, name, rest); }
     }
   }
 
@@ -561,7 +663,242 @@ export function buildTypeClosure(inputs: TypeClosureInputs): TypeClosureResult {
   // (module-graph.ts's own per-file walk flagged each from real syntax,
   // during the pass every build already makes over every analyzed file);
   // this loop parses exactly these, never the rest.
-  for (const file of inputs.ambientFiles) reachWhole(file);
+  //
+  // reachAmbientRoot reaches only the ambient content itself
+  // (`summary.ambient`, every `declare global`/`declare module "..."`
+  // body) and, for an actual script (no import/export at all - the
+  // checker treats it as a global scope, not a module), every one of its
+  // top-level declarations - never `reachAllExports` and never every
+  // `decls` key unconditionally: an ordinary MODULE that also augments the
+  // global scope (`export {}; declare global { ... }`) binds nothing
+  // ambient beyond that block, so its own unrelated exports and locals
+  // stay reachable the normal way, by whoever actually imports them - not
+  // forced in as a root just because the same file also happens to hold a
+  // `declare global`. `processInfo` on each reached declaration already
+  // follows every type position, inferred reference, and import it
+  // actually uses, the same as any other reached declaration - a plain
+  // import at the top of an ambient file joins the closure only when one
+  // of these declarations references it, never unconditionally.
+  function reachAmbientRoot(file: string): void {
+    const key = `${file}\0AR`;
+    if (done.has(key)) return;
+    done.add(key);
+    const summary = summarize(inputs, summaries, file);
+    if (summary.missing) return;
+    mark(file);
+    for (const info of summary.ambient) processInfo(file, info);
+    if (summary.isScript) {
+      for (const name of summary.decls.keys()) reachLocal(file, name);
+    }
+  }
+  for (const file of inputs.ambientFiles) reachAmbientRoot(file);
 
   return { files: [...closure].sort() };
+}
+
+export type NamedDeclarationsResult = { keys: ReadonlySet<string>; unresolvable: boolean };
+
+// The one place a checker-derived declaration (type-leak.ts's own
+// `collectNamedDeclarations`) and a syntactically-parsed one (this
+// module's own `computeSyntacticNamedDeclarations`, below) are turned into
+// the same string, so the two can be compared - or merged into one set -
+// by value, never by object identity (a syntactic parse has no bound
+// Program, so it can never share a node reference with the checker's
+// own). Position alone (file, 1-based line, 1-based column of the
+// declaration's own start) is enough: two different declarations can
+// never share one file's one offset, so a declared NAME is never part of
+// the key at all.
+export function declarationKey(file: string, line: number, column: number): string {
+  return `${file}\0${line}\0${column}`;
+}
+
+// The syntactic twin of type-leak.ts's own `collectNamedDeclarations`:
+// every declaration a consumer can already reach under some public name,
+// computed from syntax alone (export chains, `export *`, aliases - the
+// same rules `reachExport`/`hasExport` above already follow for file
+// reachability), instead of a bound checker walking a real Program. Exists
+// so rule 6 can be scoped to one module's own surface files - a closure
+// Program that never loads every OTHER surface's own files still needs to
+// know every name those other surfaces expose, the one thing scoping the
+// Program cannot also scope away (a type a consumer can already import
+// from a module outside the closure is still not a leak).
+//
+// `unresolvable`: true the moment this walk crosses a shape it cannot
+// answer as confidently as the checker would (an `export =` target, or an
+// `import x = SomeNamespace.Y` export - DeclInfo's own `isImportEquals`
+// comment). The caller falls back to treating every surface as a closure
+// root and the checker's own named set when this is true, the same as if
+// scoping had never been requested. Silently omitting a name here instead
+// would read an already-named declaration as unnamed on its next surface
+// - a false leak - so an unresolvable shape stops the whole computation
+// rather than under-reporting one name and continuing.
+export function computeSyntacticNamedDeclarations(
+  inputs: TypeClosureInputs,
+  surfaceFiles: readonly string[],
+): NamedDeclarationsResult {
+  const summaries: Summaries = new Map();
+  const keys = new Set<string>();
+  let unresolvable = false;
+  const resolvedAllExportsOf = new Set<string>();
+  const resolvedNames = new Set<string>();
+
+  function addDeclInfo(info: DeclInfo): void {
+    // Every DeclInfo this walk can reach `summarize` sets a position on -
+    // `isImportEquals` is the one shape known in advance to need the
+    // fallback instead (DeclInfo's own comment); a missing position on
+    // any other shape would be this module's own bug, not a real project
+    // input, so it takes the same safe path rather than silently
+    // dropping the name.
+    if (info.isImportEquals === true || info.position === undefined) { unresolvable = true; return; }
+    keys.add(declarationKey(info.position.file, info.position.line, info.position.column));
+  }
+
+  // A namespace-shaped resolution (`export * as ns`, a re-exported
+  // namespace import): the checker's own declaration is `target`'s own
+  // SourceFile, at ITS OWN start position (`sourceFileStart`'s own
+  // comment on why a plain `(target, 1, 1)` is wrong whenever the file
+  // starts with a comment or a blank line).
+  function addSourceFileKey(target: string): void {
+    const start = summarize(inputs, summaries, target).sourceFileStart;
+    keys.add(declarationKey(start.file, start.line, start.column));
+  }
+
+  // `export default <expr>` where `expr` is a single identifier
+  // (`export default Foo;`) is an alias - resolved exactly like a named
+  // export of that local name (FileSummary's own `defaultAlias`
+  // comment), never at the ExportAssignment's own position. Every other
+  // shape (a class/function expression, a literal, ...) keeps the
+  // ExportAssignment's own position, already on `defaultInfo`.
+  function resolveDefault(file: string, summary: FileSummary): void {
+    const alias = summary.defaultAlias;
+    if (alias === undefined) { addDeclInfo(summary.defaultInfo!); return; }
+    if ("qualified" in alias) { unresolvable = true; return; }
+    const decls = summary.decls.get(alias.name);
+    if (decls !== undefined) { for (const info of decls) addDeclInfo(info); return; }
+    const binding = summary.imports.get(alias.name);
+    if (binding !== undefined) {
+      const target = resolveTarget(inputs, file, binding.specifier);
+      if (target === undefined) return;
+      if (binding.importedName === "*") { addSourceFileKey(target); return; }
+      resolveNamed(target, binding.importedName);
+      return;
+    }
+    unresolvable = true;
+  }
+
+  // Resolves `file`'s own export named `name` to every real declaration
+  // it names - the same priority order `reachExport` follows above (a
+  // local export, then `default`, then a named re-export, then `export
+  // *`, first match in declared order wins), which is what makes this
+  // agree with a real checker on which of two `export *` sources naming
+  // the same identifier wins, and on a local export that shadows one.
+  function resolveNamed(file: string, name: string): void {
+    const key = `${file}\0${name}`;
+    if (resolvedNames.has(key)) return;
+    resolvedNames.add(key);
+    const summary = summarize(inputs, summaries, file);
+    if (summary.missing) return; // an edge with no real target: the checker's own symbol there has no declarations either
+    if (summary.exportEquals) { unresolvable = true; return; }
+
+    const local = summary.exportsLocal.get(name);
+    if (local !== undefined) {
+      const decls = summary.decls.get(local);
+      if (decls !== undefined) { for (const info of decls) addDeclInfo(info); return; }
+      const binding = summary.imports.get(local);
+      if (binding !== undefined) {
+        const target = resolveTarget(inputs, file, binding.specifier);
+        if (target === undefined) return; // an external or unresolved import: no declarations on either side
+        // A re-exported namespace import (`import * as NS from "./x";
+        // export { NS };`): the checker's own declaration for it is the
+        // target's own SourceFile, the same as `export * as ns` below.
+        if (binding.importedName === "*") { addSourceFileKey(target); return; }
+        resolveNamed(target, binding.importedName);
+        return;
+      }
+      // `exportsLocal` named a local that is neither a real declaration
+      // nor an import binding - not a shape this walk expects to exist;
+      // treated as unresolvable rather than guessed at.
+      unresolvable = true;
+      return;
+    }
+    if (name === "default" && summary.defaultInfo !== undefined) {
+      resolveDefault(file, summary);
+      return;
+    }
+
+    const reexport = summary.reexports.get(name);
+    if (reexport !== undefined) {
+      const target = resolveTarget(inputs, file, reexport.specifier);
+      if (target === undefined) return;
+      // `export * as ns from "./x"`: the checker's own declaration for
+      // `ns` is `./x`'s own SourceFile (measured directly against a real
+      // checker), not any one declaration inside it.
+      if (reexport.importedName === "*") { addSourceFileKey(target); return; }
+      resolveNamed(target, reexport.importedName);
+      return;
+    }
+
+    // `export *` never carries a "default" of its own - hasExport's own
+    // header - so a plain `export {default as X} from` a star-only
+    // source resolves to nothing here too, matching a real checker
+    // exactly (measured directly: `getExportsOfModule` gives that name no
+    // declarations at all in that shape).
+    if (name === "default") return;
+    for (const spec of summary.stars) {
+      const target = resolveTarget(inputs, file, spec);
+      if (target !== undefined && hasExport(inputs, summaries, target, name)) { resolveNamed(target, name); return; }
+    }
+  }
+
+  // Every name reachable through `file`'s own `export *` chain (not
+  // `file`'s own direct names - callers already have those from
+  // `exportsLocal`/`reexports`/`defaultInfo` directly) - never "default"
+  // (hasExport's own header: `export *` carries no default). `seen`
+  // guards a cyclic chain the same way `hasExport`'s own does.
+  function collectStarNames(file: string, seen: Set<string> = new Set()): Set<string> {
+    const names = new Set<string>();
+    if (seen.has(file)) return names;
+    seen.add(file);
+    const summary = summarize(inputs, summaries, file);
+    if (summary.missing) return names;
+    for (const name of summary.exportsLocal.keys()) names.add(name);
+    for (const name of summary.reexports.keys()) names.add(name);
+    for (const spec of summary.stars) {
+      const target = resolveTarget(inputs, file, spec);
+      if (target !== undefined) for (const name of collectStarNames(target, seen)) names.add(name);
+    }
+    return names;
+  }
+
+  // Every name `file` itself claims to export, including one it only
+  // gets through `export *` - the syntactic mirror of `reachAllExports`
+  // above, over export NAMES instead of files to load. Every name -
+  // direct or star-inherited alike - resolves through `resolveNamed(file,
+  // name)`, never `resolveNamed(target, name)` on a star's own target
+  // directly: `resolveNamed`'s own stars loop is what decides which of
+  // several `export *` sources naming the same identifier wins (the
+  // first, in declared order) - calling straight into a star's own
+  // target here instead would add every one of them, the same
+  // over-inclusion `reachAllExports` above tolerates for file
+  // reachability (see hasExport's own header) but a NAMED answer cannot:
+  // the checker names exactly one declaration for a colliding name, not
+  // every source that happens to offer one.
+  function resolveAllExportsOf(file: string): void {
+    if (resolvedAllExportsOf.has(file)) return;
+    resolvedAllExportsOf.add(file);
+    const summary = summarize(inputs, summaries, file);
+    if (summary.missing) return;
+    if (summary.exportEquals) { unresolvable = true; return; }
+    for (const name of summary.exportsLocal.keys()) resolveNamed(file, name);
+    for (const name of summary.reexports.keys()) resolveNamed(file, name);
+    if (summary.defaultInfo !== undefined) resolveNamed(file, "default");
+    for (const spec of summary.stars) {
+      const target = resolveTarget(inputs, file, spec);
+      if (target === undefined) continue;
+      for (const name of collectStarNames(target)) resolveNamed(file, name);
+    }
+  }
+
+  for (const file of surfaceFiles) resolveAllExportsOf(file);
+  return { keys, unresolvable };
 }

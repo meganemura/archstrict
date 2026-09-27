@@ -44,6 +44,27 @@ test("closure findings equal a whole-project Program's, over generated re-export
       // rule 6 must not flag it twice for having two paths to the same
       // already-named declaration.
       const givePublicName = tc.draw(gen.booleans());
+      // An ambient root (R6, type-closure.ts's own reachAmbientRoot) that
+      // reaches one real target through its own `declare global` block,
+      // alongside an unrelated exported declaration this file also
+      // holds, which reaches a separate, heavy import chain nothing else
+      // in the project needs. "Findings equal a whole-project Program"
+      // alone would pass even if reachAmbientRoot pulled the whole file
+      // in (a whole-project Program has every file anyway) - this case
+      // checks the closure's own file set directly, below.
+      const includeAmbientRoot = tc.draw(gen.booleans());
+      if (includeAmbientRoot) {
+        writeFileSync(join(root, "src/m/ambient-used.ts"), "export const used = 1;\n");
+        writeFileSync(join(root, "src/m/ambient-heavy.ts"), "export const heavy = 1;\n");
+        writeFileSync(
+          join(root, "src/m/ambient.ts"),
+          'export {};\n' +
+            'import { used } from "./ambient-used.js";\n' +
+            'import { heavy } from "./ambient-heavy.js";\n' +
+            "declare global {\n  interface GlobalUses { value: typeof used }\n}\n" +
+            "export const unrelatedExport = heavy;\n",
+        );
+      }
 
       let specifier = "./secret.js";
       let name = "Secret";
@@ -95,6 +116,12 @@ test("closure findings equal a whole-project Program's, over generated re-export
       // reason is what this checks apart.
       if (givePublicName) assert.equal(closure.length, 0, "expected no leak once Secret has a public name");
       else assert.ok(closure.length >= 1, "expected at least one leak in every generated case");
+
+      if (includeAmbientRoot) {
+        const rootFiles = graph.program.getRootFileNames();
+        assert.ok(rootFiles.some((f) => f.endsWith("ambient-used.ts")), "the declare global block's own referenced target must be in the closure");
+        assert.ok(!rootFiles.some((f) => f.endsWith("ambient-heavy.ts")), "an unrelated export's own heavy import chain must stay out of the closure");
+      }
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
