@@ -259,6 +259,15 @@ function shortestCycleFrom(
   throw new Error(`no cycle found from ${start} within its own strongly connected component`);
 }
 
+// Reports at `firstEdge.fromFile` - one arbitrary edge inside the cycle,
+// not the cycle's own identity (this file's header comment on
+// fingerprints has more). "Any file" in the sense that a `check <file>`
+// run's own focus could name any module in a cycle, or none - and the
+// SCC computation itself has no per-file shortcut (a cycle is a property
+// of the whole component, not of one edge), so this rule always runs its
+// current, whole-project logic; runRules narrows its OWN returned
+// violations down to the focus file afterward, the same as it does for
+// every rule this file doesn't itself scope.
 export function checkCycles(
   graph: ModuleGraph,
   config?: Pick<Config, "ignoredCycles" | "configPath">,
@@ -310,6 +319,11 @@ export function checkCycles(
   return violations;
 }
 
+// Reports at `config.configPath` - a fact about `ignoredCycles` itself,
+// not about any one file's own edge - so a `check <file>` run only ever
+// keeps this rule's own finding when `focus` is the config file; runRules'
+// own end-of-call filter (not this function) is what narrows it down.
+//
 // A declared pair not found together in any real strongly connected
 // component at all (ignored or not) is stale - checked against every
 // component, not just the ignored ones, since a pair that never cycled in

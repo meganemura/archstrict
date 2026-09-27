@@ -43,6 +43,15 @@ function countEdges(graph: ModuleGraph, from: string, to: string): number {
   return graph.crossModuleEdges.filter((e) => e.fromModule === from && e.toModule === to).length;
 }
 
+// Both `violations` and `suggestions` report at `config.configPath` (a
+// declared from/to module pair's own actual count, not a single edge's
+// own file) - this rule always runs fully regardless of a `check <file>`
+// run's own focus, and `assertDeprecatedModulesExist`'s own validation
+// must run every time either way. runRules' own end-of-call filter keeps
+// or drops the returned VIOLATIONS depending on whether focus names the
+// config file - but never touches `suggestions`, which stays the full,
+// whole-project list on every run: `filterToFile` (check.ts) only ever
+// narrows `CheckResult.violations`, never `.suggestions`.
 export function checkDeprecatedEdges(
   graph: ModuleGraph,
   config: Config,

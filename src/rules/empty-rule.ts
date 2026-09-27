@@ -37,6 +37,12 @@ function violation(config: Config, evidence: string, doText: string): Violation 
   };
 }
 
+// Every finding here reports at `config.configPath` (see the Violation
+// type's own comment above) - a config-vs-graph consistency fact, never a
+// single file's own edge - so this rule always runs its current,
+// whole-config logic regardless of a `check <file>` run's own focus;
+// runRules' own end-of-call filter (not this function) is what keeps or
+// drops it depending on whether focus names the config file itself.
 export function checkEmptyRuleSet(graph: ModuleGraph, config: Config): Violation[] {
   // Validated up front, same reasoning as ever: a config error must not
   // depend on which branch runs first.

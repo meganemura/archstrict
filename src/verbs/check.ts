@@ -4,7 +4,7 @@
 // Boundary: this is where the six rules' differing return shapes get
 // normalized to one — `deprecated`'s two arrays (violations/suggestions)
 // flatten in here, not in each rule.
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import ts from "typescript";
 import { buildModuleGraphForRules, toProjectRelativePosix, type ModuleGraph, type BuildOptions } from "../module-graph.js";
@@ -112,6 +112,17 @@ export type CheckResult = {
   // (rule 6, on a scoped non-surface-file run) contributes 0 here for its
   // own frozen entries too, since their real status (still a violation,
   // or fixed) is unknown this run, not "suppressed".
+  //
+  // On a `check <file>` run, this counts only the entries whose own
+  // violation is reported at that file - the same restriction
+  // `typeLeaks: null` already applies to a skipped rule 6: a scoped run
+  // states facts about the scoped file, not about the whole project. A
+  // frozen violation elsewhere (a different module's own public-surface
+  // bypass, cycle, or type-leak, still real and still suppressed on a
+  // full `check`) contributes 0 here on a scoped run - reported as
+  // "unknown this run", the same status any other rule's skipped
+  // findings already carry, not folded into a project-wide count next to
+  // a report about one file.
   todo: number;
   violations: AnyViolation[];
   suggestions: DeprecatedSuggestion[];
@@ -312,7 +323,43 @@ export type RunRulesOptions = {
   // rules' violations never sit in memory together: on a large codebase
   // each alone fits Node's default heap, but the two together do not.
   afterTypeLeak?: () => void;
+  // check()'s own realpath'd target for a `check <file>` run - the exact
+  // value `filterToFile` itself compares a violation's own (resolved)
+  // `path` against. Passed down to the rules whose violations report at
+  // one real file (public-surface-bypass, tag-boundary/tag-order/point-
+  // rule, must-be-empty, uncovered-module), so each builds only the
+  // violations reachable from that one file, instead of every one in the
+  // project and then throwing away all but a handful. Every other rule
+  // (cycles, and everything that reports at config.configPath) still runs
+  // its own current, whole-project logic unconditionally - `focus` only
+  // changes what gets returned, through the end-of-function filter below,
+  // never what those rules compute. undefined for a full `check`, for a
+  // `check <file>` whose named file doesn't exist, and for a `check <dir>`
+  // (or anything else that isn't a regular file): check()'s own
+  // tryRealpath only returns a value for a real, existing, regular file,
+  // so every rule runs unscoped in every other case, and either
+  // `filterToFile` throws its usual "no such file" error (a missing
+  // path), or narrows the unscoped result the same way it always has (a
+  // directory, or any other non-file target - stale-todo and clean-
+  // module-has-todo both report at a module's own directory, which
+  // `filterToFile` can still match directly).
+  focus?: string;
 };
+
+// The exact predicate `filterToFile` itself applies to a violation's own
+// `path` - shared so every early-filtering call site above narrows down to
+// precisely the set `filterToFile` would keep from an unscoped run. Most
+// of this file's own violations carry an already-absolute, already-real
+// `path` (an edge's own `fromFile`, or a module's own directory) and are
+// compared directly instead, for the edges the cost of this call would
+// itself add back (checkPublicSurfaceBypass's own comment has the
+// reasoning) - `resolve()` here exists for the one path shape that needs
+// it: must-be-empty's own `path` is project-relative, resolved against
+// `process.cwd()`, the same as `filterToFile` resolves the `file` a
+// caller named.
+function reportedAtFocus(path: string, focus: string): boolean {
+  return resolve(path) === focus;
+}
 
 export function runRules(graph: ModuleGraph, config: Config, options: RunRulesOptions = {}): CheckResult {
   // null (not 0, not an empty array's own .length) when this rule did not
@@ -320,20 +367,28 @@ export function runRules(graph: ModuleGraph, config: Config, options: RunRulesOp
   // and CheckResult.typeLeaks's own comment is the field this distinction
   // exists for. Rule 6 runs first so that its Program can be released
   // (options.afterTypeLeak) before the other rules build their own
-  // violations; its findings still go last in the report.
+  // violations; its findings still go last in the report. Its own COUNT
+  // (`typeLeaks: typeLeaks.length` below) stays the full, whole-project
+  // number even on a scoped run - it comes straight from this array,
+  // never from the (possibly focus-narrowed) `violations` list below.
   const typeLeaks = options.skipTypeLeak ? undefined : checkTypeLeaks(graph);
   options.afterTypeLeak?.();
+  const focus = options.focus;
 
+  const mustBeEmptyFiles = allProjectRelativeFiles(graph);
   const violations: AnyViolation[] = [
-    ...checkPublicSurfaceBypass(graph),
+    ...checkPublicSurfaceBypass(graph, focus),
     ...checkCycles(graph, config),
     ...checkStaleCycleExceptions(graph, config),
-    ...checkUncoveredModules(graph, config),
+    ...checkUncoveredModules(graph, config, focus),
     ...checkEmptyRuleSet(graph, config),
-    ...checkMustBeEmpty(allProjectRelativeFiles(graph), config),
-    ...checkAllowDeny(graph, config),
-    ...checkOrder(graph, config),
-    ...checkPoint(graph, config),
+    ...checkMustBeEmpty(
+      focus === undefined ? mustBeEmptyFiles : mustBeEmptyFiles.filter((f) => reportedAtFocus(f, focus)),
+      config,
+    ),
+    ...checkAllowDeny(graph, config, focus),
+    ...checkOrder(graph, config, focus),
+    ...checkPoint(graph, config, focus),
   ];
   const deprecated = checkDeprecatedEdges(graph, config);
   violations.push(...deprecated.violations);
@@ -343,6 +398,19 @@ export function runRules(graph: ModuleGraph, config: Config, options: RunRulesOp
   for (const m of graph.modules.values()) {
     if (m.surfaceFiles.length === 0) modulesWithoutSurface++;
   }
+
+  // Every rule above either already builds only focus-matching violations
+  // (the early filters just passed in), or still runs fully and returns
+  // every one of its own findings (cycles; every config.configPath-only
+  // rule) - this pass is what makes the two the same either way: it keeps
+  // exactly what `filterToFile` would keep from a fully unscoped run, so
+  // `runRules`'s own return value is already the scoped result, not an
+  // approximation of it. Every other field (modules, edges,
+  // unresolvedSpecifiers, typeLeaks, edgeRuleCoverage, ...) is a
+  // whole-project fact and stays that way regardless of `focus` - only
+  // `violations` (and, through it, `applyTodo`'s own `todo` count) is
+  // ever scoped.
+  const scopedViolations = focus === undefined ? violations : violations.filter((v) => reportedAtFocus(v.path, focus));
 
   return {
     modules: graph.modules.size,
@@ -355,7 +423,7 @@ export function runRules(graph: ModuleGraph, config: Config, options: RunRulesOp
     unsupportedSyntax: graph.unsupportedSyntaxCount,
     typeLeaks: typeLeaks === undefined ? null : typeLeaks.length,
     todo: 0,
-    violations,
+    violations: scopedViolations,
     suggestions: deprecated.suggestions,
     edgeRuleCoverage: checkEdgesCoverage(graph, config),
   };
@@ -423,10 +491,33 @@ export type ApplyTodoOptions = {
   // get reported as stale-todo, when their real status (still a leak, or
   // fixed) is simply unknown this run, not "gone".
   skipStaleCheckForRules?: readonly string[];
+  // check()'s own realpath'd target for a `check <file>` run - the same
+  // value passed to runRules as its own `focus`. Gates the stale-todo
+  // check below down to the todo entries whose OWN stored `path` is that
+  // one file - never the matching loop above it, which already only ever
+  // sees `result.violations`, already narrowed to `focus` by runRules
+  // (see RunRulesOptions.focus's own comment) before this function runs
+  // at all.
+  focus?: string;
 };
+
+// An entry's own stored `path` (todo-store.ts's own TodoEntry, always
+// present, always project-relative to `rootDir` - todo.ts's own
+// freezeOrPrune writes it that way, and readTodo normalizes a legacy
+// absolute one into the same form) resolved back to the real, absolute
+// file it names, compared against `focus`. A public-surface-bypass or
+// constraint-engine entry frozen into module M's own todo records the
+// IMPORTER's path, not M's own - the same reason those two rules' own
+// Violation.path is the importer (public-surface.ts's own comment) - so
+// this can differ from M's own directory even when M itself is the file
+// being checked.
+function entryReportedAtFocus(entry: TodoEntry, rootDir: string, focus: string): boolean {
+  return resolve(rootDir, entry.path) === focus;
+}
 
 export function applyTodo(graph: ModuleGraph, config: Config, result: CheckResult, options: ApplyTodoOptions = {}): CheckResult {
   const skipStaleCheckForRules = new Set(options.skipStaleCheckForRules ?? []);
+  const focus = options.focus;
   const strict = new Set(config.strict ?? []);
   const remaining: AnyViolation[] = [];
   const matchedByModule = new Map<string, Set<string>>();
@@ -493,6 +584,14 @@ export function applyTodo(graph: ModuleGraph, config: Config, result: CheckResul
 
     const matched = matchedByModule.get(name) ?? new Set<string>();
     for (const entry of entries) {
+      // On a `check <file>` run, an entry recorded at some OTHER path was
+      // never evaluated this run - runRules never built (or scoped away)
+      // whatever violation would have matched it, so whether it's still
+      // real or now fixed is unknown, not "gone" (skipStaleCheckForRules's
+      // own comment makes the same call for a rule this run skipped
+      // outright). Reporting it stale here would be a false positive: the
+      // entry itself never got a chance to match anything this run.
+      if (focus !== undefined && !entryReportedAtFocus(entry, graph.rootDir, focus)) continue;
       if (matched.has(entry.fingerprint)) continue;
       if (skipStaleCheckForRules.has(entry.rule)) continue;
       remaining.push({
@@ -525,6 +624,34 @@ export function hasBlockingViolations(result: CheckResult): boolean {
 // surface file" here (false) rather than throwing - the real, existing
 // ReportError for that case is filterToFile's own, thrown later at its
 // usual point once `focusFile` is given.
+// check()'s own realpath'd target for a `check <file>` run, or undefined
+// for a plain `check`, a named path that doesn't exist, or a named path
+// that exists but isn't a regular file - `statSync(...).isFile()` is the
+// deciding check: a directory's own realpath is just as real as a file's,
+// but scoping the rules below to it is wrong, not merely unhelpful. Each
+// rule this file scopes reports at ONE FILE's own path (public-surface-
+// bypass and the constraint engine at `edge.fromFile`, must-be-empty and
+// uncovered-module at a project file), and compares that path against
+// `focus` directly - a directory can never equal a file's own path, so
+// scoping to one would silently drop every real violation reachable
+// through it, rather than keeping the ones inside it. `stale-todo`
+// reports at a MODULE's own directory, not a file, so `check <a module's
+// directory>` can produce it only by running the full, whole-project
+// logic and letting `filterToFile` keep it afterward, never by scoping
+// runRules to a target no rule reports at. Every other case (undefined, or a missing path) leaves
+// `focus` undefined for the same reason: every rule runs full and
+// unscoped, and `filterToFile` alone decides what survives - for a
+// missing path, that means its own "no such file" error, thrown exactly
+// where it always was.
+function tryRealpath(file: string): string | undefined {
+  try {
+    const target = realpathSync(resolve(file));
+    return statSync(target).isFile() ? target : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function focusesSurfaceFile(graph: ModuleGraph, file: string): boolean {
   let target: string;
   try {
@@ -576,6 +703,7 @@ export async function check(projectRoot: string, focusFile?: string, options: Ch
   // ts.Program is never built just to throw its answer away. Plain
   // `check` (no focusFile) always evaluates it.
   const skipTypeLeak = focusFile !== undefined && !focusesSurfaceFile(graph, focusFile);
+  const focus = focusFile === undefined ? undefined : tryRealpath(focusFile);
   // Rule 6 is the only rule that touches `graph.program`/`graph.checker`,
   // and runRules runs it first - release the Program right after it, so
   // the other rules never run beside it. The notes are read before the
@@ -585,6 +713,7 @@ export async function check(projectRoot: string, focusFile?: string, options: Ch
   let programNotes: readonly string[] = [];
   const evaluated = runRules(graph, config, {
     skipTypeLeak,
+    focus,
     afterTypeLeak: () => {
       programNotes = [...graph.programNotes];
       graph.releaseProgram();
@@ -592,8 +721,15 @@ export async function check(projectRoot: string, focusFile?: string, options: Ch
   });
   if (skipTypeLeak) evaluated.typeLeaksSkippedFile = focusFile;
   if (programNotes.length > 0) evaluated.notes = [...programNotes];
-  evaluated.violations.push(...await checkConfigMeaning(config, options.prove ?? false, options.prover));
-  const result = applyTodo(graph, config, evaluated, { skipStaleCheckForRules: skipTypeLeak ? ["type-leak"] : [] });
+  // Skipped outright, not merely filtered afterward, when focus names a
+  // real file that isn't the config file: unlike every other rule, a real
+  // call here can cost a paid, networked --prove request (config-
+  // meaning.ts's own comment), and that cost must never be paid just to
+  // throw the answer away.
+  if (focus === undefined || focus === config.configPath) {
+    evaluated.violations.push(...await checkConfigMeaning(config, options.prove ?? false, options.prover));
+  }
+  const result = applyTodo(graph, config, evaluated, { skipStaleCheckForRules: skipTypeLeak ? ["type-leak"] : [], focus });
   return focusFile === undefined ? result : filterToFile(result, focusFile);
 }
 

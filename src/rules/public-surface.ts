@@ -51,9 +51,23 @@ function isExemptedByFriend(edge: Edge, targetModule: Module, rootDir: string): 
   );
 }
 
-export function checkPublicSurfaceBypass(graph: ModuleGraph): Violation[] {
+// Every violation this rule returns is reported at `edge.fromFile` (the
+// importing file) - never at the target module's own directory or any
+// other file. `focus`, when given, is check()'s own realpath'd target for
+// a `check <file>` run: filtering `graph.crossModuleEdges` down to the
+// ones whose `fromFile` is that exact file, before this rule ever builds a
+// Violation object (evidence/do strings, both built by concatenation, are
+// this rule's own real cost on a large project), gives back exactly the
+// set `filterToFile` would keep from the unscoped result - the same
+// (edge -> violation) mapping runs either way, only over fewer edges.
+// `edge.fromFile` is compared directly, not through `resolve()`: every
+// file in `graph.crossModuleEdges` is already an absolute, real path (the
+// module graph builds it that way), the same invariant `filterToFile`
+// itself already trusts before comparing a violation's own `path`.
+export function checkPublicSurfaceBypass(graph: ModuleGraph, focus?: string): Violation[] {
   const violations: Violation[] = [];
-  for (const edge of graph.crossModuleEdges) {
+  const edges = focus === undefined ? graph.crossModuleEdges : graph.crossModuleEdges.filter((e) => e.fromFile === focus);
+  for (const edge of edges) {
     const targetModule = graph.modules.get(edge.toModule!);
     if (targetModule === undefined) continue; // resolved outside any module; not this rule's concern
     if (targetModule.surfaceFiles.includes(edge.resolvedFile)) continue; // reached the public surface itself

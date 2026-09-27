@@ -175,9 +175,23 @@ function byPosition<T extends { path: string; line: number; column: number }>(a:
 
 export type AllowDenyMatch = { violation: ConstraintViolation; edge: Edge; ruleIndex: number; violatingTag: string };
 
+// `focus`, threaded through all three of this file's own rule shapes
+// (allowDeny/order/point below), is check()'s own realpath'd target for a
+// `check <file>` run - every one of the three reports at `edge.fromFile`
+// (compared directly, not through `resolve()`: an edge's own `fromFile` is
+// always already an absolute, real path, the same invariant
+// checkPublicSurfaceBypass's own comment already documents), never at any
+// other path. Unlike rule 1, `focus` here only gates what gets pushed into
+// `violations`/`matches` - the loop still runs over every real edge in
+// `graph.edges` regardless, because `evaluatedCounts` (and so
+// `EdgeRuleCoverage.evaluated`, which checkEdgesCoverage's own callers use
+// unscoped - checkEmptyRuleSet's own vacuous-rule check needs the real,
+// whole-project count, not a count of one file's own edges) has to stay a
+// whole-project fact either way.
 export function computeAllowDeny(
   graph: ModuleGraph,
   config: Config,
+  focus?: string,
 ): { violations: ConstraintViolation[]; coverage: EdgeRuleCoverage[]; matches: AllowDenyMatch[] } {
   const rules: readonly AllowDenyRule[] = config.edges?.allowDeny ?? [];
   const rootDir = graph.rootDir;
@@ -213,6 +227,7 @@ export function computeAllowDeny(
         violatingTag = targetValues.find((v) => denied.has(v));
       }
       if (violatingTag === undefined) return;
+      if (focus !== undefined && edge.fromFile !== focus) return; // evaluated (coverage counted above); not built for a scoped run
 
       const violation: ConstraintViolation = {
         rule: "tag-boundary",
@@ -271,8 +286,8 @@ export function checkExhaustiveAllow(graph: ModuleGraph, config: Config): { iden
   });
 }
 
-export function checkAllowDeny(graph: ModuleGraph, config: Config): ConstraintViolation[] {
-  return computeAllowDeny(graph, config).matches.map(match => {
+export function checkAllowDeny(graph: ModuleGraph, config: Config, focus?: string): ConstraintViolation[] {
+  return computeAllowDeny(graph, config, focus).matches.map(match => {
     const moves = computeMoves(match.violation, graph, config, match);
     return moves?.length ? { ...match.violation, moves } : match.violation;
   }).sort(byPosition);
@@ -305,9 +320,13 @@ export function assertSequenceListsValue(
   }
 }
 
+// See computeAllowDeny's own comment above for `focus`'s meaning here:
+// reports at `edge.fromFile` too, and `evaluatedCounts`/coverage stay
+// whole-project regardless of it.
 function computeOrder(
   graph: ModuleGraph,
   config: Config,
+  focus?: string,
 ): { violations: ConstraintViolation[]; coverage: EdgeRuleCoverage[] } {
   const rules: readonly OrderRule[] = config.edges?.order ?? [];
   const rootDir = graph.rootDir;
@@ -354,6 +373,7 @@ function computeOrder(
       // dependency-cruiser's own generator: forbidden iff targetIndex >
       // sourceIndex.
       if (targetIndex <= sourceIndex) return;
+      if (focus !== undefined && edge.fromFile !== focus) return; // evaluated (coverage counted above); not built for a scoped run
 
       violations.push({
         rule: "tag-order",
@@ -376,8 +396,8 @@ function computeOrder(
   return { violations, coverage };
 }
 
-export function checkOrder(graph: ModuleGraph, config: Config): ConstraintViolation[] {
-  return computeOrder(graph, config).violations.sort(byPosition);
+export function checkOrder(graph: ModuleGraph, config: Config, focus?: string): ConstraintViolation[] {
+  return computeOrder(graph, config, focus).violations.sort(byPosition);
 }
 
 // Unlike allowDeny/order (which have an "applicable but allowed" middle
@@ -389,9 +409,13 @@ export function checkOrder(graph: ModuleGraph, config: Config): ConstraintViolat
 // anything real is a rule that can never fire, and a to side that never
 // matches doesn't make the rule vacuous on its own (it may be correctly
 // finding zero forbidden edges among real, matched-from-side candidates).
+// See computeAllowDeny's own comment above for `focus`'s meaning here:
+// reports at `edge.fromFile` too, and `evaluatedCounts`/coverage stay
+// whole-project regardless of it.
 function computePoint(
   graph: ModuleGraph,
   config: Config,
+  focus?: string,
 ): { violations: ConstraintViolation[]; coverage: EdgeRuleCoverage[] } {
   const rules: readonly PointRule[] = config.edges?.point ?? [];
   const identifiers = rules.map(
@@ -413,6 +437,7 @@ function computePoint(
       if (!matchesPredicate(rule.from, sourceRel, sourceTags)) return;
       evaluatedCounts[i]!++;
       if (!matchesPredicate(rule.to, targetRel, targetTags)) return;
+      if (focus !== undefined && edge.fromFile !== focus) return; // evaluated (coverage counted above); not built for a scoped run
 
       violations.push({
         rule: "point-rule",
@@ -435,8 +460,8 @@ function computePoint(
   return { violations, coverage };
 }
 
-export function checkPoint(graph: ModuleGraph, config: Config): ConstraintViolation[] {
-  return computePoint(graph, config).violations.sort(byPosition);
+export function checkPoint(graph: ModuleGraph, config: Config, focus?: string): ConstraintViolation[] {
+  return computePoint(graph, config, focus).violations.sort(byPosition);
 }
 
 export function checkConstraints(graph: ModuleGraph, config: Config): ConstraintViolation[] {

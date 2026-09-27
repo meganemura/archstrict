@@ -7,6 +7,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { init } from "../src/verbs/init.js";
+import { todo } from "../src/verbs/todo.js";
 import { check, formatText, loadConfig } from "../src/verbs/check.js";
 import type { Prover } from "../src/rules/config-meaning.js";
 import { ReportError } from "../src/report-error.js";
@@ -763,6 +764,90 @@ describe("check", () => {
       expect(result.typeLeaks).toBe(1);
       expect(result.typeLeaksSkippedFile).toBeUndefined();
       expect(formatText(result)).toContain("type leaks: 1");
+    });
+  });
+
+  // `applyTodo`'s stale-todo check only evaluates a todo entry whose
+  // OWN stored path is the focus file (check.ts's own entryReportedAtFocus
+  // comment). Only a file-module's own todo (module.dir IS the file, so
+  // stale-todo's own `path: module.dir` can equal `focus`) can ever show
+  // stale-todo in a `check <file>` run's own output at all - a directory
+  // module's stale-todo always reports at its directory, never a single
+  // file, so filterToFile drops it regardless of this change. A cycle's
+  // own `path` (the arbitrary edge module-graph.ts's shortest-cycle search
+  // happened to return first) can be that file-module's own path when the
+  // module is the cycle's own anchor - this fixture forces that: two
+  // single-file modules cycling into each other, "a" sorted first so it
+  // is always the anchor `checkCycles` picks.
+  test("check <file> still reports stale-todo for a file-module's own cycle entry, once the cycle is broken", async () => {
+    await withTempProject(async (root) => {
+      mkdirSync(join(root, "src"), { recursive: true });
+      writeFileSync(join(root, "src", "a.ts"), 'import "./b.js";\nexport const a = 1;\n');
+      writeFileSync(join(root, "src", "b.ts"), 'import "./a.js";\nexport const b = 1;\n');
+      writeFileSync(join(root, "tsconfig.json"), JSON.stringify({ compilerOptions: { noLib: true, types: [] } }));
+      writeFileSync(join(root, "archstrict.config.ts"), [
+        "export default {",
+        '  declaredModules: [{ name: "a", glob: "src/a.ts", surface: "a.ts" }, { name: "b", glob: "src/b.ts", surface: "b.ts" }],',
+        '  exclude: ["archstrict.config.ts", "tsconfig.json"],',
+        '  because: "test architecture",',
+        "};",
+      ].join("\n"));
+      const aPath = join(root, "src", "a.ts");
+
+      const before = await check(root, aPath);
+      const cycle = before.violations.find((v) => v.rule === "cycle");
+      expect(cycle).toBeDefined();
+      expect(cycle!.path).toBe(realpathSync(aPath)); // the anchor's own file, "a" sorted first
+      const frozen = await todo(root);
+      expect(frozen.added).toBe(1);
+
+      // Break the cycle - the frozen entry's own violation genuinely no
+      // longer exists.
+      writeFileSync(join(root, "src", "b.ts"), "export const b = 1;\n");
+
+      const after = await check(root, aPath);
+      expect(after.violations.some((v) => v.rule === "cycle")).toBe(false);
+      const stale = after.violations.find((v) => v.rule === "stale-todo");
+      expect(stale).toBeDefined();
+      expect(stale!.path).toBe(realpathSync(aPath));
+      expect(after.todo).toBe(0);
+    });
+  });
+
+  // Scoping the rules to a directory would drop `stale-todo`, which
+  // reports at the module's own directory, never at any one file inside
+  // it, since no rule this file scopes reports at a directory.
+  // `tryRealpath` therefore returns a value only for a real, existing,
+  // REGULAR FILE
+  // (`statSync(...).isFile()`); a directory leaves `focus` undefined, so
+  // every rule runs its full, unscoped logic and `filterToFile` alone
+  // decides what survives - the same as a plain `check` narrowed
+  // afterward, and the same as this test's own baseline (`full`) already
+  // gets.
+  test("check <a module's directory> still reports that module's own stale-todo", async () => {
+    await withTempProject(async (root) => {
+      mkdirSync(join(root, "src", "shared"), { recursive: true });
+      mkdirSync(join(root, "src", "app"), { recursive: true });
+      writeFileSync(join(root, "src", "shared", "index.ts"), "export const p = 1;\n");
+      writeFileSync(join(root, "src", "shared", "internal.ts"), "export const i = 1;\n");
+      writeFileSync(
+        join(root, "src", "app", "index.ts"),
+        'import { i } from "../shared/internal.js";\nexport const a = i;\n',
+      );
+      await init(root);
+
+      await todo(root);
+      // Fix the bypass - the frozen public-surface-bypass entry (filed
+      // under "shared", recorded at the IMPORTER's path, "src/app/index.ts")
+      // genuinely no longer matches anything.
+      writeFileSync(join(root, "src", "app", "index.ts"), "export const a = 1;\n");
+
+      const full = await check(root);
+      expect(full.violations.some((v) => v.rule === "stale-todo")).toBe(true);
+
+      const dirScoped = await check(root, join(root, "src", "shared"));
+      expect(dirScoped.violations.some((v) => v.rule === "stale-todo")).toBe(true);
+      expect(dirScoped.violations).toEqual(full.violations);
     });
   });
 

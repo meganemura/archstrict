@@ -22,6 +22,14 @@ export type Violation = {
   do: string;
 };
 
+// Reports at `file` (each entry's own path) - independent per file, unlike
+// uncovered-module's own grouping/naming: whether one file matches a
+// `mustBeEmpty` glob never depends on any other file in `files`. So a
+// `check <file>` run's own caller (runRules) can safely narrow `files`
+// down to just the focus file before calling this rule at all, and get
+// exactly the same result as running the whole list and filtering
+// afterward - the narrowing happens in runRules, not in this file.
+//
 // `files`: every real, project-root-relative (forward-slash) path this
 // config's own analysis scope covers - the caller decides what that scope
 // is (declared modules' own files, or a project's whole file list); this

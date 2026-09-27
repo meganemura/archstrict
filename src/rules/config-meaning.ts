@@ -89,6 +89,14 @@ function probability(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1;
 }
 
+// Every finding reports at `config.configPath` (`skipped`/`record` above
+// both fix `path: config.configPath`) - never a single file's own edge.
+// check() itself, not this function, skips calling checkConfigMeaning
+// entirely on a `check <file>` run whose focus isn't the config file:
+// unlike every other rule, a real call here can cost a paid, networked
+// prove request, so that decision happens before the request goes out at
+// all, not after - it would otherwise still be filtered away by runRules'
+// own end-of-call filter, but only after paying for it.
 export async function checkConfigMeaning(config: Config, prove: boolean, prover: Prover = realProver): Promise<Violation[]> {
   // Other tools can share this credential. Only --prove authorizes paid calls for this invocation.
   // A key alone must not cause paid requests during routine CI or pre-commit checks.
