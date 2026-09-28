@@ -1,6 +1,18 @@
 {
-  "description": "archstrict - runs check on the just-edited file and returns any violation into the agent's own context",
+  "description": "archstrict - runs simulate before a file edit and check right after, returning any violation into the agent's own context",
   "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v node >/dev/null 2>&1 && exec node \"${CLAUDE_PLUGIN_ROOT}/hooks/pre-tool-use.mjs\" || exit 0",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "Edit|Write|MultiEdit",
