@@ -12,7 +12,7 @@ may change commands, flags, config, or output shape. The version entry will desc
   by construction, and writes `archstrict.types.ts`.
 - `archstrict check [file] [--json] [--rule <id>] [--module <name>] [--frozen]` reports module
   boundary violations: a public-surface bypass, an import cycle, an uncovered module, an empty rule
-  set, a tag-edge rule turned deprecated, a type leaked out of a surface, and a tag-boundary,
+  set, a deprecated module edge whose count grew, a type leaked out of a surface, and a tag-boundary,
   tag-order, or point-rule violation from the constraint engine. `--rule` and `--module` filter both
   the text and JSON output; `--frozen` also reports todo-matched violations without affecting the
   exit code.
