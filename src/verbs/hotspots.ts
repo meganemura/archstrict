@@ -243,8 +243,10 @@ export async function hotspots(projectRoot: string, since?: string): Promise<Hot
       score: commits * fanIn,
       // `--module` scopes the whole rule set to one module; a single file
       // inside it (the earlier form) is not a module-level drill-down and
-      // can miss the violations that made the module a hotspot.
-      do: `archstrict check --module ${module.name}`,
+      // can miss the violations that made the module a hotspot. `--frozen`
+      // surfaces that module's todo-matched debt alongside its live
+      // violations, instead of sending the reader to its todo JSON by hand.
+      do: `archstrict check --frozen --module ${module.name}`,
     };
   }).sort((a, b) => b.score - a.score || b.commits - a.commits || a.name.localeCompare(b.name));
 
@@ -289,15 +291,15 @@ export function formatHotspotsText(result: HotspotsResult): string {
   }
   lines.push("", `Excluded from history: ${result.exclusions.join(", ")}.`);
   // At most two lines: the top module (the score's own drill-down), and, when
-  // one exists, the top boundary-hotspot pair. A pair's debt is frozen by
-  // `archstrict todo`, and `check` never prints a frozen violation, so its
-  // drill-down is the workflow that reads that frozen debt, not a check
-  // filter that would print nothing on exactly the projects hotspots serves.
+  // one exists, the top boundary-hotspot pair. `check --frozen` now reads a
+  // pair's frozen debt through the same rule/module filters as a live
+  // violation, so the drill-down names that command instead of the todo
+  // JSON files it used to send the reader to open by hand.
   if (result.modules.length > 0) lines.push(`do: ${result.modules[0]!.do}`);
   const pair = result.pairs.find((candidate) => candidate.hotspot);
   if (pair !== undefined) {
     lines.push(
-      `do: read node_modules/archstrict/skills/archstrict/references/rearchitect.md, then read the frozen debt of ${pair.moduleA} and ${pair.moduleB} in their archstrict.todo.json files`,
+      `do: read node_modules/archstrict/skills/archstrict/references/rearchitect.md, then run archstrict check --frozen --module ${pair.moduleA} and archstrict check --frozen --module ${pair.moduleB}`,
     );
   }
   return `${lines.join("\n")}\n`;

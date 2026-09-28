@@ -11,7 +11,7 @@ Installed package: `node_modules/archstrict/skills/archstrict/SKILL.md` (this fi
 ## Commands
 
 - `archstrict init [dir] [--json]` — declare one module per top-level directory holding `.ts` and one per loose top-level `.ts` file, so the first `check` covers every file by construction; write `archstrict.types.ts` and, if missing, `archstrict.config.ts` (`schemaVersion: 1`)
-- `archstrict check [file] [--json] [--rule <id>] [--module <name>]` — report violations for the whole project; a file argument only scopes the report. Up to 20 violations print in full; more print grouped counts with one example each, plus a `do:` per group. `--rule`/`--module` narrow the printed and JSON violations (repeatable); the exit code reflects the filtered set once a filter is given
+- `archstrict check [file] [--json] [--rule <id>] [--module <name>] [--frozen]` — report violations for the whole project; a file argument only scopes the report. Up to 20 violations print in full; more print grouped counts with one example each, plus a `do:` per group. `--rule`/`--module` narrow the printed and JSON violations (repeatable); the exit code reflects the filtered set once a filter is given. `--frozen` also includes todo-matched violations, marked `frozen: true` and exempt from the exit code, so a re-architecting agent can read a module's frozen debt through the same filters instead of opening its todo JSON by hand
 - `archstrict todo [--json]` — freeze current freezable violations on the first run, then only prune
 - `archstrict hotspots [--since <git ref or date>] [--json]` — combine Git change frequency and co-change with module fan-in, fan-out, frozen debt, and active violations
 

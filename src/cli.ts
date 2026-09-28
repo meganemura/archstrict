@@ -93,6 +93,7 @@ async function runCheck(args: string[]): Promise<number> {
     prove: parsed.prove,
     rules: parsed.rules,
     modules: parsed.modules,
+    frozen: parsed.frozen,
   });
   if (parsed.asJson) {
     process.stdout.write(JSON.stringify(result, null, 2) + "\n");

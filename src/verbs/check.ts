@@ -87,7 +87,13 @@ export type RawViolation =
   | ConstraintViolation
   | ConfigMeaningViolation;
 
-export type AnyViolation = RawViolation & { config: ConfigPointers };
+// Set only by applyTodo's own --frozen path (ApplyTodoOptions.includeFrozen):
+// a violation this call would otherwise have suppressed as todo-matched,
+// kept in `violations` instead and marked so a reader (and the exit code)
+// can tell it apart from a live one. Absent (not false) on every other
+// violation, so JSON.stringify omits the field and default `check` output
+// stays byte-identical to before this existed.
+export type AnyViolation = RawViolation & { config: ConfigPointers; frozen?: true };
 
 export function formatConfigPointerLines(config: ConfigPointers): string[] {
   const pointers = Array.isArray(config) ? config : [config];
@@ -534,6 +540,12 @@ export type ApplyTodoOptions = {
   // (see RunRulesOptions.focus's own comment) before this function runs
   // at all.
   focus?: string;
+  // `check --frozen`'s own request: a todo-matched violation is kept in
+  // `remaining` (marked `frozen: true`) instead of only counted in
+  // `suppressed`. Absent (the default) reproduces the exact behavior
+  // before this option existed - a matched violation vanishes from the
+  // returned list entirely.
+  includeFrozen?: boolean;
 };
 
 // An entry's own stored `path` (todo-store.ts's own TodoEntry, always
@@ -617,6 +629,7 @@ export function applyTodo(graph: ModuleGraph, config: Config, result: CheckResul
         matchedByModule.set(v.todoModule, matched);
       }
       matched.add(matchedEntry.fingerprint);
+      if (options.includeFrozen) remaining.push({ ...v, frozen: true });
     } else {
       remaining.push(v);
     }
@@ -704,10 +717,17 @@ export type CheckOptions = {
   buildGraph?: (options: BuildOptions) => ModuleGraph;
   rules?: readonly string[];
   modules?: readonly string[];
+  // Keeps a todo-matched violation in the report, marked `frozen: true`,
+  // instead of dropping it - a re-architecting agent can then read a
+  // module's frozen debt through the same --rule/--module filters as a
+  // live violation, without opening its todo JSON by hand.
+  frozen?: boolean;
 };
 
+// A frozen violation is real but already accepted as debt; it must never
+// flip the exit code back to failing on a project that todo already froze.
 export function hasBlockingViolations(result: CheckResult): boolean {
-  return result.violations.some((v) => v.rule !== "config-meaning");
+  return result.violations.some((v) => v.rule !== "config-meaning" && !v.frozen);
 }
 
 // Runs after the graph is built (module names depend on it) and before
@@ -900,6 +920,7 @@ export async function check(projectRoot: string, focusFile?: string, options: Ch
     configLocator,
     skipStaleCheckForRules: skipTypeLeak ? ["type-leak"] : [],
     focus,
+    includeFrozen: options.frozen,
   });
   const focused = focusFile === undefined ? result : filterToFile(result, focusFile);
   return applyFilters(focused, options);
@@ -912,6 +933,7 @@ export async function check(projectRoot: string, focusFile?: string, options: Ch
 function formatViolation(v: AnyViolation): string[] {
   const lines: string[] = [];
     lines.push(`[${v.rule}] ${v.path}:${v.line}:${v.column}`);
+    if (v.frozen) lines.push("  frozen: true");
     lines.push(`  ${v.evidence}`);
     if (v.rule === "config-meaning") {
       lines.push(`  tier: ${v.tier}`);
@@ -1170,7 +1192,7 @@ export function formatText(result: CheckResult): string {
   // first, not to run todo.
   if (result.violations.some((v) => v.rule === "uncovered-module")) {
     lines.push(`do: add each uncovered-module file to declaredModules or exclude in archstrict.config.ts, then run archstrict check`);
-  } else if (result.violations.some((v) => v.rule !== "config-meaning")) {
+  } else if (result.violations.some((v) => v.rule !== "config-meaning" && !v.frozen)) {
     lines.push(`do: archstrict todo`);
   }
   return lines.join("\n") + "\n";

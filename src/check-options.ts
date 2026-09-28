@@ -5,6 +5,7 @@ import { ReportError } from "./report-error.js";
 export type CheckArgv = {
   asJson: boolean;
   prove: boolean;
+  frozen: boolean;
   focusFile?: string;
   rules: string[];
   modules: string[];
@@ -16,6 +17,7 @@ export function parseCheckArgv(argv: readonly string[]): CheckArgv {
   const modules: string[] = [];
   let asJson = false;
   let prove = false;
+  let frozen = false;
 
   for (let index = 0; index < argv.length; index++) {
     const arg = argv[index]!;
@@ -23,6 +25,8 @@ export function parseCheckArgv(argv: readonly string[]): CheckArgv {
       asJson = true;
     } else if (arg === "--prove") {
       prove = true;
+    } else if (arg === "--frozen") {
+      frozen = true;
     } else if (arg === "--rule" || arg === "--module") {
       const value = argv[++index];
       if (value === undefined || value.startsWith("--")) {
@@ -39,5 +43,5 @@ export function parseCheckArgv(argv: readonly string[]): CheckArgv {
   if (positional.length > 1) {
     throw new ReportError("check takes at most one file", "archstrict check [file] [--rule <id>] [--module <name>]");
   }
-  return { asJson, prove, focusFile: positional[0], rules, modules };
+  return { asJson, prove, frozen, focusFile: positional[0], rules, modules };
 }
