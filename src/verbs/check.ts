@@ -5,7 +5,7 @@
 // normalized to one — `deprecated`'s two arrays (violations/suggestions)
 // flatten in here, not in each rule.
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { resolve } from "node:path";
+import { resolve, sep } from "node:path";
 import ts from "typescript";
 import { buildModuleGraphForRules, type ModuleGraph, type BuildOptions } from "../module-graph.js";
 import { assertEdgesShapeValid, assertGlobsSupported, assertSchemaVersion, describeShape, type Config } from "../config.js";
@@ -67,6 +67,15 @@ export type StaleTodoViolation = {
   evidence: string;
   because: string;
   do: string;
+  // The stale entry's OWN stored path, resolved to the real, absolute file
+  // it names (the importer, for public-surface-bypass/the constraint
+  // engine; a cycle's own arbitrary anchor edge; a type-leak's own
+  // surface). `filterToFile`'s own matching key for this one rule - not
+  // `path`, which is unconditionally the todo file itself - so a `check
+  // <file>`/`check <dir>` scoped to the file or directory that JUST had a
+  // frozen violation retired still surfaces the stale entry it created,
+  // reported at the todo file's own real line.
+  entryPath: string;
 };
 
 // Reported when a module configured to stay clean (config's `strict` list)
@@ -507,13 +516,34 @@ export function runRules(graph: ModuleGraph, config: Config, options: RunRulesOp
 // `realpathSync` per violation instead of `resolve` (a pure string op,
 // no filesystem call) measured at 3.4% of a whole `check` run on a
 // 23,000-file tree, almost all of it inside this one loop.
+//
+// `stale-todo` matches through its own `entryPath` instead of `path`: its
+// `path` is unconditionally the todo file itself (so the violation always
+// points a reader at the real line to edit), but the owner decided a
+// scoped `check` should still surface the exact moment an edit retires a
+// frozen violation - the file (or, for `check <dir>`, any file under the
+// directory) the STALE ENTRY ITSELF is about, not the file the report
+// happens to be written into. A directory target matches an `entryPath`
+// equal to it or nested under it (`target + sep` prefix); a file target
+// only ever matches by equality, since a file has no children to nest
+// anything under.
 export function filterToFile(result: CheckResult, file: string): CheckResult {
   const resolved = resolve(file);
   if (!existsSync(resolved)) {
     throw new ReportError(`check ${file}: no such file`, "archstrict check");
   }
   const target = realpathSync(resolved);
-  return { ...result, violations: result.violations.filter((v) => resolve(v.path) === target) };
+  const targetWithSep = target + sep;
+  return {
+    ...result,
+    violations: result.violations.filter((v) => {
+      if (v.rule === "stale-todo") {
+        const entryPath = resolve(v.entryPath);
+        return entryPath === target || entryPath.startsWith(targetWithSep);
+      }
+      return resolve(v.path) === target;
+    }),
+  };
 }
 
 function isFreezable(v: AnyViolation): v is AnyViolation & { todoModule: string } {
@@ -750,6 +780,7 @@ export function applyTodo(graph: ModuleGraph, config: Config, result: CheckResul
         evidence: `todo entry (${entry.rule}) no longer matches any violation`,
         because: "an unmatched todo entry hides nothing real; it must be pruned, not left behind",
         do: "archstrict todo",
+        entryPath: resolve(graph.rootDir, entry.path),
       }, config, locator, [{ pointer: declaredModulePointerForName(config, name), role: "governs" }]));
     }
   }
@@ -1018,6 +1049,7 @@ function formatViolation(v: AnyViolation): string[] {
     lines.push(`[${v.rule}] ${v.path}:${v.line}:${v.column}`);
     if (v.frozen) lines.push("  frozen: true");
     lines.push(`  ${v.evidence}`);
+    if (v.rule === "stale-todo") lines.push(`  entryPath: ${v.entryPath}`);
     if (v.rule === "config-meaning") {
       lines.push(`  tier: ${v.tier}`);
       if (v.skipped) lines.push("  skipped: true");

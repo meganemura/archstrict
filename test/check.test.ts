@@ -1308,13 +1308,14 @@ describe("check", () => {
     });
   });
 
-  // stale-todo now reports at the single archstrict.todo.json (its own
-  // entry's real line, todo-store.ts's own ParsedTodoFile.entryLocation),
-  // never at the module or file the entry is ABOUT - so a `check <file>`
-  // scoped to that module drops it via filterToFile, the same as any
-  // other violation whose own `path` doesn't resolve to the requested
-  // target. Only a plain, unscoped `check` still reports it.
-  test("check <file> reports no stale-todo for a broken cycle (filtered out); the full run reports it at the todo file's own line", async () => {
+  // stale-todo's own `path` (where a reader should go to fix it) is the
+  // single archstrict.todo.json, at its entry's real line - but a `check
+  // <file>` scoped to the file THE ENTRY ITSELF IS ABOUT (`entryPath`)
+  // still surfaces it: that's the exact moment an edit just retired a
+  // frozen violation, and telling the agent "run archstrict todo to prune
+  // this" right then is useful. `filterToFile` matches a stale-todo
+  // violation through `entryPath`, never through `path`.
+  test("check <file> surfaces stale-todo for the file whose frozen cycle was just broken, reported at the todo file's own line", async () => {
     await withTempProject(async (root) => {
       mkdirSync(join(root, "src"), { recursive: true });
       writeFileSync(join(root, "src", "a.ts"), 'import "./b.js";\nexport const a = 1;\n');
@@ -1346,19 +1347,26 @@ describe("check", () => {
       expect(stale).toBeDefined();
       expect(stale!.path).toBe(join(realpathSync(root), "archstrict.todo.json"));
       expect(stale!.line).toBeGreaterThan(0);
+      expect(stale!.entryPath).toBe(realpathSync(aPath));
       expect(full.todo).toBe(0);
 
       const after = await check(root, aPath);
       expect(after.violations.some((v) => v.rule === "cycle")).toBe(false);
-      expect(after.violations.some((v) => v.rule === "stale-todo")).toBe(false); // reported only at the todo file, dropped by filterToFile
+      const scopedStale = after.violations.find((v) => v.rule === "stale-todo");
+      expect(scopedStale).toBeDefined();
+      expect(scopedStale!.path).toBe(join(realpathSync(root), "archstrict.todo.json")); // still points at the todo file, not aPath
       expect(after.violations).toEqual(filterToFile(full, aPath).violations);
     });
   });
 
-  // Same reasoning as the cycle test above, for a directory-scoped check:
-  // clean-module-has-todo's/stale-todo's own `path` is the todo file too,
-  // never the module's directory, so a directory focus drops it as well.
-  test("check <a module's directory> reports no stale-todo (filtered out); the full run does", async () => {
+  // A directory-scoped check matches the same way, through `entryPath`
+  // containment: the frozen entry here is a public-surface-bypass filed
+  // under module "shared", but recorded at the IMPORTER's own path
+  // ("src/app/index.ts" - public-surface.ts's own comment on why). A
+  // `check <dir>` on "shared" itself (the module the debt was ABOUT)
+  // therefore does NOT surface it - the entry's own file lives under
+  // "app" - and a `check <dir>` on "app" (the module the debt was IN) does.
+  test("check <dir> surfaces stale-todo only for the directory containing the entry's own file, not the module the debt was about", async () => {
     await withTempProject(async (root) => {
       mkdirSync(join(root, "src", "shared"), { recursive: true });
       mkdirSync(join(root, "src", "app"), { recursive: true });
@@ -1379,9 +1387,15 @@ describe("check", () => {
       const full = await check(root);
       expect(full.violations.some((v) => v.rule === "stale-todo")).toBe(true);
 
-      const dirScoped = await check(root, join(root, "src", "shared"));
-      expect(dirScoped.violations.some((v) => v.rule === "stale-todo")).toBe(false);
-      expect(dirScoped.violations).toEqual(filterToFile(full, join(root, "src", "shared")).violations);
+      const sharedScoped = await check(root, join(root, "src", "shared"));
+      expect(sharedScoped.violations.some((v) => v.rule === "stale-todo")).toBe(false);
+      expect(sharedScoped.violations).toEqual(filterToFile(full, join(root, "src", "shared")).violations);
+
+      const appScoped = await check(root, join(root, "src", "app"));
+      const scopedStale = appScoped.violations.find((v) => v.rule === "stale-todo");
+      expect(scopedStale).toBeDefined();
+      expect(scopedStale!.entryPath).toBe(realpathSync(join(root, "src", "app", "index.ts")));
+      expect(appScoped.violations).toEqual(filterToFile(full, join(root, "src", "app")).violations);
     });
   });
 
