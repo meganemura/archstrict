@@ -303,7 +303,7 @@ export function detectTypeLeaks(
     }
   }
 
-  // Walks every type reachable from `type`'s own shape: its properties,
+  // Walks every type reachable from `type`'s own shape: its base types, its properties,
   // its index signatures' value types, its own type arguments if it's a
   // generic type reference (Promise<Internal>, Map<K, Internal>,
   // Array<Internal> - the wrapper's own properties don't structurally
@@ -346,6 +346,14 @@ export function detectTypeLeaks(
       }
     }
 
+    if ((type.flags & ts.TypeFlags.Object) !== 0 &&
+        ((type as ts.ObjectType).objectFlags & ts.ObjectFlags.ClassOrInterface) !== 0) {
+      for (const baseType of checker.getBaseTypes(type as ts.InterfaceType) ?? []) {
+        checkType(baseType, exportedAs, via, position, seen);
+        walkStructural(baseType, exportedAs, via, position, depth - 1, seen);
+      }
+    }
+
     for (const prop of checker.getPropertiesOfType(type)) {
       const decl = prop.valueDeclaration ?? prop.getDeclarations()?.[0];
       if (decl === undefined) continue;
@@ -357,6 +365,25 @@ export function detectTypeLeaks(
     for (const indexInfo of checker.getIndexInfosOfType(type)) {
       checkType(indexInfo.type, exportedAs, via, position, seen);
       walkStructural(indexInfo.type, exportedAs, via, position, depth - 1, seen);
+    }
+  }
+
+  function walkSignatures(
+    type: ts.Type,
+    exportedAs: string,
+    position: { line: number; column: number },
+  ): void {
+    const signatures = [...type.getCallSignatures(), ...type.getConstructSignatures()];
+    for (const sig of signatures) {
+      const sigDecl = sig.getDeclaration();
+      const hasExplicitReturnType = sigDecl !== undefined && ts.isFunctionLike(sigDecl) && sigDecl.type !== undefined;
+      const returnType = checker.getReturnTypeOfSignature(sig);
+      const via: Via = hasExplicitReturnType ? "structural" : "inferred-return";
+      // The return type itself may be internal, while the structural walk
+      // only inspects the return type's components.
+      const returnSeen = new Set<ts.Type>();
+      checkType(returnType, exportedAs, via, position, returnSeen);
+      walkStructural(returnType, exportedAs, via, position, 2, returnSeen);
     }
   }
 
@@ -405,21 +432,22 @@ export function detectTypeLeaks(
       continue;
     }
 
+    // A plain exported binding and `export default <expression>` expose
+    // their value type directly. They have no signature for the branch below.
+    if (ts.isVariableDeclaration(resolvedDecl) || ts.isBindingElement(resolvedDecl) ||
+        ts.isExportAssignment(resolvedDecl)) {
+      const valueType = checker.getTypeOfSymbolAtLocation(resolvedSymbol, resolvedDecl);
+      const valueSeen = new Set<ts.Type>();
+      checkType(valueType, symbol.name, "structural", position, valueSeen);
+      walkStructural(valueType, symbol.name, "structural", position, 3, valueSeen);
+      // A function-valued binding exposes its signature through the value type.
+      walkSignatures(valueType, symbol.name, position);
+      continue;
+    }
+
     // Functions and classes: inspect call/construct signatures' return types.
     const symbolType = checker.getTypeOfSymbolAtLocation(resolvedSymbol, resolvedDecl);
-    const signatures = [...symbolType.getCallSignatures(), ...symbolType.getConstructSignatures()];
-    for (const sig of signatures) {
-      const sigDecl = sig.getDeclaration();
-      const hasExplicitReturnType = sigDecl !== undefined && ts.isFunctionLike(sigDecl) && sigDecl.type !== undefined;
-      const returnType = checker.getReturnTypeOfSignature(sig);
-      const via: Via = hasExplicitReturnType ? "structural" : "inferred-return";
-      // The return type itself may BE an internal declaration, not
-      // merely contain one nested in a property - walkStructural only
-      // inspects a type's own properties, never the type itself.
-      const returnSeen = new Set<ts.Type>();
-      checkType(returnType, symbol.name, via, position, returnSeen);
-      walkStructural(returnType, symbol.name, via, position, 2, returnSeen);
-    }
+    walkSignatures(symbolType, symbol.name, position);
   }
 
   return dedupe(leaks);

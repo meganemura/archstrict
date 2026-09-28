@@ -8,6 +8,10 @@ import { buildModuleGraph } from "../src/module-graph.js";
 import { checkTypeLeaks } from "../src/rules/type-leak.js";
 
 const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), "fixtures/type-leak");
+const VALUES_AND_BASES_FIXTURE = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "fixtures/type-leak-values-and-bases",
+);
 const declaredModules = [{ name: "m", glob: "src/m/**" }];
 
 describe("checkTypeLeaks", () => {
@@ -57,6 +61,54 @@ describe("checkTypeLeaks", () => {
     const graph = buildModuleGraph({ projectRoot: FIXTURE, declaredModules, surface: "nonexistent.ts" });
     expect(checkTypeLeaks(graph)).toHaveLength(0);
     expect(graph.typeLeaksForFocus("all")).toHaveLength(0);
+  });
+});
+
+describe("checkTypeLeaks (exported values and base types)", () => {
+  test("reports inferred value types and unnamed interface and class bases", () => {
+    const graph = buildModuleGraph({
+      projectRoot: VALUES_AND_BASES_FIXTURE,
+      declaredModules,
+      surface: "index.ts",
+    });
+    const violations = checkTypeLeaks(graph);
+
+    expect(violations).toHaveLength(2);
+    const byType = new Map(violations.map((violation) => [violation.leak?.internalType, violation]));
+    expect(byType.get("Secret")?.leak?.exportedAs).toEqual([
+      "Wrapper",
+      "config",
+      "default",
+      "factory",
+      "legacyConfig",
+      "mutableConfig",
+    ]);
+    expect(byType.get("SecretBase")?.leak?.exportedAs).toEqual(["Derived"]);
+  });
+
+  test("ignores primitive inferred values and base types exported by name", () => {
+    const graph = buildModuleGraph({
+      projectRoot: VALUES_AND_BASES_FIXTURE,
+      declaredModules,
+      surface: "index.ts",
+    });
+    const evidence = checkTypeLeaks(graph).map((violation) => violation.evidence).join("\n");
+
+    expect(evidence).not.toContain("primitive");
+    expect(evidence).not.toContain("publicConfig");
+    expect(evidence).not.toContain("PublicWrapper");
+    expect(evidence).not.toContain("PublicDerived");
+  });
+
+  test("a scoped surface check equals the full check", async () => {
+    const full = await check(VALUES_AND_BASES_FIXTURE);
+    const scoped = await check(
+      VALUES_AND_BASES_FIXTURE,
+      join(VALUES_AND_BASES_FIXTURE, "src/m/index.ts"),
+    );
+
+    expect(scoped.violations.filter((violation) => violation.rule === "type-leak"))
+      .toEqual(full.violations.filter((violation) => violation.rule === "type-leak"));
   });
 });
 

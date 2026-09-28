@@ -177,3 +177,60 @@ export interface Wrapper { publicValue: ${publicType}; privateValue: ${hiddenTyp
     } finally { rmSync(root, { recursive: true, force: true }); }
   }, { testCases: 25 });
 });
+
+test("exporting a value or base type by name removes its generated leak", () => {
+  hegel.test(tc => {
+    const shape = tc.draw(gs.sampledFrom([
+      {
+        name: "const",
+        declaration: "export interface Secret { hidden: boolean; }",
+        factory: "\nexport function makeSecret(): Secret { return { hidden: true }; }",
+        imports: 'import { makeSecret } from "./internal.js";',
+        exposed: "export const exposed = makeSecret();",
+      },
+      {
+        name: "default",
+        declaration: "export interface Secret { hidden: boolean; }",
+        factory: "\nexport function makeSecret(): Secret { return { hidden: true }; }",
+        imports: 'import { makeSecret } from "./internal.js";',
+        exposed: "export default makeSecret();",
+      },
+      {
+        name: "interface",
+        declaration: "export interface Secret { hidden: boolean; }",
+        factory: "",
+        imports: 'import { Secret } from "./internal.js";',
+        exposed: "export interface Exposed extends Secret {}",
+      },
+      {
+        name: "class",
+        declaration: "export class Secret { hidden = true; }",
+        factory: "",
+        imports: 'import { Secret } from "./internal.js";',
+        exposed: "export class Exposed extends Secret {}",
+      },
+    ] as const));
+    const root = mkdtempSync(join(tmpdir(), "archstrict-type-leak-name-"));
+    try {
+      const dir = join(root, "src/m");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(root, "tsconfig.json"), JSON.stringify({ compilerOptions: {
+        target: "esnext", module: "nodenext", moduleResolution: "nodenext", strict: true,
+      } }));
+
+      writeFileSync(join(dir, "internal.ts"), `${shape.declaration}${shape.factory}\n`);
+
+      const surface = `${shape.imports}\n${shape.exposed}\n`;
+      writeFileSync(join(dir, "index.ts"), surface);
+
+      const graphBefore = buildModuleGraph({ projectRoot: root, declaredModules, surface: "index.ts" });
+      assert.deepEqual(checkTypeLeaks(graphBefore).map(v => v.leak?.internalType), ["Secret"]);
+
+      writeFileSync(join(dir, "index.ts"), `${surface}export { Secret } from "./internal.js";\n`);
+      const graphAfter = buildModuleGraph({ projectRoot: root, declaredModules, surface: "index.ts" });
+      assert.deepEqual(checkTypeLeaks(graphAfter), []);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, { testCases: 25 });
+});
