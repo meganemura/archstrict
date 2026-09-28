@@ -210,6 +210,81 @@ describe("findMatchingEntry's migration path for a legacy public-surface-bypass 
   });
 });
 
+// A real project's todo files predate this fix: every entry in them was
+// frozen by a HEAD whose fingerprintOf used a plain rule+path+evidence
+// hash (cycle already excluded path even then), fed the SAME absolute
+// path a live violation itself carries at the time (todo.ts's own freeze
+// step, pre-fix, hashed straight from the live violation before
+// relativizing anything for storage). buildTodoIndex must recompute a
+// fresh, matching key from each such entry's own stored fields with
+// today's algorithm - not trust its stored `fingerprint` string, which is
+// permanently a hash of the OLD formula - so `check` reads them as still
+// matching with zero stale-todo findings, not just `todo` after a fresh
+// prune.
+describe("an old-format todo file keeps matching today's algorithm, for every rule whose formula changed", () => {
+  function preFixFingerprint(rule: string, path: string, evidence: string): string {
+    const key = rule === "cycle" ? `${rule}\n${evidence}` : `${rule}\n${path}\n${evidence}`;
+    return createHash("sha256").update(key).digest("hex").slice(0, 12);
+  }
+  const relativePath = (p: string) => p.replace("/root/", "");
+
+  test("cycle: already path-excluded pre-fix too, so an old entry matches unchanged", () => {
+    const evidence = "a -> b -> a";
+    const entry = { fingerprint: preFixFingerprint("cycle", "src/a/module.ts", evidence), rule: "cycle", path: "src/a/module.ts", evidence };
+    const index = todoStore.buildTodoIndex([entry]);
+    const live = { rule: "cycle", path: "/root/src/a/renamed.ts", evidence };
+    expect(todoStore.findMatchingEntry(index, live, relativePath)).toBe(entry);
+  });
+
+  test("type-leak: an old entry frozen with path included (pre-fix) still matches after a second surface file re-anchors path", () => {
+    const oldPath = "src/m/index.ts";
+    const evidence = "'Internal', declared in 'src/m/hidden.ts', is never exported by name from module 'm' - referenced by 'A'";
+    const entry = { fingerprint: preFixFingerprint("type-leak", oldPath, evidence), rule: "type-leak", path: oldPath, evidence };
+    const index = todoStore.buildTodoIndex([entry]);
+    const live = {
+      rule: "type-leak",
+      path: "/root/src/m/other-surface.ts", // re-anchored to a second surface file
+      evidence: "'Internal', declared in 'src/m/hidden.ts', is never exported by name from module 'm' - referenced by 'A', 'B'", // one more real caller
+    };
+    expect(todoStore.findMatchingEntry(index, live, relativePath)).toBe(entry);
+  });
+
+  test("tag-order: an old entry frozen with the full sequence in evidence still matches after an unrelated value is inserted", () => {
+    const path = "src/ui/widget.ts";
+    const evidence = "'./core.js' reaches 'layer:core' from 'layer:ui' (layer sequence: core -> ui)";
+    const entry = { fingerprint: preFixFingerprint("tag-order", path, evidence), rule: "tag-order", path, evidence };
+    const index = todoStore.buildTodoIndex([entry]);
+    const live = {
+      rule: "tag-order",
+      path: "/root/src/ui/widget.ts",
+      evidence: "'./core.js' reaches 'layer:core' from 'layer:ui' (layer sequence: core -> mid -> ui)",
+    };
+    expect(todoStore.findMatchingEntry(index, live, relativePath)).toBe(entry);
+  });
+});
+
+describe("buildTodoEntry's round trip: a freshly frozen entry always matches the live violation it came from", () => {
+  const RULE_IDS = ["cycle", "type-leak", "tag-order", "tag-boundary", "point-rule", "public-surface-bypass"] as const;
+
+  test("for every freezable rule id, findMatchingEntry(buildTodoIndex([entry]), v) recovers the entry it was built from", () => {
+    hegel.test(tc => {
+      const rule = tc.draw(gen.sampledFrom(RULE_IDS));
+      const path = tc.draw(gen.fromRegex("src/[a-z]{1,6}/[a-z]{1,6}\\.ts"));
+      const evidence = tc.draw(gen.fromRegex("[a-z ]{1,30}"));
+      const specifier = tc.draw(gen.fromRegex("\\.\\./[a-z]{1,6}\\.js"));
+      const target = tc.draw(gen.fromRegex("src/[a-z]{1,6}/[a-z]{1,6}\\.ts"));
+      const v = rule === "public-surface-bypass"
+        ? { rule, path, evidence, specifier, target }
+        : { rule, path, evidence };
+      const relativePath = (p: string) => p; // already relative - isolates the round trip from path normalization
+
+      const entry = todoStore.buildTodoEntry(v, relativePath);
+      const index = todoStore.buildTodoIndex([entry]);
+      expect(todoStore.findMatchingEntry(index, v, relativePath)).toBe(entry);
+    }, { testCases: 40 });
+  });
+});
+
 
 describe("readTodo's optional projectRoot normalization", () => {
   test("normalizes a legacy absolute path when projectRoot is given; leaves it untouched otherwise", () => {

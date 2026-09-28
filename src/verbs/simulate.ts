@@ -4,7 +4,7 @@ import { existsSync, realpathSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import ts from "typescript";
 import { buildModuleGraphForRules, DEFAULT_SURFACE, isEligibleSourceFile, isResolvableFile, prepareGraph, type ModuleGraph } from "../module-graph.js";
-import { fingerprintOf } from "../todo-store.js";
+import { fingerprintOf, relativizeForTodo } from "../todo-store.js";
 import { applyTodo, formatText, loadConfig, runRules, type AnyViolation, type CheckResult } from "./check.js";
 import { createConfigLocator } from "../config-pointer.js";
 
@@ -105,7 +105,14 @@ function evaluate(
       { configLocator: locator, focus, skipStaleCheckForRules: skipTypeLeak ? ["type-leak"] : [] },
     );
     graph.releaseProgram();
-    for (const violation of result.violations) violations.set(fingerprintOf(violation), violation);
+    // fingerprintOf needs a project-relative path (see todo-store.ts's own
+    // relativizeForTodo) - a live violation's own `path`/`target` is
+    // always absolute, so every key computed from one must relativize
+    // first, the same as todo.ts's freeze/prune and check.ts's own
+    // matching already do.
+    for (const violation of result.violations) {
+      violations.set(fingerprintOf(relativizeForTodo(violation, graph.relativePath)), violation);
+    }
   }
   return [...violations.values()];
 }
@@ -194,13 +201,20 @@ export async function simulate(
   }
   const afterLocator = createConfigLocator(afterConfig, proposedSource);
   const after = evaluate(graph, afterConfig, afterLocator, focusPaths);
-  const beforeFingerprints = new Set(before.map(fingerprintOf));
-  const afterFingerprints = new Set(after.map(fingerprintOf));
+  // Both graphs share the same (realpath'd) projectRoot, so `baseline`'s
+  // and `graph`'s own relativePath agree on every real file either could
+  // name - either one relativizes either side's violations correctly.
+  // fingerprintOf itself needs a project-relative path (see
+  // todo-store.ts's own relativizeForTodo); a live violation's own
+  // `path`/`target` is always absolute.
+  const keyOf = (v: AnyViolation) => fingerprintOf(relativizeForTodo(v, baseline.relativePath));
+  const beforeFingerprints = new Set(before.map(keyOf));
+  const afterFingerprints = new Set(after.map(keyOf));
   return {
     mode,
-    added: after.filter(violation => !beforeFingerprints.has(fingerprintOf(violation))),
-    resolved: before.filter(violation => !afterFingerprints.has(fingerprintOf(violation))),
-    unchangedCount: before.filter(violation => afterFingerprints.has(fingerprintOf(violation))).length,
+    added: after.filter(violation => !beforeFingerprints.has(keyOf(violation))),
+    resolved: before.filter(violation => !afterFingerprints.has(keyOf(violation))),
+    unchangedCount: before.filter(violation => afterFingerprints.has(keyOf(violation))).length,
   };
 }
 

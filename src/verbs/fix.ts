@@ -5,7 +5,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, relative, resolve, sep } from "node:path";
 import { prepareGraph, type ModuleGraph } from "../module-graph.js";
 import { createWarmGraph } from "../warm-graph.js";
-import { fingerprintOf } from "../todo-store.js";
+import { fingerprintOf, relativizeForTodo, type ViolationForTodo } from "../todo-store.js";
 import type { Violation } from "../rules/type-leak.js";
 import { loadConfig, runRules, applyTodo, filterToFile } from "./check.js";
 import { resolveWriteTarget, writeTarget } from "./agents.js";
@@ -43,6 +43,13 @@ export async function fix(projectRoot: string, file?: string, dryRun = false): P
   const options = { projectRoot, declaredModules: config.declaredModules!, exclude: config.exclude, surface: config.surface };
   const warm = createWarmGraph();
   let graph = warm.refresh(options);
+  // fingerprintOf needs a project-relative path (see todo-store.ts's own
+  // relativizeForTodo) - a live violation's own `path`/`target` is always
+  // absolute. Reads `graph` fresh on every call (not captured once): the
+  // graph is reassigned after each write below, but `options.projectRoot`
+  // never changes, so relativePath's own output stays consistent across
+  // the reassignment.
+  const keyOf = (v: ViolationForTodo) => fingerprintOf(relativizeForTodo(v, graph.relativePath));
   const notesSeen = new Set<string>();
   const evaluate = () => {
     const evaluated = applyTodo(
@@ -55,7 +62,7 @@ export async function fix(projectRoot: string, file?: string, dryRun = false): P
     return evaluated;
   };
   const baseline = evaluate();
-  const baselineKeys = new Set(baseline.violations.map(fingerprintOf));
+  const baselineKeys = new Set(baseline.violations.map(keyOf));
   const scoped = focus === undefined ? baseline : filterToFile(baseline, focus);
   const files = new Map<string, Violation[]>();
   for (const violation of scoped.violations) {
@@ -109,7 +116,7 @@ export async function fix(projectRoot: string, file?: string, dryRun = false): P
       const names = groups.get(specifier) ?? new Set<string>();
       names.add(leak.internalType);
       groups.set(specifier, names);
-      targeted.add(fingerprintOf(violation));
+      targeted.add(keyOf(violation));
     }
     const lines = [...groups.keys()].sort().map(specifier =>
       `export type { ${[...groups.get(specifier)!].sort().join(", ")} } from ${JSON.stringify(specifier)};`);
@@ -132,9 +139,9 @@ export async function fix(projectRoot: string, file?: string, dryRun = false): P
       writeTarget(target, updated);
       graph = warm.refresh(options);
       const after = evaluate();
-      if (after.violations.some(v => v.rule === "type-leak" && v.path === path && targeted.has(fingerprintOf(v)))) {
+      if (after.violations.some(v => v.rule === "type-leak" && v.path === path && targeted.has(keyOf(v)))) {
         failure = "verification still reports a targeted type leak";
-      } else if (after.violations.some(v => !baselineKeys.has(fingerprintOf(v)))) {
+      } else if (after.violations.some(v => !baselineKeys.has(keyOf(v)))) {
         failure = "verification reports a new violation";
       }
     } catch (error) {

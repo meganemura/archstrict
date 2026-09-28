@@ -645,4 +645,81 @@ describe("todo", () => {
       expect((await check(root)).violations).toHaveLength(0);
     });
   });
+
+  // The regression this covers: a real project's todo file predates this
+  // ticket's own fix. Its stored `fingerprint` is a hash of
+  // rule+ABSOLUTE-path+evidence (todo.ts's freeze step, before this fix,
+  // hashed the live violation before ever relativizing anything for
+  // storage) - type-leak's own formula changed (path is now excluded), so
+  // that stored hash can never again equal today's recompute, even though
+  // the entry's own stored `evidence` is byte-identical to the live
+  // violation's. `check` alone (no `todo` run in between) must still read
+  // it as matching, with zero stale-todo findings.
+  test("check reports zero stale-todo for a type-leak entry frozen with the pre-fix (path-including) formula", async () => {
+    await withTempProject(async (root) => {
+      mkdirSync(join(root, "src", "m"), { recursive: true });
+      writeFileSync(join(root, "src", "m", "internal.ts"), "export type Secret = { x: number };\n");
+      writeFileSync(
+        join(root, "src", "m", "public.ts"),
+        'import type { Secret } from "./internal.js";\nexport function get(): Secret { return { x: 1 }; }\n',
+      );
+      writeFileSync(join(root, "archstrict.config.ts"), `export default ${JSON.stringify({
+        declaredModules: [{ name: "m", glob: "src/m/**", surface: "public.ts" }],
+        exclude: ["archstrict.config.ts"],
+        because: "test",
+      })};`);
+
+      const before = await check(root);
+      const leak = before.violations.find((v) => v.rule === "type-leak");
+      expect(leak).toBeDefined();
+
+      const preFixFingerprint = createHash("sha256")
+        .update(`type-leak\n${leak!.path}\n${leak!.evidence}`)
+        .digest("hex").slice(0, 12);
+      writeFileSync(
+        join(root, "src", "m", "archstrict.todo.json"),
+        JSON.stringify({
+          entries: [{ fingerprint: preFixFingerprint, rule: "type-leak", path: "src/m/public.ts", evidence: leak!.evidence }],
+        }, null, 2),
+      );
+
+      const after = await check(root);
+      expect(after.violations).toHaveLength(0);
+      expect(after.todo).toBe(1);
+    });
+  });
+
+  test("check reports zero stale-todo for a tag-order entry frozen with the pre-fix (full-sequence-evidence) formula", async () => {
+    await withTempProject(async (root) => {
+      mkdirSync(join(root, "src", "core"), { recursive: true });
+      mkdirSync(join(root, "src", "ui"), { recursive: true });
+      writeFileSync(join(root, "src", "core", "a.ts"), 'import { b } from "../ui/b.js";\nexport const a = b;\n');
+      writeFileSync(join(root, "src", "ui", "b.ts"), "export const b = 1;\n");
+      writeFileSync(join(root, "archstrict.config.ts"), `export default ${JSON.stringify({
+        declaredModules: [{ name: "all", glob: "src/**", surface: "index.ts" }],
+        classifyByDirectoryName: { tagNamespace: "layer", names: ["core", "ui"] },
+        edges: { order: [{ tagNamespace: "layer", sequence: { "": ["core", "ui"] }, because: "core stays innermost" }] },
+        exclude: ["archstrict.config.ts"],
+        because: "test",
+      })};`);
+
+      const before = await check(root);
+      const violation = before.violations.find((v) => v.rule === "tag-order");
+      expect(violation).toBeDefined();
+
+      const preFixFingerprint = createHash("sha256")
+        .update(`tag-order\n${violation!.path}\n${violation!.evidence}`)
+        .digest("hex").slice(0, 12);
+      writeFileSync(
+        join(root, "src", "archstrict.todo.json"),
+        JSON.stringify({
+          entries: [{ fingerprint: preFixFingerprint, rule: "tag-order", path: "src/core/a.ts", evidence: violation!.evidence }],
+        }, null, 2),
+      );
+
+      const after = await check(root);
+      expect(after.violations).toHaveLength(0);
+      expect(after.todo).toBe(1);
+    });
+  });
 });

@@ -20,8 +20,8 @@ export type TodoEntry = {
   evidence: string;
   // public-surface-bypass's own identity fields (see Violation's own
   // comment in rules/public-surface.ts) - undefined on an entry frozen
-  // before this field existed. entryMatches's own comment covers how an
-  // entry missing these still matches a live violation.
+  // before this field existed. findMatchingEntry's own comment covers how
+  // an entry missing these still matches a live violation.
   specifier?: string;
   target?: string;
 };
@@ -112,6 +112,23 @@ export type ViolationForTodo = {
   target?: string;
 };
 
+// `path`/`target` MUST be project-relative before either reaches
+// fingerprintOf - never the raw, absolute form a live violation's own
+// `path`/`target` field actually holds. An absolute path is machine- and
+// checkout-specific (a different clone, a different CI runner, even the
+// same machine's own `/tmp` vs `/private/tmp`), so baking one into a key
+// that gets compared across process runs - the whole point of a todo file
+// - would silently stop matching the moment either side ran somewhere
+// else. Every caller (todo.ts's freeze/prune, check.ts's own matching,
+// simulate.ts's and fix.ts's live-vs-live diffing) relativizes through
+// this one function rather than repeating the "only if target is present"
+// check inline.
+export function relativizeForTodo<T extends ViolationForTodo>(v: T, relativePath: ProjectRelativePath): T {
+  return v.target === undefined
+    ? { ...v, path: relativePath(v.path) }
+    : { ...v, path: relativePath(v.path), target: relativePath(v.target) };
+}
+
 // public-surface-bypass's own evidence names the target module and
 // whether THAT module has a surface - true facts, but ones that read
 // differently the moment this bypass's own target module gains or loses
@@ -167,7 +184,22 @@ export function buildTodoIndex(entries: readonly TodoEntry[]): TodoIndex {
   const byFingerprint = new Map<string, TodoEntry>();
   const byLegacyBypassKey = new Map<string, TodoEntry>();
   for (const entry of entries) {
-    byFingerprint.set(entry.fingerprint, entry);
+    // Keyed by a FRESH recompute from the entry's own stored fields
+    // (already project-relative - readTodo normalizes a legacy absolute
+    // one before this ever runs), not by the entry's own stored
+    // `fingerprint` string: that string is whatever algorithm was current
+    // when the entry was frozen, and matching against today's live
+    // violations needs today's algorithm. A rule whose formula hasn't
+    // changed recomputes to the exact same value it always had; a rule
+    // whose formula changed (type-leak's own path exclusion, tag-order's
+    // own sequence-display exclusion) recomputes to the value it always
+    // should have had, with no rule-specific migration needed at all -
+    // stableEvidence is a pure function of the evidence text alone,
+    // unaffected by which archstrict version produced it. Only
+    // public-surface-bypass has a real pre-migration format (no stored
+    // specifier/target at all, not just a different formula over the same
+    // fields), which is what byLegacyBypassKey is for.
+    byFingerprint.set(fingerprintOf(entry), entry);
     if (entry.rule === "public-surface-bypass" && entry.specifier === undefined) {
       const specifier = parseSpecifierFromLegacyBypassEvidence(entry.evidence);
       if (specifier !== undefined) byLegacyBypassKey.set(`${entry.path}\n${specifier}`, entry);
@@ -180,22 +212,40 @@ export const EMPTY_TODO_INDEX: TodoIndex = { byFingerprint: new Map(), byLegacyB
 
 // The one place check.ts/todo.ts ask "does some entry in this index still
 // name this live violation" - a fingerprint lookup first (covers every
-// rule, and a public-surface-bypass entry frozen under the current
-// scheme), falling back to the legacy (path, specifier) index only for a
+// rule, recomputed identically on both sides - see buildTodoIndex's own
+// comment), falling back to the legacy (path, specifier) index only for a
 // public-surface-bypass violation, since that's the only rule with a
-// recorded pre-migration format at all. `relativePath` normalizes the
-// live violation's own (absolute) importer path to the same
-// project-relative form entries are always stored in - needed only for
-// this fallback; the primary lookup never touches path text directly (it
-// was baked into the hash at freeze time, from the same live-violation
-// shape being looked up now).
+// recorded pre-migration format at all. `relativePath` puts `v`'s own
+// (absolute) path/target into the same project-relative form entries are
+// always stored in, for BOTH branches - the primary lookup needs this
+// exactly as much as the fallback does (fingerprintOf never relativizes
+// on its own; see relativizeForTodo's own comment for why a caller must).
 export function findMatchingEntry(index: TodoIndex, v: ViolationForTodo, relativePath: ProjectRelativePath): TodoEntry | undefined {
-  const exact = index.byFingerprint.get(fingerprintOf(v));
+  const relativized = relativizeForTodo(v, relativePath);
+  const exact = index.byFingerprint.get(fingerprintOf(relativized));
   if (exact !== undefined) return exact;
-  if (v.rule !== "public-surface-bypass") return undefined;
-  const identity = bypassIdentity(v);
+  if (relativized.rule !== "public-surface-bypass") return undefined;
+  const identity = bypassIdentity(relativized);
   if (identity === undefined) return undefined;
-  return index.byLegacyBypassKey.get(`${relativePath(v.path)}\n${identity.specifier}`);
+  return index.byLegacyBypassKey.get(`${relativized.path}\n${identity.specifier}`);
+}
+
+// Builds the on-disk row for a live violation, always in today's shape:
+// `fingerprint` recomputed with today's algorithm (kept purely for a
+// human or an agent reading the JSON file directly, and for check.ts's
+// own stale-todo message - matching itself never trusts this stored
+// string; see buildTodoIndex's own comment), `path`/`target` relativized,
+// and specifier/target included only when the violation itself carries
+// them (public-surface-bypass). Used both to freeze a brand-new entry and
+// to refresh one that survived pruning, so a module's todo file is always
+// in the current format after either verb runs over it, not just at first
+// freeze.
+export function buildTodoEntry(v: ViolationForTodo, relativePath: ProjectRelativePath): TodoEntry {
+  const relativized = relativizeForTodo(v, relativePath);
+  const base = { fingerprint: fingerprintOf(relativized), rule: relativized.rule, path: relativized.path, evidence: relativized.evidence };
+  return relativized.specifier !== undefined && relativized.target !== undefined
+    ? { ...base, specifier: relativized.specifier, target: relativized.target }
+    : base;
 }
 
 function pathIsFile(path: string): boolean {

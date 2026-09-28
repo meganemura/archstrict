@@ -15,7 +15,7 @@ import { join } from "node:path";
 import { buildModuleGraphForRules, type ModuleGraph } from "../module-graph.js";
 import type { Config } from "../config.js";
 import { ReportError } from "../report-error.js";
-import { buildTodoIndex, findMatchingEntry, fingerprintOf, readTodo, writeTodo, type TodoEntry } from "../todo-store.js";
+import { buildTodoEntry, buildTodoIndex, findMatchingEntry, readTodo, writeTodo, type TodoEntry } from "../todo-store.js";
 import { loadConfig, runRules, type AnyViolation } from "./check.js";
 
 // Only a violation with its own todoModule can be frozen: rule 1 (public-
@@ -118,21 +118,7 @@ export function freezeOrPrune(
       // its violations simply stay reported by check, uncovered by any
       // todo. Every other module's current violations all freeze at once.
       const toFreeze = strict.has(name) ? [] : currentViolations;
-      const entries = toFreeze.map((v) => {
-        const base = {
-          fingerprint: fingerprintOf(v),
-          rule: v.rule,
-          path: graph.relativePath(v.path),
-          evidence: v.evidence,
-        };
-        // public-surface-bypass's own identity fields (todo-store.ts's own
-        // bypassIdentity) - stored alongside evidence so a later evidence
-        // rewording never needs a fresh migration parse for an entry
-        // frozen from here on.
-        return "specifier" in v && "target" in v
-          ? { ...base, specifier: v.specifier, target: graph.relativePath(v.target) }
-          : base;
-      });
+      const entries = toFreeze.map((v) => buildTodoEntry(v, graph.relativePath));
       if (entries.length > 0) {
         writeTodo(module.dir, entries);
         added += entries.length;
@@ -147,32 +133,29 @@ export function freezeOrPrune(
       // though: check reports any entry in a strict module's todo as its
       // own violation (clean-module-has-todo), so an entry that survives
       // pruning here still fails check until it's fixed.
+      //
+      // Every surviving entry is rewritten from the live violation that
+      // matched it (todo-store.ts's own buildTodoEntry), not kept
+      // byte-for-byte - self-healing for every rule, not just a legacy
+      // public-surface-bypass entry: a stored `fingerprint` computed under
+      // an older algorithm (this fix's own type-leak/tag-order change, or
+      // a future one) is refreshed the first time this module's todo is
+      // pruned again, the same way readTodo already self-heals a legacy
+      // absolute `path`. One entry's own object identity in `current`
+      // (not its content, which duplicate rows can share) decides which
+      // live violation refreshes it, so a genuine duplicate stored row -
+      // runRules can report the same edge twice - collapses to the one
+      // `buildTodoIndex`'s own map can still reference, instead of being
+      // rewritten twice over.
       const index = buildTodoIndex(current);
-      const stillMatched = new Set<TodoEntry>();
-      // A legacy public-surface-bypass entry (no stored specifier/target)
-      // that still matches, only through findMatchingEntry's own
-      // evidence-parse fallback, is rewritten here to the current format -
-      // self-healing, the same as readTodo already does for a legacy
-      // absolute `path` (see this function's own header comment on that).
-      // A later run then matches it by the primary fingerprint lookup and
-      // never parses its evidence again.
-      const upgraded = new Map<TodoEntry, TodoEntry>();
+      const matchedViolationByEntry = new Map<TodoEntry, AnyViolation & { todoModule: string }>();
       for (const v of currentViolations) {
         const entry = findMatchingEntry(index, v, graph.relativePath);
-        if (entry === undefined) continue;
-        stillMatched.add(entry);
-        if (entry.specifier === undefined && "specifier" in v && "target" in v) {
-          upgraded.set(entry, {
-            fingerprint: fingerprintOf(v),
-            rule: v.rule,
-            path: graph.relativePath(v.path),
-            evidence: v.evidence,
-            specifier: v.specifier,
-            target: graph.relativePath(v.target),
-          });
-        }
+        if (entry !== undefined && !matchedViolationByEntry.has(entry)) matchedViolationByEntry.set(entry, v);
       }
-      const kept = current.filter((e) => stillMatched.has(e)).map((e) => upgraded.get(e) ?? e);
+      const kept = current
+        .filter((e) => matchedViolationByEntry.has(e))
+        .map((e) => buildTodoEntry(matchedViolationByEntry.get(e)!, graph.relativePath));
       pruned += current.length - kept.length;
       writeTodo(module.dir, kept);
     }
