@@ -1,13 +1,14 @@
 // Responsibility: verify proposals against real filesystem imports and CLI output.
 // Boundary: temporary projects only; generated expectations come from the input adjacency matrix.
 import { test, expect } from "vitest";
+import assert from "node:assert/strict";
 import * as hegel from "@hegeldev/hegel";
 import * as gen from "@hegeldev/hegel/generators";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
-import { recommend, formatRecommendText } from "../src/verbs/recommend.js";
+import { recommend, formatRecommendText, minimalCoveringPrefixLength } from "../src/verbs/recommend.js";
 
 const cliPath = new URL("../dist/cli.js", import.meta.url).pathname;
 async function fixture(run: (root: string, put: (path: string, source: string) => void) => void | Promise<void>) {
@@ -43,6 +44,7 @@ test("exact pairs, file counts, deduplicated classification, and bidirectional d
       { source: "role:b", targetNamespace: "role", deny: ["c"], because },
       { source: "role:c", targetNamespace: "role", deny: ["b"], because },
     ],
+    surfaceProposals: [],
   });
   const text = formatRecommendText(result);
   expect(text).toContain("3 modules; 2 candidates\na <-> c (2 files / 1 files)");
@@ -124,6 +126,7 @@ test("no config, a src/ layout with loose files: each loose file is its own modu
       { source: "role:one.ts", targetNamespace: "role", deny: ["two.ts"], because },
       { source: "role:two.ts", targetNamespace: "role", deny: ["one.ts"], because },
     ],
+    surfaceProposals: [],
   });
 }));
 
@@ -142,6 +145,7 @@ test("no config, a no-src layout: modules declare from the project root", async 
       { source: "role:cli.ts", targetNamespace: "role", deny: ["core"], because },
       { source: "role:core", targetNamespace: "role", deny: ["cli.ts"], because },
     ],
+    surfaceProposals: [],
   });
 }));
 
@@ -160,6 +164,7 @@ test("no config, a flat src/ holding only files: one module per file, none for t
       { source: "role:one.ts", targetNamespace: "role", deny: ["two.ts"], because },
       { source: "role:two.ts", targetNamespace: "role", deny: ["one.ts"], because },
     ],
+    surfaceProposals: [],
   });
 }));
 
@@ -168,7 +173,7 @@ test("custom glob proposals use the actual directory and zero candidates succeed
   const output = cli(root, "packages/*", "--json");
   expect(output.status).toBe(0);
   expect(JSON.parse(output.stdout)).toEqual({ modules: 1, candidates: 0, pairs: [],
-    proposedClassify: [{ glob: "packages/one/**", tags: ["role:one"] }], proposedAllowDeny: [] });
+    proposedClassify: [{ glob: "packages/one/**", tags: ["role:one"] }], proposedAllowDeny: [], surfaceProposals: [] });
 }));
 
 test("CLI rejects invalid arguments and discovery errors with exit one", () => fixture((root) => {
@@ -247,6 +252,7 @@ test("declared boundaries replace discovery and preserve their exact globs", asy
       { source: "role:bar", targetNamespace: "role", deny: ["foo"], because },
       { source: "role:foo", targetNamespace: "role", deny: ["bar"], because },
     ],
+    surfaceProposals: [],
   });
   expect(declared).not.toEqual(discovered);
   const output = cli(root, "--json");
@@ -270,3 +276,57 @@ test("CLI reports a config without declaredModules instead of using discovery", 
     do: `add 'declaredModules' to the default export in ${join(realpathSync(root), "archstrict.config.ts")}, then run archstrict check`,
   });
 }));
+
+test("proposes a ranked surface for a module with no public surface present, covering at least 80% of its real imports", async () => fixture(async (root, put) => {
+  put("src/app/one.ts", 'import "../shared/main.ts";\nexport const one = 1;\n');
+  put("src/app/two.ts", 'import "../shared/main.ts";\nexport const two = 1;\n');
+  put("src/app/three.ts", 'import "../shared/main.ts";\nexport const three = 1;\n');
+  put("src/app/four.ts", 'import "../shared/main.ts";\nexport const four = 1;\n');
+  put("src/other/entry.ts", 'import "../shared/other.ts";\nexport const entry = 1;\n');
+  put("src/shared/main.ts", "export const main = 1;\n");
+  put("src/shared/other.ts", "export const other = 1;\n");
+  put("src/shared/private.ts", "export const priv = 1;\n");
+  const result = await recommend(root);
+  expect(result.surfaceProposals).toHaveLength(1);
+  const proposal = result.surfaceProposals[0]!;
+  expect(proposal.module).toBe("shared");
+  expect(proposal.candidates).toEqual([
+    { file: "main.ts", importers: 4 },
+    { file: "other.ts", importers: 1 },
+  ]);
+  expect(proposal.totalImports).toBe(5);
+  expect(proposal.proposedSurface).toEqual(["main.ts"]);
+  expect(proposal.coveredImports).toBe(4);
+  expect(proposal.remainingImports).toBe(1);
+  expect(proposal.choices).toHaveLength(3);
+  const text = formatRecommendText(result);
+  expect(text).toContain("proposed surfaces (no public surface file present today):");
+  expect(text).toContain('shared: ["main.ts"] covers 4 of 5 bypasses, 1 remaining');
+}));
+
+test("no surface proposal for a module nothing outside it imports, or one that already has a surface", async () => fixture(async (root, put) => {
+  put("src/app/index.ts", 'import "../shared/index.ts";\nexport const app = 1;\n');
+  put("src/shared/index.ts", "export const shared = 1;\n");
+  put("src/lonely/private.ts", "export const priv = 1;\n");
+  const result = await recommend(root);
+  expect(result.surfaceProposals).toEqual([]);
+}));
+
+test("minimalCoveringPrefixLength: the chosen prefix covers at least the threshold, and no smaller prefix does", async () => {
+  await hegel.testAsync(tc => {
+    const raw = tc.draw(gen.arrays(gen.integers({ minValue: 0, maxValue: 50 }), { minSize: 0, maxSize: 12 }));
+    const counts = [...raw].sort((a, b) => b - a);
+    const total = counts.reduce((sum, c) => sum + c, 0);
+    const k = minimalCoveringPrefixLength(counts);
+    const covered = counts.slice(0, k).reduce((sum, c) => sum + c, 0);
+    if (total === 0) {
+      assert.equal(k, 0);
+      return;
+    }
+    assert.ok(covered * 5 >= total * 4, `prefix of ${k} covers ${covered} of ${total}, below 80%`);
+    if (k > 0) {
+      const shortCovered = counts.slice(0, k - 1).reduce((sum, c) => sum + c, 0);
+      assert.ok(shortCovered * 5 < total * 4, `a prefix of only ${k - 1} already reaches 80% of ${total}`);
+    }
+  }, { testCases: 200 });
+});

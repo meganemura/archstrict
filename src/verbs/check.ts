@@ -979,13 +979,11 @@ function surfaceLessNote(result: CheckResult): string[] {
   return [
     `note: ${missingCount} of ${bypasses.length} public-surface-bypass violations target modules without a public surface`,
     "do: archstrict todo # freeze them for now",
-    // node_modules/archstrict/..., not a repo-relative path: this text ships
-    // to every adopting project, whose own cwd has no skills/ directory of
-    // its own (agents.ts's own doc pointer uses the same installed path).
-    // `archstrict recommend` doesn't propose a surface yet, so naming it
-    // alone here would send the reader to a command that can't help.
-    "do: read the 'surface' field in node_modules/archstrict/skills/archstrict/references/config.md, then name each module's real entry file (archstrict recommend will propose this directly, once it supports surfaces)",
-    "do: add index.ts files (or whatever archstrict.config.ts's surface names) that export what other modules use",
+    // `archstrict recommend --json` now proposes a ranked surface per
+    // surface-less module directly from the real import graph
+    // (`surfaceProposals`), instead of sending the reader to config.md to
+    // guess one by hand.
+    "do: archstrict recommend --json # read surfaceProposals for a ranked surface per module, from its own real importers",
   ];
 }
 
