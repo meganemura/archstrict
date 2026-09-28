@@ -54,16 +54,19 @@ order, is left out rather than forced into a proposal.
 
 One entry per declared module with no public surface file present today and
 at least one real external importer - complete in JSON; text shows the top
-5 and a "+N more" note past that. `candidates` ranks every file other
-modules actually import from it, densest first, by distinct importer count
-- complete in JSON, truncated to the top 5 in text. `proposedSurface` is
-the smallest ranked prefix covering at least 80% of the module's own real
-imports (`coveredImports` of `totalImports`, `remainingImports` left over),
-offered as a `surface` value to paste into that module's `declaredModules`
-entry. `choices` gives the same alternative every surface-less module
-finding does: set the proposed `surface`, add a barrel file naming a
-different real entry, or leave the module entirely private and freeze its
-bypasses with `archstrict todo`.
+5 modules and a "+N more" note past that. `candidates` ranks every file
+other modules actually import from it, densest first, by distinct importer
+count - complete in JSON, truncated to the top 3 per shown module in text.
+`proposedSurface` is the smallest ranked prefix covering at least 80% of the
+module's own real imports (`coveredImports` of `totalImports`,
+`remainingImports` left over), offered as a `surface` value to paste into
+that module's `declaredModules` entry. `choices` gives the same alternative
+every surface-less module finding does: set the proposed `surface`, add a
+barrel file naming a different real entry, or leave the module entirely
+private and freeze its bypasses with `archstrict todo` - text prints these
+three choices once for the whole section, then one module-specific `do:`
+line per shown module (the `surface` edit); `choices` itself stays complete
+per module in JSON.
 
 ## Reading a proposal before pasting it
 

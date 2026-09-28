@@ -815,13 +815,14 @@ export async function recommend(
   };
 }
 
-// Text truncates a proposal's own candidate list to its top 5 (JSON keeps
-// every candidate) - the same "bounded text, complete JSON" split
-// check.ts's own grouped text follows for a large violation list. The
-// same cap bounds how many surface-less modules and how many name lists
-// inside an evidence line get printed - a project with dozens of modules
-// must not turn one `recommend` run's own text into hundreds of lines;
-// `--json` always carries every module, every candidate, every name.
+// Bounds how many surface-less modules and how many name lists inside an
+// evidence line get printed (JSON keeps every module and every name) - the
+// same "bounded text, complete JSON" split check.ts's own grouped text
+// follows for a large violation list. A surface proposal's own candidate
+// files use the tighter SURFACE_CANDIDATE_TEXT_CAP below instead: a
+// project with dozens of modules must not turn one `recommend` run's own
+// text into hundreds of lines; `--json` always carries every module,
+// every candidate, every name.
 const TEXT_LIST_CAP = 5;
 
 // Truncates a comma-separated list to its first `TEXT_LIST_CAP` items,
@@ -846,6 +847,29 @@ function capEvidenceLineForText(line: string): string {
   return prefix + formatCappedList(line.slice(prefix.length).split(", "));
 }
 
+// public-entry-only's own evidence repeats one line per surface-less
+// module - exactly what "proposed surfaces" below already prints in full,
+// with real candidate files and per-module do: lines the pattern's own
+// evidence never carries. Text collapses it to three counts (modules
+// without a surface, bypasses retired in total, bypasses remaining) and a
+// pointer to where the detail already lives; --json keeps the full
+// per-module evidence this summary is computed from, unchanged.
+function summarizePublicEntryOnlyForText(surfaceProposals: readonly SurfaceProposal[]): string[] {
+  const totalCovered = surfaceProposals.reduce((sum, p) => sum + p.coveredImports, 0);
+  const totalRemaining = surfaceProposals.reduce((sum, p) => sum + p.remainingImports, 0);
+  return [
+    `    ${surfaceProposals.length} module(s) have no public surface today; naming the proposed surfaces below would retire ${totalCovered} bypass(es), leaving ${totalRemaining}`,
+    "    see \"proposed surfaces\" below for the per-module detail",
+  ];
+}
+
+// Tighter than TEXT_LIST_CAP: a surface proposal's own candidates are
+// already ranked densest-first (proposeSurfaces's own sort), so the first
+// 3 carry most of the coverage story a reader needs, and this list repeats
+// once per shown module (up to TEXT_LIST_CAP of them) - the main line cost
+// in this section. JSON keeps every candidate regardless.
+const SURFACE_CANDIDATE_TEXT_CAP = 3;
+
 export function formatRecommendText(result: RecommendResult): string {
   const quote = JSON.stringify;
   const shownSurfaceProposals = result.surfaceProposals.slice(0, TEXT_LIST_CAP);
@@ -855,17 +879,25 @@ export function formatRecommendText(result: RecommendResult): string {
       "", "pattern proposals, ranked by evidence:",
       ...result.patternProposals.flatMap(proposal => [
         `  ${proposal.pattern} (support ${(proposal.support * 100).toFixed(0)}%, would add ${proposal.addedViolations} violation(s) today):`,
-        ...proposal.evidence.map(line => `    ${capEvidenceLineForText(line)}`),
+        ...(proposal.pattern === "public-entry-only"
+          ? summarizePublicEntryOnlyForText(result.surfaceProposals)
+          : proposal.evidence.map(line => `    ${capEvidenceLineForText(line)}`)),
         `  do: ${proposal.do}`,
       ]),
     ]),
     ...(result.surfaceProposals.length === 0 ? [] : [
       "", "proposed surfaces (no public surface file present today):",
+      // The three choices below apply the same way to every module in
+      // this section - printed once here instead of once per module (see
+      // proposeSurfaces's own `choices`, still complete in JSON).
+      "  do: set { name, ..., surface: [...] } in declaredModules, per module below, to retire its listed bypasses",
+      "  do: or add a barrel file re-exporting from a chosen entry file, and name that as the module's surface instead",
+      "  do: or leave a module entirely private and run archstrict todo to freeze its bypasses as debt instead",
       ...shownSurfaceProposals.flatMap(proposal => [
         `  ${proposal.module}: ${quote(proposal.proposedSurface)} covers ${proposal.coveredImports} of ${proposal.totalImports} bypasses, ${proposal.remainingImports} remaining`,
-        ...proposal.candidates.slice(0, TEXT_LIST_CAP).map(c => `    ${c.file} (${c.importers} importer(s))`),
-        ...(proposal.candidates.length > TEXT_LIST_CAP ? [`    ... ${proposal.candidates.length - TEXT_LIST_CAP} more candidate(s); see --json`] : []),
-        ...proposal.choices.map(choice => `  ${choice}`),
+        ...proposal.candidates.slice(0, SURFACE_CANDIDATE_TEXT_CAP).map(c => `    ${c.file} (${c.importers} importer(s))`),
+        ...(proposal.candidates.length > SURFACE_CANDIDATE_TEXT_CAP ? [`    ... ${proposal.candidates.length - SURFACE_CANDIDATE_TEXT_CAP} more candidate(s); see --json`] : []),
+        `  ${proposal.choices[0]}`,
       ]),
       ...(result.surfaceProposals.length > TEXT_LIST_CAP ? [`  ... ${result.surfaceProposals.length - TEXT_LIST_CAP} more surface-less module(s); see --json`] : []),
     ]),

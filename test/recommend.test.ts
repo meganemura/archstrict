@@ -218,9 +218,15 @@ test("proposes a ranked surface for a module with no public surface present, cov
   expect(text).toContain("proposed surfaces (no public surface file present today):");
   expect(text).toContain('shared: ["main.ts"] covers 4 of 5 bypasses, 1 remaining');
   // This module also has real evidence for the public-entry-only pattern.
+  // Its own evidence array stays per-module and complete (JSON never
+  // changes); only the formatted text collapses it to counts.
   const publicEntry = result.patternProposals.find(p => p.pattern === "public-entry-only");
   expect(publicEntry).toBeDefined();
   expect(publicEntry!.addedViolations).toBe(0);
+  expect(publicEntry!.evidence).toHaveLength(result.surfaceProposals.length);
+  expect(text).toContain("1 module(s) have no public surface today; naming the proposed surfaces below would retire 4 bypass(es), leaving 1");
+  expect(text).toContain('see "proposed surfaces" below for the per-module detail');
+  expect(text).not.toContain("'shared': [\"main.ts\"] covers");
 }));
 
 test("no surface proposal for a module nothing outside it imports, or one that already has a surface", async () => fixture(async (root, put) => {
@@ -361,9 +367,38 @@ test("text output stays within a bounded line budget on a 28-module project", as
   expect(result.patternProposals.length).toBeGreaterThan(0);
   expect(result.surfaceProposals.length).toBeGreaterThan(5); // more than the text cap, to exercise the "+N more" truncation
   const text = formatRecommendText(result);
-  // ~60 lines for 5 proposals is the design budget; 70 leaves headroom
-  // without hiding a real regression back toward hundreds of lines.
-  expect(text.split("\n").length).toBeLessThanOrEqual(70);
+  // Under 60 lines is the design budget for this project shape: 5 pattern
+  // proposals plus a summarized public-entry-only line and a
+  // once-per-section (not once-per-module) set of surface do: lines.
+  const lines = text.split("\n");
+  expect(lines.length).toBeLessThan(60);
+  // The three generic surface choices print once for the whole section,
+  // not once per shown module, even though 5 modules are shown.
+  expect(lines.filter(l => l.includes("add a barrel file")).length).toBe(1);
+  // Each shown module still gets its own module-specific declaredModules edit.
+  expect(lines.filter(l => l.includes('set { name: "')).length).toBe(5);
+  // No per-module public-entry-only evidence line survives into text.
+  expect(text).not.toMatch(/^\s+'svc\d/m);
+}));
+
+test("a surface proposal's own candidate list caps at 3 in text, complete in json", async () => fixture(async (root, put) => {
+  // 10 external modules import shared/one.ts (the densest candidate); one
+  // more external module imports the other 3 files once each - 4 real
+  // candidate files in total, over the 3-item text cap.
+  for (let i = 0; i < 10; i++) put(`src/ext${i}/index.ts`, `import "../shared/one.ts";\nexport const e${i} = ${i};\n`);
+  put("src/app/b.ts", 'import "../shared/two.ts";\nimport "../shared/three.ts";\nimport "../shared/four.ts";\nexport const b = 1;\n');
+  put("src/shared/one.ts", "export const one = 1;\n");
+  put("src/shared/two.ts", "export const two = 1;\n");
+  put("src/shared/three.ts", "export const three = 1;\n");
+  put("src/shared/four.ts", "export const four = 1;\n");
+  const result = await recommend(root);
+  const proposal = result.surfaceProposals.find(p => p.module === "shared")!;
+  expect(proposal).toBeDefined();
+  expect(proposal.candidates.length).toBeGreaterThan(3); // json keeps all 4 candidate files
+  const text = formatRecommendText(result);
+  expect(text).toContain("... 1 more candidate(s); see --json");
+  const oneLine = text.split("\n").find(l => l.includes("one.ts ("));
+  expect(oneLine).toBeDefined(); // the densest candidate survives the cap
 }));
 
 test("no app-over-library proposal when nothing in the tree names an app/cli area", async () => fixture(async (root, put) => {
