@@ -29,9 +29,14 @@ Each proposal carries:
   one reverse edge among otherwise-unanimous real edges reports well below
   1, not a bare pass/fail.
 - `evidence` - the real edge counts behind the proposal, in numbers (for
-  example "3 of 4 directed edges between them match this order").
+  example "3 of 4 directed edges between them match this order") - complete
+  in JSON; a name list past 5 entries truncates to "+N more" in text only.
 - `configFragment` - a pasteable `classify`/`edges` (or `declaredModules`)
-  snippet, with a `because` drawn from the same evidence.
+  snippet, with a `because` drawn from the same evidence. When one group
+  covers every module but a small, named few (app over library, a package
+  confined to one area, test code kept out of production), `classify` is
+  one catch-all `"**"` glob for the default tag plus one entry per named
+  module - not one entry per module on the default side.
 - `addedViolations` - how many violations of this proposal's own rule id
   the rule pipeline reports today, run in memory against the real graph.
   0 means no real edge violates it yet - not "safe to adopt blindly."
@@ -48,7 +53,8 @@ order, is left out rather than forced into a proposal.
 ## `surfaceProposals`
 
 One entry per declared module with no public surface file present today and
-at least one real external importer. `candidates` ranks every file other
+at least one real external importer - complete in JSON; text shows the top
+5 and a "+N more" note past that. `candidates` ranks every file other
 modules actually import from it, densest first, by distinct importer count
 - complete in JSON, truncated to the top 5 in text. `proposedSurface` is
 the smallest ranked prefix covering at least 80% of the module's own real

@@ -36,8 +36,11 @@ test("proposedClassify names every module, deduplicated, and empty directories a
   expect(result.proposedClassify).toEqual([
     { glob: "src/a/**", tags: ["role:a"] }, { glob: "src/b/**", tags: ["role:b"] }, { glob: "src/c/**", tags: ["role:c"] },
   ]);
+  // proposedClassify stays complete in JSON (asserted above); the text
+  // output never prints it - a project with many modules would turn one
+  // line per module into a block on its own, dwarfing everything else.
   const text = formatRecommendText(result);
-  expect(text).toContain('proposed classify:\n[\n  { glob: "src/a/**", tags: ["role:a"] },');
+  expect(text).not.toContain("proposed classify");
 }));
 
 // node_modules/.cache/archstrict/ is recommend's own persistent graph
@@ -328,6 +331,39 @@ test("app-over-library: an app area depending on the rest, with a small reverse,
   expect(proposal!.support).toBeCloseTo(5 / 7);
   expect(proposal!.evidence[0]).toBe("library -> app: 2 of 7 edges; app -> library: 5");
   expect(proposal!.configFragment).toContain('sequence: { "": ["lib","app"] }');
+  // app-over-library's own classify is a catch-all "lib" glob plus the
+  // one distinguished "app" glob, not one line per library module -
+  // real config, since classify.ts's most-specific-glob-wins already
+  // lets the app module's own longer glob override the catch-all.
+  expect(proposal!.configFragment).toContain('{ glob: "**", tags:');
+  expect((proposal!.configFragment.match(/glob:/g) ?? []).length).toBeLessThanOrEqual(2);
+}));
+
+test("text output stays within a bounded line budget on a 28-module project", async () => fixture(async (root, put) => {
+  // 1 app module importing 17 library modules (2 of which import back,
+  // the small reverse a real adoption has) and 10 surface-less service
+  // modules - 28 declared modules in total, several times over the
+  // 5-item text cap on every list this budget depends on.
+  put("src/app/main.ts", [
+    ...Array.from({ length: 17 }, (_, i) => `import "../lib${i}/index.ts";`),
+    ...Array.from({ length: 10 }, (_, i) => `import "../svc${i}/entry.ts";`),
+    "export const main = 1;",
+  ].join("\n") + "\n");
+  for (let i = 0; i < 17; i++) put(`src/lib${i}/index.ts`, `export const lib${i} = ${i};\n`);
+  put("src/lib0/back.ts", 'import "../app/main.ts";\nexport const back = 1;\n');
+  put("src/lib1/back.ts", 'import "../app/main.ts";\nexport const back = 1;\n');
+  for (let i = 0; i < 10; i++) {
+    put(`src/svc${i}/entry.ts`, `export const svc${i} = ${i};\n`);
+    put(`src/svc${i}/internal.ts`, `export const internal${i} = ${i};\n`);
+  }
+  const result = await recommend(root);
+  expect(result.modules).toBe(28);
+  expect(result.patternProposals.length).toBeGreaterThan(0);
+  expect(result.surfaceProposals.length).toBeGreaterThan(5); // more than the text cap, to exercise the "+N more" truncation
+  const text = formatRecommendText(result);
+  // ~60 lines for 5 proposals is the design budget; 70 leaves headroom
+  // without hiding a real regression back toward hundreds of lines.
+  expect(text.split("\n").length).toBeLessThanOrEqual(70);
 }));
 
 test("no app-over-library proposal when nothing in the tree names an app/cli area", async () => fixture(async (root, put) => {

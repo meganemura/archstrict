@@ -169,7 +169,31 @@ function countAddedViolations(graph: ModuleGraph, baseConfig: Config, proposedCo
   return proposed.violations.filter(v => v.rule === ruleId && !baseKeys.has(keyOf(v))).length;
 }
 
-const PROVE_RULES_DO = "read node_modules/archstrict/skills/archstrict/references/prove-rules.md, then inject one edge this rule should forbid, run archstrict check, and confirm it fires under this rule id before trusting a clean check";
+const PROVE_RULES_DO = "run archstrict simulate --json with a change set that adds one edge this rule should forbid, and confirm it fires; see node_modules/archstrict/skills/archstrict/references/prove-rules.md";
+
+// A classify block for two groups that between them cover every present
+// module: one broad catch-all glob for the larger, default-tagged group,
+// then each member of the smaller, distinguished group overriding it with
+// its own real glob. classify.ts's own most-specific-glob-wins already
+// picks a longer literal prefix over "**"'s empty one, so this tags every
+// file exactly as writing every module out by hand would - just far
+// fewer lines on a project where most modules land on the default side.
+// Only valid when the two groups are a true partition (nothing left
+// over): a file genuinely outside every declared module also matches
+// "**" and would gain the default tag it never had before - harmless for
+// every detector this is used by, since none of them scope a rule by
+// module coverage, only by this one classify namespace.
+function partitionClassify(
+  declaredModules: readonly { name: string; glob: string }[],
+  defaultTag: string,
+  distinguishedNames: readonly string[],
+  distinguishedTag: string,
+): { glob: string; tags: string[] }[] {
+  return [
+    { glob: "**", tags: [defaultTag] },
+    ...distinguishedNames.map(name => ({ glob: moduleGlob(declaredModules, name), tags: [distinguishedTag] })),
+  ];
+}
 
 // A general layered-order detector: it does not name a project's own
 // layer vocabulary (patterns.md's "app vs lib" and "layered order" are
@@ -407,10 +431,7 @@ function detectAppOverLibrary(
   if (forward === 0) return undefined; // no evidence an app area depends on a library area at all
   const total = forward + reverse;
   const ns = freeTagNamespace(baseConfig, "tier");
-  const classify = [
-    ...libNames.map(name => ({ glob: moduleGlob(declaredModules, name), tags: [`${ns}:lib`] })),
-    ...appNames.map(name => ({ glob: moduleGlob(declaredModules, name), tags: [`${ns}:app`] })),
-  ];
+  const classify = partitionClassify(declaredModules, `${ns}:lib`, appNames, `${ns}:app`);
   const because = `library -> app: ${reverse} of ${total} edges; app -> library: ${forward}`;
   const orderRule = { tagNamespace: ns, sequence: { "": ["lib", "app"] }, direction: "downward-only" as const, because };
   const proposedConfig: Config = {
@@ -485,12 +506,8 @@ function detectExternalPackageConfined(
   }
   candidates.sort((a, b) => b.edgeCount - a.edgeCount || a.name.localeCompare(b.name));
   return candidates.slice(0, EXTERNAL_PACKAGE_PROPOSAL_CAP).map(({ name, module, edgeCount }) => {
-    const restNames = modules.map(m => m.name).filter(n => n !== module);
     const ns = freeTagNamespace(baseConfig, "kind");
-    const classify = [
-      ...restNames.map(n => ({ glob: moduleGlob(declaredModules, n), tags: [`${ns}:rest`] })),
-      { glob: moduleGlob(declaredModules, module), tags: [`${ns}:confined`] },
-    ];
+    const classify = partitionClassify(declaredModules, `${ns}:rest`, [module], `${ns}:confined`);
     const because = `'${name}' is imported ${edgeCount} time(s), all from '${module}'; no other module imports it today`;
     const allowDenyRule = { source: `${ns}:rest`, targetNamespace: "pkg", deny: [name], because };
     const proposedConfig: Config = {
@@ -544,10 +561,7 @@ function detectTestCodeIsolation(
     const testToProd = edgesBetweenGroups(counts, [testName], prodNames);
     if (prodToTest > 0 || testToProd === 0) continue; // already reached from production, or no evidence it exercises any production module
     const ns = freeTagNamespace(baseConfig, "kind");
-    const classify = [
-      ...prodNames.map(n => ({ glob: moduleGlob(declaredModules, n), tags: [`${ns}:prod`] })),
-      { glob: moduleGlob(declaredModules, testName), tags: [`${ns}:test`] },
-    ];
+    const classify = partitionClassify(declaredModules, `${ns}:prod`, [testName], `${ns}:test`);
     const because = `'${testName}' is never imported by any of ${prodNames.length} production module(s) today; it imports ${testToProd} of them, real evidence it exercises production code`;
     const pointRule = { from: { tags: [`${ns}:prod`] }, to: { tags: [`${ns}:test`] }, because };
     const proposedConfig: Config = {
@@ -803,32 +817,57 @@ export async function recommend(
 
 // Text truncates a proposal's own candidate list to its top 5 (JSON keeps
 // every candidate) - the same "bounded text, complete JSON" split
-// check.ts's own grouped text follows for a large violation list.
-const SURFACE_CANDIDATE_TEXT_CAP = 5;
+// check.ts's own grouped text follows for a large violation list. The
+// same cap bounds how many surface-less modules and how many name lists
+// inside an evidence line get printed - a project with dozens of modules
+// must not turn one `recommend` run's own text into hundreds of lines;
+// `--json` always carries every module, every candidate, every name.
+const TEXT_LIST_CAP = 5;
+
+// Truncates a comma-separated list to its first `TEXT_LIST_CAP` items,
+// appending how many were left out - `items.length` alone (not a fixed
+// count) so a 6-item list reads "+1 more", never a cap that only ever
+// fires past its own trigger point.
+function formatCappedList(items: readonly string[]): string {
+  if (items.length <= TEXT_LIST_CAP) return items.join(", ");
+  return `${items.slice(0, TEXT_LIST_CAP).join(", ")}, +${items.length - TEXT_LIST_CAP} more`;
+}
+
+// Every evidence line this file's own detectors emit that names a group
+// of modules by a fixed prefix, matched here so this stays a text-only
+// concern: `evidence` itself (and `--json`) keeps the full list, since
+// truncating a shared string array at construction time would truncate
+// the JSON too, not just the text a human reads.
+const EVIDENCE_LIST_PREFIXES = [/^(?:app|library|host|plugin) area\(s\): /, /^sibling features: /];
+
+function capEvidenceLineForText(line: string): string {
+  const prefix = EVIDENCE_LIST_PREFIXES.map(p => p.exec(line)?.[0]).find((m): m is string => m !== undefined);
+  if (prefix === undefined) return line;
+  return prefix + formatCappedList(line.slice(prefix.length).split(", "));
+}
 
 export function formatRecommendText(result: RecommendResult): string {
   const quote = JSON.stringify;
+  const shownSurfaceProposals = result.surfaceProposals.slice(0, TEXT_LIST_CAP);
   return [
     `${result.modules} modules; ${result.detected} pattern(s) detected, ${result.patternProposals.length} shown`,
-    "", "proposed classify:", "[",
-    ...result.proposedClassify.map(entry => `  { glob: ${quote(entry.glob)}, tags: ${quote(entry.tags)} },`),
-    "]",
     ...(result.patternProposals.length === 0 ? [] : [
       "", "pattern proposals, ranked by evidence:",
       ...result.patternProposals.flatMap(proposal => [
         `  ${proposal.pattern} (support ${(proposal.support * 100).toFixed(0)}%, would add ${proposal.addedViolations} violation(s) today):`,
-        ...proposal.evidence.map(line => `    ${line}`),
+        ...proposal.evidence.map(line => `    ${capEvidenceLineForText(line)}`),
         `  do: ${proposal.do}`,
       ]),
     ]),
     ...(result.surfaceProposals.length === 0 ? [] : [
       "", "proposed surfaces (no public surface file present today):",
-      ...result.surfaceProposals.flatMap(proposal => [
+      ...shownSurfaceProposals.flatMap(proposal => [
         `  ${proposal.module}: ${quote(proposal.proposedSurface)} covers ${proposal.coveredImports} of ${proposal.totalImports} bypasses, ${proposal.remainingImports} remaining`,
-        ...proposal.candidates.slice(0, SURFACE_CANDIDATE_TEXT_CAP).map(c => `    ${c.file} (${c.importers} importer(s))`),
-        ...(proposal.candidates.length > SURFACE_CANDIDATE_TEXT_CAP ? [`    ... ${proposal.candidates.length - SURFACE_CANDIDATE_TEXT_CAP} more candidate(s); see --json`] : []),
+        ...proposal.candidates.slice(0, TEXT_LIST_CAP).map(c => `    ${c.file} (${c.importers} importer(s))`),
+        ...(proposal.candidates.length > TEXT_LIST_CAP ? [`    ... ${proposal.candidates.length - TEXT_LIST_CAP} more candidate(s); see --json`] : []),
         ...proposal.choices.map(choice => `  ${choice}`),
       ]),
+      ...(result.surfaceProposals.length > TEXT_LIST_CAP ? [`  ... ${result.surfaceProposals.length - TEXT_LIST_CAP} more surface-less module(s); see --json`] : []),
     ]),
     "",
   ].join("\n");
