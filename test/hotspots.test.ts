@@ -68,8 +68,8 @@ describe("hotspots", () => {
         units: { commits: "commits", changedLines: "added plus deleted lines", shares: "fraction of module commits" },
         exclusions: ["paths outside analysis", "archstrict todo files", "archstrict.types.ts"],
         modules: [
-          { name: "beta", commits: 2, changedLines: 2, fanIn: 1, fanOut: 0, frozenDebtByRule: {}, activeViolationsByRule: {}, score: 2, do: "archstrict check src/beta/index.ts" },
-          { name: "alpha", commits: 3, changedLines: 4, fanIn: 0, fanOut: 1, frozenDebtByRule: {}, activeViolationsByRule: {}, score: 0, do: "archstrict check src/alpha/index.ts" },
+          { name: "beta", commits: 2, changedLines: 2, fanIn: 1, fanOut: 0, frozenDebtByRule: {}, activeViolationsByRule: {}, score: 2, do: "archstrict check --module beta" },
+          { name: "alpha", commits: 3, changedLines: 4, fanIn: 0, fanOut: 1, frozenDebtByRule: {}, activeViolationsByRule: {}, score: 0, do: "archstrict check --module alpha" },
         ],
         pairs: [
           { moduleA: "alpha", moduleB: "beta", coChanges: 2, shareOfA: 2 / 3, shareOfB: 1, boundary: true, hotspot: true },
@@ -83,10 +83,10 @@ describe("hotspots", () => {
     }
   });
 
-  test("bounds text sections to ten rows", () => {
+  test("bounds text sections to ten rows and the do: lines to two", () => {
     const modules = Array.from({ length: 12 }, (_, i) => ({
       name: `m${i}`, commits: 12 - i, changedLines: i, fanIn: i, fanOut: 0,
-      frozenDebtByRule: {}, activeViolationsByRule: {}, score: (12 - i) * i, do: `archstrict check src/m${i}/index.ts`,
+      frozenDebtByRule: {}, activeViolationsByRule: {}, score: (12 - i) * i, do: `archstrict check --module m${i}`,
     }));
     const pairs = Array.from({ length: 12 }, (_, i) => ({
       moduleA: `m${i}`, moduleB: `m${i + 1}`, coChanges: 12 - i,
@@ -103,7 +103,27 @@ describe("hotspots", () => {
     expect(text.match(/^  m\d+:/gm)).toHaveLength(10);
     expect(text.match(/^  m\d+ <-> m\d+:/gm)).toHaveLength(10);
     expect(text).toContain("Read this as:");
-    expect(text.match(/^do: /gm)).toHaveLength(10);
+    const doLines = text.match(/^do: .*$/gm);
+    expect(doLines).toEqual([
+      "do: archstrict check --module m0",
+      "do: read node_modules/archstrict/skills/archstrict/references/rearchitect.md, then read the frozen debt of m0 and m1 in their archstrict.todo.json files",
+    ]);
+  });
+
+  test("emits only the top-module do: line when no boundary-hotspot pair exists", () => {
+    const modules = [
+      { name: "alpha", commits: 3, changedLines: 4, fanIn: 0, fanOut: 1, frozenDebtByRule: {}, activeViolationsByRule: {}, score: 0, do: "archstrict check --module alpha" },
+    ];
+    const pairs: HotspotsResult["pairs"] = [];
+    const result: HotspotsResult = {
+      history: { available: true, shallow: false, commits: 1, since: null, note: null },
+      units: { commits: "commits", changedLines: "added plus deleted lines", shares: "fraction of module commits" },
+      exclusions: ["paths outside analysis", "archstrict todo files", "archstrict.types.ts"],
+      modules,
+      pairs,
+    };
+    const text = formatHotspotsText(result);
+    expect(text.match(/^do: .*$/gm)).toEqual(["do: archstrict check --module alpha"]);
   });
 
   test("keeps structure when the project has no Git repository", async () => {

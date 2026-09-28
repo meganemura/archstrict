@@ -232,7 +232,6 @@ export async function hotspots(projectRoot: string, since?: string): Promise<Hot
   const modules = [...graph.modules.values()].map((module): HotspotModule => {
     const commits = summary.commitsByModule.get(module.name) ?? 0;
     const fanIn = fan.fanIn.get(module.name) ?? 0;
-    const path = graph.relativePath(module.surfaceFiles[0] ?? module.files[0] ?? module.dir);
     return {
       name: module.name,
       commits,
@@ -242,7 +241,10 @@ export async function hotspots(projectRoot: string, since?: string): Promise<Hot
       frozenDebtByRule: countRules(readTodo(module.dir, graph.rootDir).map((entry) => entry.rule)),
       activeViolationsByRule: countRules(activeByModule.get(module.name) ?? []),
       score: commits * fanIn,
-      do: `archstrict check ${path}`,
+      // `--module` scopes the whole rule set to one module; a single file
+      // inside it (the earlier form) is not a module-level drill-down and
+      // can miss the violations that made the module a hotspot.
+      do: `archstrict check --module ${module.name}`,
     };
   }).sort((a, b) => b.score - a.score || b.commits - a.commits || a.name.localeCompare(b.name));
 
@@ -286,6 +288,17 @@ export function formatHotspotsText(result: HotspotsResult): string {
     lines.push(`  ${pair.moduleA} <-> ${pair.moduleB}: ${pair.coChanges} commits; ${percentage(pair.shareOfA)} of ${pair.moduleA}; ${percentage(pair.shareOfB)} of ${pair.moduleB}; ${marker}`);
   }
   lines.push("", `Excluded from history: ${result.exclusions.join(", ")}.`);
-  for (const module of result.modules.slice(0, 10)) lines.push(`do: ${module.do}`);
+  // At most two lines: the top module (the score's own drill-down), and, when
+  // one exists, the top boundary-hotspot pair. A pair's debt is frozen by
+  // `archstrict todo`, and `check` never prints a frozen violation, so its
+  // drill-down is the workflow that reads that frozen debt, not a check
+  // filter that would print nothing on exactly the projects hotspots serves.
+  if (result.modules.length > 0) lines.push(`do: ${result.modules[0]!.do}`);
+  const pair = result.pairs.find((candidate) => candidate.hotspot);
+  if (pair !== undefined) {
+    lines.push(
+      `do: read node_modules/archstrict/skills/archstrict/references/rearchitect.md, then read the frozen debt of ${pair.moduleA} and ${pair.moduleB} in their archstrict.todo.json files`,
+    );
+  }
   return `${lines.join("\n")}\n`;
 }
