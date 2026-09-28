@@ -48,19 +48,26 @@ function isUnresolvedAliasTarget(symbol: ts.Symbol): boolean {
   return symbol.name === "unknown" && symbol.getDeclarations() === undefined;
 }
 
-// A module specifier and the file it was written in, recovered by
+// A module specifier, its position, and the file it was written in, recovered by
 // walking up from an unresolved alias's own declaration (an
 // ImportSpecifier, a NamespaceImport, or similar) to its nearest
-// import/export declaration - the same two values module-graph.ts's own
-// edge records are keyed by, so a caller can map this straight to a
+// import/export declaration - the same values module-graph.ts uses to find
+// an edge, so a caller can map this straight to a mode-aware
 // resolved file without resolving the specifier itself again.
-function specifierOf(symbol: ts.Symbol): { file: string; specifier: string } | undefined {
+function specifierOf(symbol: ts.Symbol): UnresolvedReference | undefined {
   let node: ts.Node | undefined = symbol.getDeclarations()?.[0];
   const declaration = node;
   if (declaration === undefined) return undefined;
   while (node !== undefined && !ts.isImportDeclaration(node) && !ts.isExportDeclaration(node)) node = node.parent;
   if (node === undefined || node.moduleSpecifier === undefined || !ts.isStringLiteral(node.moduleSpecifier)) return undefined;
-  return { file: declaration.getSourceFile().fileName, specifier: node.moduleSpecifier.text };
+  const sourceFile = declaration.getSourceFile();
+  const start = node.moduleSpecifier.getStart(sourceFile);
+  const { line, character } = sourceFile.getLineAndCharacterOfPosition(start);
+  return {
+    file: sourceFile.fileName,
+    specifier: node.moduleSpecifier.text,
+    fromPosition: { line: line + 1, column: character + 1 },
+  };
 }
 
 // The seam module-graph.ts's own closure Program (type-closure.ts) reads
@@ -74,7 +81,11 @@ function specifierOf(symbol: ts.Symbol): { file: string; specifier: string } | u
 // to. Boundary: this reports a fact about a real resolution failure - it
 // decides nothing about the closure, the round bound, or the fallback;
 // module-graph.ts's own `ensureProgram` owns all of that.
-export type UnresolvedReference = { file: string; specifier: string };
+export type UnresolvedReference = {
+  file: string;
+  specifier: string;
+  fromPosition: { line: number; column: number };
+};
 export type ReportUnresolvedReference = (ref: UnresolvedReference) => void;
 
 function reportIfUnresolved(symbol: ts.Symbol, target: ts.Symbol, report: ReportUnresolvedReference | undefined): void {

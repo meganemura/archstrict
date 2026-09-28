@@ -10,12 +10,11 @@
 // otherwise builds, dominate memory on a codebase of tens of thousands of
 // files.
 //
-// Boundary: syntax only. Each file is parsed once (createSourceFile,
-// setParentNodes false), reduced immediately to a small per-declaration
+// Boundary: syntax only. Each file is parsed once, reduced immediately to a small per-declaration
 // summary (which names it exports, which specifiers and identifiers each
 // declaration references), and the AST is dropped. Specifier resolution
 // never happens here - `resolvedSpecifiers` is the graph's own
-// fromFile -> specifier -> resolvedFile edges, already built once by
+// fromFile -> resolutionKey(specifier, mode) -> resolvedFile edges, already built once by
 // module-graph.ts's own per-file walk; asking `ts.resolveModuleName`
 // again here would be a second resolution pass over the same specifiers.
 // No rule logic and no checker: this module only names the files rule 6's
@@ -47,6 +46,7 @@
 // target there is this module's own bug, not a case the net exists to
 // paper over.
 import ts from "typescript";
+import { resolutionKey } from "./edge-cache.js";
 
 // A chain of identifiers/property accesses/qualified names, outermost
 // first - `ns.X` becomes `["ns", "X"]`. Anything else (a call, a
@@ -58,7 +58,8 @@ type Reference = string[];
 // of that file it needs (`import("./x").Y` -> `{ specifier: "./x",
 // qualifier: ["Y"] }`; a bare `import("./x")` type, or a namespace target
 // with no further qualifier, has no qualifier at all).
-type ImportUse = { specifier: string; qualifier?: string[] };
+type ResolvedSpecifier = { specifier: string; key: string };
+type ImportUse = ResolvedSpecifier & { qualifier?: string[] };
 
 type DeclInfo = {
   refs: Reference[];
@@ -84,7 +85,7 @@ type DeclInfo = {
   isImportEquals?: boolean;
 };
 
-type ImportBinding = { specifier: string; importedName: string };
+type ImportBinding = ResolvedSpecifier & { importedName: string };
 
 type FileSummary = {
   missing: boolean;
@@ -92,7 +93,7 @@ type FileSummary = {
   imports: Map<string, ImportBinding>; // local name -> where it comes from ("*" importedName means a namespace import)
   exportsLocal: Map<string, string>; // exported name -> local declaration name
   reexports: Map<string, ImportBinding>; // exported name -> { specifier, importedName } ("*" means `export * as n`'s own target)
-  stars: string[]; // `export * from "..."` specifiers
+  stars: ResolvedSpecifier[]; // `export * from "..."` specifiers
   decls: Map<string, DeclInfo[]>; // local declaration name -> each of its declarations' own reference info (overloads: more than one)
   defaultInfo: DeclInfo | undefined; // `export default <expr>`
   // `export default <expr>` where the expression is a single identifier
@@ -114,6 +115,12 @@ export type TypeClosureInputs = {
   readFile: (fileName: string) => string | undefined;
   languageVersion: ts.ScriptTarget;
   scriptKindFor: (fileName: string) => ts.ScriptKind;
+  // The closure parses each file with the same options and module format as
+  // the edge walk. Explicit and implicit resolution modes then share a key.
+  sourceFileOptionsFor: (fileName: string) => {
+    compilerOptions: ts.CompilerOptions;
+    impliedNodeFormat: ts.ResolutionMode;
+  };
   // Every analyzed file module-graph.ts's own per-file walk (walkFileImports)
   // already flagged as ambient (a script, or holding a `declare
   // global`/`declare module "..."` body) - a plain fact about that file's
@@ -125,7 +132,7 @@ export type TypeClosureInputs = {
   ambientFiles: readonly string[];
   surfaceFiles: readonly string[];
   // module-graph.ts's own already-resolved edges, keyed by the importing
-  // file and then by the specifier text as written.
+  // file and then by resolutionKey(specifier, mode).
   resolvedSpecifiers: ReadonlyMap<string, ReadonlyMap<string, string>>;
   // The files whose complete import/export walk produced the map above. A
   // missing entry from one of these files is a real unresolved or non-program
@@ -215,10 +222,10 @@ function positionOf(node: ts.Node, sf: ts.SourceFile, file: string): { file: str
 // A dynamic `import(...)` call's own string-literal argument, or
 // undefined for anything else - the one specifier-bearing node shape
 // that is a plain CallExpression rather than its own dedicated node kind.
-function dynamicImportSpecifier(node: ts.Node): string | undefined {
+function dynamicImportSpecifier(node: ts.Node): ts.StringLiteral | undefined {
   if (!ts.isCallExpression(node) || node.expression.kind !== ts.SyntaxKind.ImportKeyword) return undefined;
   const argument = node.arguments[0];
-  return argument !== undefined && ts.isStringLiteral(argument) ? argument.text : undefined;
+  return argument !== undefined && ts.isStringLiteral(argument) ? argument : undefined;
 }
 
 // Walks one declaration's own subtree, filling `info`. `inferring` is
@@ -226,10 +233,20 @@ function dynamicImportSpecifier(node: ts.Node): string | undefined {
 // only then does a bare identifier/property-access count as a reference
 // at all (an annotated declaration's own body/initializer is never
 // walked: the annotation already says everything the checker needs).
-function collect(node: ts.Node, info: DeclInfo, inferring: boolean): void {
+function collect(
+  node: ts.Node,
+  info: DeclInfo,
+  inferring: boolean,
+  sf: ts.SourceFile,
+  compilerOptions: ts.CompilerOptions,
+): void {
+  const resolvedSpecifier = (literal: ts.StringLiteralLike): ResolvedSpecifier => ({
+    specifier: literal.text,
+    key: resolutionKey({ specifier: literal.text, mode: ts.getModeForUsageLocation(sf, literal, compilerOptions) }),
+  });
   const visit = (n: ts.Node, inferHere: boolean): void => {
     const importTypeSpecifier = ts.isImportTypeNode(n) && ts.isLiteralTypeNode(n.argument) && ts.isStringLiteral(n.argument.literal)
-      ? n.argument.literal.text : undefined;
+      ? n.argument.literal : undefined;
     const dynamicSpecifier = dynamicImportSpecifier(n);
     // A dynamic `import(...)` reached while inferring (an unannotated
     // declaration's own value walk) can resolve to any type its target
@@ -238,7 +255,7 @@ function collect(node: ts.Node, info: DeclInfo, inferring: boolean): void {
     // expression can hold. Always reaches the target whole: this closure
     // decides only which FILE needs loading, never which member of it a
     // caller happens to reach.
-    if (dynamicSpecifier !== undefined && inferHere) info.imports.push({ specifier: dynamicSpecifier });
+    if (dynamicSpecifier !== undefined && inferHere) info.imports.push(resolvedSpecifier(dynamicSpecifier));
 
     if (ts.isTypeReferenceNode(n)) {
       const seg = segmentsOf(n.typeName);
@@ -260,7 +277,7 @@ function collect(node: ts.Node, info: DeclInfo, inferring: boolean): void {
     }
     if (ts.isImportTypeNode(n)) {
       if (importTypeSpecifier !== undefined) {
-        info.imports.push({ specifier: importTypeSpecifier, qualifier: n.qualifier ? segmentsOf(n.qualifier) : undefined });
+        info.imports.push({ ...resolvedSpecifier(importTypeSpecifier), qualifier: n.qualifier ? segmentsOf(n.qualifier) : undefined });
       }
       n.typeArguments?.forEach((a) => visit(a, inferHere));
       return;
@@ -272,15 +289,15 @@ function collect(node: ts.Node, info: DeclInfo, inferring: boolean): void {
     // nested ExportDeclaration, since the top-level walk only reads
     // export declarations that are direct children of a source file.
     if (ts.isExportDeclaration(n)) {
-      const spec = n.moduleSpecifier !== undefined && ts.isStringLiteral(n.moduleSpecifier) ? n.moduleSpecifier.text : undefined;
+      const spec = n.moduleSpecifier !== undefined && ts.isStringLiteral(n.moduleSpecifier) ? n.moduleSpecifier : undefined;
       if (n.exportClause !== undefined && ts.isNamedExports(n.exportClause)) {
         for (const element of n.exportClause.elements) {
           const local = (element.propertyName ?? element.name).text;
-          if (spec !== undefined) info.imports.push({ specifier: spec, qualifier: [local] });
+          if (spec !== undefined) info.imports.push({ ...resolvedSpecifier(spec), qualifier: [local] });
           else info.refs.push([local]);
         }
       } else if (spec !== undefined) {
-        info.imports.push({ specifier: spec });
+        info.imports.push(resolvedSpecifier(spec));
       }
       return;
     }
@@ -338,7 +355,18 @@ function summarize(inputs: TypeClosureInputs, summaries: Summaries, file: string
     summaries.set(file, empty);
     return empty;
   }
-  const sf = ts.createSourceFile(file, text, inputs.languageVersion, false, inputs.scriptKindFor(file));
+  const sourceFileOptions = inputs.sourceFileOptionsFor(file);
+  const sf = ts.createSourceFile(file, text, {
+    languageVersion: inputs.languageVersion,
+    impliedNodeFormat: sourceFileOptions.impliedNodeFormat,
+  }, true, inputs.scriptKindFor(file));
+  const resolvedSpecifier = (literal: ts.StringLiteralLike): ResolvedSpecifier => ({
+    specifier: literal.text,
+    key: resolutionKey({
+      specifier: literal.text,
+      mode: ts.getModeForUsageLocation(sf, literal, sourceFileOptions.compilerOptions),
+    }),
+  });
   const summary: FileSummary = {
     missing: false, isScript: !ts.isExternalModule(sf), imports: new Map(), exportsLocal: new Map(),
     reexports: new Map(), stars: [], decls: new Map(), defaultInfo: undefined, defaultAlias: undefined,
@@ -350,16 +378,16 @@ function summarize(inputs: TypeClosureInputs, summaries: Summaries, file: string
   };
   for (const statement of sf.statements) {
     if (ts.isImportDeclaration(statement)) {
-      const spec = ts.isStringLiteral(statement.moduleSpecifier) ? statement.moduleSpecifier.text : undefined;
+      const spec = ts.isStringLiteral(statement.moduleSpecifier) ? statement.moduleSpecifier : undefined;
       const clause = statement.importClause;
       if (clause === undefined || spec === undefined) continue;
-      if (clause.name !== undefined) summary.imports.set(clause.name.text, { specifier: spec, importedName: "default" });
+      if (clause.name !== undefined) summary.imports.set(clause.name.text, { ...resolvedSpecifier(spec), importedName: "default" });
       const bindings = clause.namedBindings;
       if (bindings !== undefined && ts.isNamespaceImport(bindings)) {
-        summary.imports.set(bindings.name.text, { specifier: spec, importedName: "*" });
+        summary.imports.set(bindings.name.text, { ...resolvedSpecifier(spec), importedName: "*" });
       } else if (bindings !== undefined) {
         for (const element of bindings.elements) {
-          summary.imports.set(element.name.text, { specifier: spec, importedName: (element.propertyName ?? element.name).text });
+          summary.imports.set(element.name.text, { ...resolvedSpecifier(spec), importedName: (element.propertyName ?? element.name).text });
         }
       }
       continue;
@@ -382,16 +410,16 @@ function summarize(inputs: TypeClosureInputs, summaries: Summaries, file: string
       continue;
     }
     if (ts.isExportDeclaration(statement)) {
-      const spec = statement.moduleSpecifier !== undefined && ts.isStringLiteral(statement.moduleSpecifier) ? statement.moduleSpecifier.text : undefined;
-      if (statement.exportClause === undefined) { if (spec !== undefined) summary.stars.push(spec); continue; }
+      const spec = statement.moduleSpecifier !== undefined && ts.isStringLiteral(statement.moduleSpecifier) ? statement.moduleSpecifier : undefined;
+      if (statement.exportClause === undefined) { if (spec !== undefined) summary.stars.push(resolvedSpecifier(spec)); continue; }
       if (ts.isNamespaceExport(statement.exportClause)) {
-        if (spec !== undefined) summary.reexports.set(statement.exportClause.name.text, { specifier: spec, importedName: "*" });
+        if (spec !== undefined) summary.reexports.set(statement.exportClause.name.text, { ...resolvedSpecifier(spec), importedName: "*" });
         continue;
       }
       for (const element of statement.exportClause.elements) {
         const exported = element.name.text;
         const local = (element.propertyName ?? element.name).text;
-        if (spec !== undefined) summary.reexports.set(exported, { specifier: spec, importedName: local });
+        if (spec !== undefined) summary.reexports.set(exported, { ...resolvedSpecifier(spec), importedName: local });
         else summary.exportsLocal.set(exported, local);
       }
       continue;
@@ -399,7 +427,8 @@ function summarize(inputs: TypeClosureInputs, summaries: Summaries, file: string
     if (ts.isExportAssignment(statement)) {
       const info = newInfo();
       const seg = segmentsOf(statement.expression);
-      if (seg !== undefined) info.refs.push(seg); else collect(statement.expression, info, true);
+      if (seg !== undefined) info.refs.push(seg);
+      else collect(statement.expression, info, true, sf, sourceFileOptions.compilerOptions);
       // `export default <expr>` (an anonymous expression, no separate
       // named declaration of its own): the checker's own declaration for
       // it is this ExportAssignment statement itself - EXCEPT when the
@@ -424,14 +453,14 @@ function summarize(inputs: TypeClosureInputs, summaries: Summaries, file: string
     if (ts.isModuleDeclaration(statement) &&
         (statement.name.kind === ts.SyntaxKind.StringLiteral || (statement.flags & ts.NodeFlags.GlobalAugmentation) !== 0)) {
       const info = newInfo();
-      collect(statement, info, false);
+      collect(statement, info, false, sf, sourceFileOptions.compilerOptions);
       summary.ambient.push(info);
       continue;
     }
     if (ts.isVariableStatement(statement)) {
       for (const declaration of statement.declarationList.declarations) {
         const info = newInfo();
-        collect(declaration, info, false);
+        collect(declaration, info, false, sf, sourceFileOptions.compilerOptions);
         // Each bound name gets its OWN position (bindingElements' own
         // comment) - a shared `info` object would give every name
         // destructured from the same declarator the same position,
@@ -447,7 +476,7 @@ function summarize(inputs: TypeClosureInputs, summaries: Summaries, file: string
         ts.isFunctionDeclaration(statement) || ts.isEnumDeclaration(statement) || ts.isModuleDeclaration(statement)) {
       const name = statement.name !== undefined && ts.isIdentifier(statement.name) ? statement.name.text : undefined;
       const info = newInfo();
-      collect(statement, info, false);
+      collect(statement, info, false, sf, sourceFileOptions.compilerOptions);
       info.position = positionOf(statement, sf, file);
       const local = name ?? "default";
       addDecl(local, info);
@@ -472,8 +501,8 @@ function summarize(inputs: TypeClosureInputs, summaries: Summaries, file: string
 // `buildTypeClosure` and `computeSyntacticNamedDeclarations` share the identical
 // answer for the identical edge, never two independently-written copies
 // that could drift.
-function resolveTarget(inputs: TypeClosureInputs, file: string, specifier: string): string | undefined {
-  const target = inputs.resolvedSpecifiers.get(file)?.get(specifier);
+function resolveTarget(inputs: TypeClosureInputs, file: string, specifier: ResolvedSpecifier): string | undefined {
+  const target = inputs.resolvedSpecifiers.get(file)?.get(specifier.key);
   return target !== undefined && isProgramSource(target) ? target : undefined;
 }
 
@@ -521,7 +550,7 @@ export function buildTypeClosure(inputs: TypeClosureInputs): TypeClosureResult {
 
   function mark(file: string): void { closure.add(file); }
 
-  function resolve(file: string, specifier: string): string | undefined {
+  function resolve(file: string, specifier: ResolvedSpecifier): string | undefined {
     return resolveTarget(inputs, file, specifier);
   }
 
@@ -545,7 +574,7 @@ export function buildTypeClosure(inputs: TypeClosureInputs): TypeClosureResult {
   function processInfo(file: string, info: DeclInfo): void {
     for (const ref of info.refs) reachRef(file, ref);
     for (const use of info.imports) {
-      const target = resolve(file, use.specifier);
+      const target = resolve(file, use);
       if (target === undefined) continue;
       if (use.qualifier !== undefined) reachExport(target, use.qualifier[0]!, use.qualifier.slice(1));
       else reachWhole(target);
@@ -559,7 +588,7 @@ export function buildTypeClosure(inputs: TypeClosureInputs): TypeClosureResult {
     if (summary.decls.has(head)) reachLocal(file, head);
     const binding = summary.imports.get(head);
     if (binding !== undefined) {
-      const target = resolve(file, binding.specifier);
+      const target = resolve(file, binding);
       if (target === undefined) return;
       if (binding.importedName === "*") {
         if (rest.length > 0) reachExport(target, rest[0]!, rest.slice(1));
@@ -615,7 +644,7 @@ export function buildTypeClosure(inputs: TypeClosureInputs): TypeClosureResult {
     const reexport = summary.reexports.get(name);
     if (reexport !== undefined) {
       mark(file);
-      const target = resolve(file, reexport.specifier);
+      const target = resolve(file, reexport);
       if (target === undefined) return;
       if (reexport.importedName === "*") {
         if (rest.length > 0) reachExport(target, rest[0]!, rest.slice(1));
@@ -774,7 +803,7 @@ export function computeSyntacticNamedDeclarations(
   // nothing would create false leaks. An analyzed file's missing record is a
   // real unresolved or non-program target, and an external package file can
   // safely keep the checker's own no-declaration answer.
-  function resolveWalkTarget(file: string, specifier: string): string | undefined {
+  function resolveWalkTarget(file: string, specifier: ResolvedSpecifier): string | undefined {
     const target = resolveTarget(inputs, file, specifier);
     if (target === undefined && !inputs.analyzedFiles.has(file) &&
         !file.split(/[\\/]/).includes("node_modules")) unresolvable = true;
@@ -813,7 +842,7 @@ export function computeSyntacticNamedDeclarations(
     if (decls !== undefined) { for (const info of decls) addDeclInfo(info); return; }
     const binding = summary.imports.get(alias.name);
     if (binding !== undefined) {
-      const target = resolveWalkTarget(file, binding.specifier);
+      const target = resolveWalkTarget(file, binding);
       if (target === undefined) return;
       if (binding.importedName === "*") { addSourceFileKey(target); return; }
       resolveNamed(target, binding.importedName);
@@ -843,7 +872,7 @@ export function computeSyntacticNamedDeclarations(
       if (decls !== undefined) { for (const info of decls) addDeclInfo(info); return; }
       const binding = summary.imports.get(local);
       if (binding !== undefined) {
-        const target = resolveWalkTarget(file, binding.specifier);
+        const target = resolveWalkTarget(file, binding);
         if (target === undefined) return;
         // A re-exported namespace import (`import * as NS from "./x";
         // export { NS };`): the checker's own declaration for it is the
@@ -865,7 +894,7 @@ export function computeSyntacticNamedDeclarations(
 
     const reexport = summary.reexports.get(name);
     if (reexport !== undefined) {
-      const target = resolveWalkTarget(file, reexport.specifier);
+      const target = resolveWalkTarget(file, reexport);
       if (target === undefined) return;
       // `export * as ns from "./x"`: the checker's own declaration for
       // `ns` is `./x`'s own SourceFile (measured directly against a real

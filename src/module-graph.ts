@@ -74,11 +74,18 @@ function builtinModuleName(specifier: string): string | undefined {
 
 export type Position = { line: number; column: number };
 
+function resolutionPositionKey(file: string, position: Position): string {
+  return `${file}\0${position.line}\0${position.column}`;
+}
+
 export type Edge = {
   fromFile: string;
   fromModule: string;
   fromPosition: Position;
   specifier: string;
+  // The usage site's resolution mode is part of the edge identity. One file
+  // can import one specifier through both export conditions.
+  mode: ts.ResolutionMode;
   isTypeOnly: boolean;
   // A dynamic `import(...)` call, not a static import/export declaration -
   // e.g. Nx's own enforce-module-boundaries treats a lazy-loaded edge
@@ -1367,6 +1374,7 @@ type GraphCommons = {
   host: ts.CompilerHost;
   resolutionCacheFor(options: ts.CompilerOptions): ts.ModuleResolutionCache;
   optionsForContainingFile(containingFile: string, redirectedReference?: ts.ResolvedProjectReference): ts.CompilerOptions;
+  sourceFileOptionsFor(fileName: string): { compilerOptions: ts.CompilerOptions; impliedNodeFormat: ts.ResolutionMode };
   resolveModule(specifier: string, containingFile: string, mode: ts.ResolutionMode, redirectedReference?: ts.ResolvedProjectReference): ts.ResolvedModuleWithFailedLookupLocations;
   analyzedSet: ReadonlySet<string>;
   defaultFileWalk(fileName: string): FileImportWalk | undefined;
@@ -1461,6 +1469,15 @@ function makeGraphCommons(prepared: ReturnType<typeof prepareGraph>, overrides: 
   const analyzedSet = new Set(rootNames);
   const optionsForContainingFile = (containingFile: string, redirectedReference?: ts.ResolvedProjectReference): ts.CompilerOptions =>
     analyzedSet.has(containingFile) ? compilerOptionsForFile(containingFile) : (redirectedReference?.commandLine.options ?? compilerOptions);
+  const sourceFileOptionsFor = (fileName: string) => {
+    const options = optionsForContainingFile(fileName);
+    return {
+      compilerOptions: options,
+      impliedNodeFormat: ts.getImpliedNodeFormatForFile(
+        fileName, resolutionCacheFor(options).getPackageJsonInfoCache(), host, options,
+      ),
+    };
+  };
   const resolveModule = (
     specifier: string,
     containingFile: string,
@@ -1471,7 +1488,7 @@ function makeGraphCommons(prepared: ReturnType<typeof prepareGraph>, overrides: 
     return ts.resolveModuleName(specifier, containingFile, options, host, resolutionCacheFor(options), redirectedReference, mode);
   };
 
-  return { host, resolutionCacheFor, optionsForContainingFile, resolveModule, analyzedSet,
+  return { host, resolutionCacheFor, optionsForContainingFile, sourceFileOptionsFor, resolveModule, analyzedSet,
     defaultFileWalk, scanModuleAugmentations, augmentationScanMetadata };
 }
 
@@ -1495,7 +1512,8 @@ function edgeFor(
   if (builtin !== undefined) {
     return { edge: {
       fromFile: fileName, fromModule, fromPosition: imp.fromPosition, specifier: imp.specifier,
-      isTypeOnly: imp.isTypeOnly, isDynamic: imp.isDynamic, resolvedFile: `node:${builtin}`, toModule: undefined, externalPackage: builtin,
+      mode: imp.mode, isTypeOnly: imp.isTypeOnly, isDynamic: imp.isDynamic,
+      resolvedFile: `node:${builtin}`, toModule: undefined, externalPackage: builtin,
     } };
   }
   if (resolution === undefined || resolution === "unresolved") return { unresolvedSpecifier: imp.specifier };
@@ -1505,7 +1523,7 @@ function edgeFor(
     ? (resolution.packageName ?? imp.specifier.replace(/^node:/, "")) : undefined;
   return { edge: {
     fromFile: fileName, fromModule, fromPosition: imp.fromPosition, specifier: imp.specifier,
-    isTypeOnly: imp.isTypeOnly, isDynamic: imp.isDynamic, resolvedFile, toModule, externalPackage,
+    mode: imp.mode, isTypeOnly: imp.isTypeOnly, isDynamic: imp.isDynamic, resolvedFile, toModule, externalPackage,
   } };
 }
 
@@ -1672,7 +1690,7 @@ function walkAllFiles(prepared: ReturnType<typeof prepareGraph>, commons: GraphC
 function assembleGraph(prepared: ReturnType<typeof prepareGraph>, commons: GraphCommons, walked: WalkResult, overrides: GraphBuildOverrides): PreparedModuleGraph {
   const { modules, surface, rootDir, rootNames, compilerOptions } = prepared;
   const { edges, outsideFiles, fileFlags, unsupportedSyntaxCount, unresolvedSpecifierCount, unresolvedSpecifiers } = walked;
-  const { host, analyzedSet, optionsForContainingFile, resolveModule, resolutionCacheFor } = commons;
+  const { host, analyzedSet, optionsForContainingFile, sourceFileOptionsFor, resolveModule, resolutionCacheFor } = commons;
 
   const crossModuleEdges = edges.filter(
     (e) => e.toModule !== undefined && e.toModule !== e.fromModule,
@@ -1703,10 +1721,12 @@ function assembleGraph(prepared: ReturnType<typeof prepareGraph>, commons: Graph
   // Both Program paths need identical edge resolutions. A second resolver map
   // is refused because separate answers could diverge from the graph's edges.
   const resolvedSpecifiers = new Map<string, Map<string, string>>();
+  const resolutionKeyByPosition = new Map<string, string>();
   for (const edge of edges) {
     let perFile = resolvedSpecifiers.get(edge.fromFile);
     if (perFile === undefined) { perFile = new Map(); resolvedSpecifiers.set(edge.fromFile, perFile); }
-    perFile.set(edge.specifier, edge.resolvedFile);
+    perFile.set(resolutionKey(edge), edge.resolvedFile);
+    resolutionKeyByPosition.set(resolutionPositionKey(edge.fromFile, edge.fromPosition), resolutionKey(edge));
   }
   const readFile = (file: string): string | undefined => host.readFile(file);
   const languageVersion = compilerOptions.target ?? ts.ScriptTarget.ESNext;
@@ -1715,7 +1735,7 @@ function assembleGraph(prepared: ReturnType<typeof prepareGraph>, commons: Graph
   // Both Program paths require the same closure facts. A duplicated input
   // assembly is refused because ambient roots and resolutions must stay equal.
   const closureInputs = (surfaceFiles: readonly string[], extraRoots: readonly string[] = []): TypeClosureInputs => ({
-    readFile, languageVersion, scriptKindFor: scriptKindForFile, ambientFiles,
+    readFile, languageVersion, scriptKindFor: scriptKindForFile, sourceFileOptionsFor, ambientFiles,
     surfaceFiles, resolvedSpecifiers, analyzedFiles: analyzedSet, extraRoots,
   });
 
@@ -1747,18 +1767,32 @@ function assembleGraph(prepared: ReturnType<typeof prepareGraph>, commons: Graph
     // TypeScript's own defaults for both.
     function closureHost(closureSet: ReadonlySet<string>): ts.CompilerHost {
       const delegate: ts.CompilerHost = Object.create(baseHost);
-      // `containingSourceFile` comes from the Program itself, already
-      // carrying the correct `impliedNodeFormat` (Program's own
-      // getCreateSourceFileOptions computes it before ever calling
-      // host.getSourceFile - untouched by this delegate, which never
-      // overrides getSourceFile) - so getModeForUsageLocation reads a
-      // real, correctly-tagged file here, the same as it would inside a
-      // default (no resolveModuleNameLiterals override) ts.createProgram
-      // call. The 4th positional param (TS's own per-call options,
-      // accounting for a redirected project reference) is not used here:
-      // optionsForContainingFile derives the equivalent value itself, and
-      // this project never sets up project references for the two to
-      // disagree over.
+      const withFileFormat = (
+        fileName: string,
+        languageVersionOrOptions: ts.ScriptTarget | ts.CreateSourceFileOptions,
+      ): ts.CreateSourceFileOptions => {
+        const supplied = typeof languageVersionOrOptions === "number"
+          ? { languageVersion: languageVersionOrOptions }
+          : languageVersionOrOptions;
+        return { ...supplied, impliedNodeFormat: sourceFileOptionsFor(fileName).impliedNodeFormat };
+      };
+      // TypeScript derives this value from the Program's root options before
+      // it calls a host. The closure contains files owned by nested configs,
+      // so the host replaces only that value with the edge walk's answer.
+      delegate.getSourceFile = (fileName, languageVersionOrOptions, onError, shouldCreateNewSourceFile) =>
+        baseHost.getSourceFile(
+          fileName, withFileFormat(fileName, languageVersionOrOptions), onError, shouldCreateNewSourceFile,
+        );
+      if (baseHost.getSourceFileByPath !== undefined) {
+        delegate.getSourceFileByPath = (fileName, path, languageVersionOrOptions, onError, shouldCreateNewSourceFile) =>
+          baseHost.getSourceFileByPath!(
+            fileName, path, withFileFormat(fileName, languageVersionOrOptions), onError, shouldCreateNewSourceFile,
+          );
+      }
+      // The 4th positional param (TS's per-call options, accounting for a
+      // redirected project reference) is not used here. The containing-file
+      // lookup derives the equivalent value, and this project has no project
+      // references for the two answers to differ over.
       delegate.resolveModuleNameLiterals = (moduleLiterals, containingFile, redirectedReference, _options, containingSourceFile) =>
         moduleLiterals.map((literal) => {
           const options = optionsForContainingFile(containingFile, redirectedReference);
@@ -1771,13 +1805,10 @@ function assembleGraph(prepared: ReturnType<typeof prepareGraph>, commons: Graph
           }
           return resolved;
         });
-      // With resolveModuleNameLiterals overridden, createProgram takes its
-      // package.json and module-format cache from getModuleResolutionCache.
-      // Without one, it re-reads and re-parses the nearest package.json for
-      // every file's format and keeps a copy per SourceFile: on a 23,000-file
-      // project with a 145 KB root package.json, that cost about 550 MB of a
-      // full check. The root options' cache is the one the edge walk already
-      // filled.
+      // TypeScript still asks for one cache for non-analyzed dependencies and
+      // type directives. Without one, a 23,000-file project with a 145 KB root
+      // package.json used about 550 MB more memory. Analyzed files get their
+      // per-options package cache through sourceFileOptionsFor above.
       delegate.getModuleResolutionCache = () => resolutionCacheFor(compilerOptions);
       return delegate;
     }
@@ -1812,8 +1843,9 @@ function assembleGraph(prepared: ReturnType<typeof prepareGraph>, commons: Graph
       const roundViolations = checkTypeLeaks({ modules, program: candidate, checker: candidate.getTypeChecker(), rootDir }, {
         focusModuleName,
         extraNamedDeclarationKeys,
-        report: ({ file, specifier }) => {
-          const resolved = resolvedSpecifiers.get(file)?.get(specifier);
+        report: ({ file, fromPosition }) => {
+          const key = resolutionKeyByPosition.get(resolutionPositionKey(file, fromPosition));
+          const resolved = key === undefined ? undefined : resolvedSpecifiers.get(file)?.get(key);
           if (resolved !== undefined && analyzedSet.has(resolved) && !closureSet.has(resolved)) missing.add(resolved);
         },
       });

@@ -17,6 +17,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import ts from "typescript";
 import { buildModuleGraph, prepareGraph, scriptKindForFile, type DeclaredModule, type ModuleGraph } from "../src/module-graph.js";
+import { resolutionKey } from "../src/edge-cache.js";
 import { computeSyntacticNamedDeclarations, declarationKey, sourceFileKey, type TypeClosureInputs } from "../src/type-closure.js";
 
 function namedDeclarationsFromChecker(program: ts.Program, checker: ts.TypeChecker, surfaceFiles: readonly string[]): Set<ts.Node> {
@@ -71,12 +72,21 @@ function inputsFor(graph: ModuleGraph, root: string, modules: readonly DeclaredM
   for (const edge of graph.edges) {
     let perFile = resolvedSpecifiers.get(edge.fromFile);
     if (perFile === undefined) { perFile = new Map(); resolvedSpecifiers.set(edge.fromFile, perFile); }
-    perFile.set(edge.specifier, edge.resolvedFile);
+    perFile.set(resolutionKey(edge), edge.resolvedFile);
   }
+  const host = ts.createCompilerHost(prepared.compilerOptions);
   return {
     readFile: (f) => ts.sys.readFile(f),
     languageVersion: prepared.compilerOptions.target ?? ts.ScriptTarget.ESNext,
     scriptKindFor: scriptKindForFile,
+    sourceFileOptionsFor: (file) => {
+      const compilerOptions = prepared.compilerOptionsForFile(file);
+      const cache = ts.createModuleResolutionCache(root, host.getCanonicalFileName, compilerOptions);
+      return {
+        compilerOptions,
+        impliedNodeFormat: ts.getImpliedNodeFormatForFile(file, cache.getPackageJsonInfoCache(), host, compilerOptions),
+      };
+    },
     ambientFiles: [],
     surfaceFiles: [],
     resolvedSpecifiers,

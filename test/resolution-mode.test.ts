@@ -8,11 +8,11 @@
 // committed (a fixture with its own node_modules would need one real
 // install per clone, or a hand-rolled fake that drifts from a real one).
 import { describe, expect, test } from "vitest";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import ts from "typescript";
-import { buildModuleGraph, prepareGraph, type DeclaredModule } from "../src/module-graph.js";
+import { buildModuleGraph, buildPreparedGraph, prepareGraph, type DeclaredModule } from "../src/module-graph.js";
 import { checkTypeLeaks } from "../src/rules/type-leak.js";
 
 const NODE16_TSCONFIG = JSON.stringify({
@@ -27,6 +27,19 @@ function withScratchProject(prefix: string, populate: (root: string) => void, ru
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+}
+
+function importedDeclarationFile(program: ts.Program, fileName: string, localName: string): string | undefined {
+  const sourceFile = program.getSourceFile(fileName);
+  const declaration = sourceFile?.statements
+    .filter(ts.isImportDeclaration)
+    .flatMap((statement) => {
+      const bindings = statement.importClause?.namedBindings;
+      return bindings !== undefined && ts.isNamedImports(bindings) ? [...bindings.elements] : [];
+    })
+    .find((element) => element.name.text === localName);
+  const symbol = declaration === undefined ? undefined : program.getTypeChecker().getSymbolAtLocation(declaration.name);
+  return symbol === undefined ? undefined : program.getTypeChecker().getAliasedSymbol(symbol).declarations?.[0]?.getSourceFile().fileName;
 }
 
 describe("resolution mode: import vs require export conditions", () => {
@@ -102,6 +115,86 @@ describe("resolution mode: import vs require export conditions", () => {
       expect(fromCts).toBeDefined();
       expect(fromMts!.resolvedFile.endsWith("dual-pkg/import.d.mts")).toBe(true);
       expect(fromCts!.resolvedFile.endsWith("dual-pkg/require.d.cts")).toBe(true);
+    });
+  });
+
+  test("one file can reach both conditions of one package through resolution-mode attributes", () => {
+    let closureFiles: readonly string[] = [];
+    withScratchProject("archstrict-mode-overrides-", (root) => {
+      writeFileSync(join(root, "tsconfig.json"), NODE16_TSCONFIG);
+      writeFileSync(join(root, "package.json"), '{"type":"module"}\n');
+      mkdirSync(join(root, "src/consumer"), { recursive: true });
+      mkdirSync(join(root, "src/dual"), { recursive: true });
+      writeFileSync(join(root, "src/dual/package.json"), JSON.stringify({
+        name: "dual-pkg", version: "1.0.0",
+        exports: { ".": { import: { types: "./import.d.mts" }, require: { types: "./require.d.cts" } } },
+      }));
+      writeFileSync(join(root, "src/dual/import.d.mts"), "export interface ImportShape { mode: 'import' }\n");
+      writeFileSync(join(root, "src/dual/require.d.cts"), "export interface RequireShape { mode: 'require' }\n");
+      mkdirSync(join(root, "node_modules"), { recursive: true });
+      symlinkSync(join(root, "src/dual"), join(root, "node_modules/dual-pkg"));
+      writeFileSync(join(root, "src/consumer/index.ts"),
+        'import type { ImportShape } from "dual-pkg" with { "resolution-mode": "import" };\n' +
+        'import type { RequireShape } from "dual-pkg" with { "resolution-mode": "require" };\n' +
+        "export type ImportResult = ImportShape;\n" +
+        "export type RequireResult = RequireShape;\n");
+    }, (root) => {
+      const declaredModules: DeclaredModule[] = [
+        { name: "consumer", glob: "src/consumer/**" },
+        { name: "dual", glob: "src/dual/**", surface: ["import.d.mts", "require.d.cts"] },
+      ];
+      const prepared = prepareGraph({ projectRoot: root, declaredModules });
+      const graph = buildPreparedGraph(prepared, {
+        onClosureRoundForTests: (_round, files) => { closureFiles = files; },
+      });
+      const consumer = join(root, "src/consumer/index.ts");
+      const packageEdges = graph.edges.filter((edge) => edge.fromFile === consumer && edge.specifier === "dual-pkg");
+
+      expect(packageEdges.map((edge) => edge.resolvedFile).sort()).toEqual([
+        join(root, "src/dual/import.d.mts"), join(root, "src/dual/require.d.cts"),
+      ].sort());
+      const violations = checkTypeLeaks(graph);
+      expect(closureFiles).toEqual(expect.arrayContaining([
+        join(root, "src/dual/import.d.mts"), join(root, "src/dual/require.d.cts"),
+      ]));
+      const oracleProgram = ts.createProgram({ rootNames: prepared.rootNames, options: prepared.compilerOptions });
+      const oracle = checkTypeLeaks({
+        modules: graph.modules, program: oracleProgram, checker: oracleProgram.getTypeChecker(), rootDir: graph.rootDir,
+      });
+      expect(violations.map((violation) => violation.evidence)).toEqual(oracle.map((violation) => violation.evidence));
+    });
+  });
+
+  test("the closure Program uses a nested config's module format", () => {
+    withScratchProject("archstrict-mode-nested-config-", (root) => {
+      writeFileSync(join(root, "tsconfig.json"), JSON.stringify({
+        compilerOptions: { target: "esnext", module: "commonjs", moduleResolution: "node", strict: true, skipLibCheck: true, noEmit: true },
+      }));
+      mkdirSync(join(root, "src/consumer"), { recursive: true });
+      mkdirSync(join(root, "src/dual"), { recursive: true });
+      writeFileSync(join(root, "src/consumer/tsconfig.json"), NODE16_TSCONFIG);
+      writeFileSync(join(root, "src/consumer/package.json"), '{"type":"module"}\n');
+      writeFileSync(join(root, "src/dual/package.json"), JSON.stringify({
+        name: "dual-pkg", version: "1.0.0",
+        exports: { ".": { import: { types: "./import.d.mts" }, require: { types: "./require.d.cts" } } },
+      }));
+      writeFileSync(join(root, "src/dual/import.d.mts"), "export interface Shape { mode: 'import' }\n");
+      writeFileSync(join(root, "src/dual/require.d.cts"), "export interface Shape { mode: 'require' }\n");
+      mkdirSync(join(root, "node_modules"), { recursive: true });
+      symlinkSync(join(root, "src/dual"), join(root, "node_modules/dual-pkg"));
+      writeFileSync(join(root, "src/consumer/index.ts"), 'import type { Shape } from "dual-pkg";\nexport type Result = Shape;\n');
+    }, (root) => {
+      const declaredModules: DeclaredModule[] = [
+        { name: "consumer", glob: "src/consumer/**" },
+        { name: "dual", glob: "src/dual/**", surface: ["import.d.mts", "require.d.cts"] },
+      ];
+      const graph = buildModuleGraph({ projectRoot: root, declaredModules });
+      const consumer = join(root, "src/consumer/index.ts");
+      const edge = graph.edges.find((candidate) => candidate.fromFile === consumer && candidate.specifier === "dual-pkg");
+
+      expect(edge?.resolvedFile).toBe(join(root, "src/dual/import.d.mts"));
+      expect(importedDeclarationFile(graph.program, consumer, "Shape")).toBe(edge?.resolvedFile);
+      expect(graph.program.getSourceFile(consumer)?.impliedNodeFormat).toBe(ts.ModuleKind.ESNext);
     });
   });
 });

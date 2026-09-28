@@ -40,6 +40,7 @@ function edge(overrides: Partial<Edge>): Edge {
     fromModule: "m",
     fromPosition: { line: 1, column: 1 },
     specifier: "./b.js",
+    mode: undefined,
     isTypeOnly: false,
     isDynamic: false,
     resolvedFile: "/project/src/b.ts",
