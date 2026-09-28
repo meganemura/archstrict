@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Responsibility: parse argv and dispatch to a verb (init, check, todo, rules, agents, recommend, fix, simulate, search).
+// Responsibility: parse argv and dispatch to a verb (init, check, todo, rules, agents, recommend, fix, simulate, search, hotspots).
 // Boundary: no rule logic here; verbs live in their own modules.
 import { startArchstrictMcpServer } from "./mcp-server.js";
 import { search, formatSearchText } from "./verbs/search.js";
@@ -11,6 +11,7 @@ import { init } from "./verbs/init.js";
 import { check, formatText, hasBlockingViolations } from "./verbs/check.js";
 import { todo } from "./verbs/todo.js";
 import { rules, formatRulesText } from "./verbs/rules.js";
+import { hotspots, formatHotspotsText } from "./verbs/hotspots.js";
 import { ReportError } from "./report-error.js";
 import { parseCheckArgv } from "./check-options.js";
 
@@ -181,6 +182,22 @@ async function runSearch(args: string[]): Promise<number> {
   return 0;
 }
 
+async function runHotspots(args: string[]): Promise<number> {
+  let since: string | undefined;
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    if (arg === "--json") continue;
+    if (arg === "--since" && since === undefined && args[i + 1] !== undefined && !args[i + 1]!.startsWith("--")) {
+      since = args[++i];
+      continue;
+    }
+    throw new Error("usage: archstrict hotspots [--since <git ref or date>] [--json]");
+  }
+  const result = await hotspots(process.cwd(), since);
+  process.stdout.write(args.includes("--json") ? JSON.stringify(result, null, 2) + "\n" : formatHotspotsText(result));
+  return 0;
+}
+
 // The connected transport's stdin listener keeps Node alive after this function returns.
 // A real subprocess stayed alive with stdin open and exited when stdin closed;
 // the host can also terminate it. A separate server-closed promise is unnecessary.
@@ -192,12 +209,13 @@ async function runMcp(): Promise<number> {
 async function main(argv: string[]): Promise<number> {
   const [verb, ...rest] = argv;
   if (verb === undefined) {
-    process.stderr.write("usage: archstrict <init|check|todo|rules|agents|recommend|fix|simulate|search|mcp> [args]\n");
+    process.stderr.write("usage: archstrict <init|check|todo|rules|agents|recommend|fix|simulate|search|hotspots|mcp> [args]\n");
     return 1;
   }
   try {
     if (verb === "mcp") return await runMcp();
     if (verb === "search") return await runSearch(rest);
+    if (verb === "hotspots") return await runHotspots(rest);
     if (verb === "simulate") return await runSimulate(rest);
     if (verb === "fix") return await runFix(rest);
     if (verb === "recommend") return await runRecommend(rest);
