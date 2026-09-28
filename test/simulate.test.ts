@@ -444,7 +444,13 @@ test.each([false, true])("a proposed exclude change changes config root eligibil
   expect(excluded ? result.resolved : result.added).toEqual([]);
 }));
 
-test("a proposed module rename resolves the old fingerprint and adds the new one", () => project(async root => {
+// A module rename alone (same glob, same directory, same real edge) is the
+// same debt this rule already treats a sibling module's own surface change
+// as (rules/public-surface.ts's own comment on `specifier`/`target`): the
+// bypass's identity is the edge (importer, specifier, resolved file), not
+// the display name of the module it reaches into, so a rename that
+// touches neither resolves nor adds one - it reads as unchanged.
+test("a proposed module rename alone leaves an existing bypass unchanged", () => project(async root => {
   put(root, "src/b/private.ts", "export const value = 1;");
   put(root, "src/a/index.ts", 'import { value } from "../b/private.js";');
   const proposed = `export default ${JSON.stringify({
@@ -452,17 +458,39 @@ test("a proposed module rename resolves the old fingerprint and adds the new one
     exclude: ["*.ts"], because: "Give the module its new public name.",
   })};`;
   const result = await simulate(root, [{ path: "archstrict.config.ts", content: proposed }], { wholeProject: true });
-  expect(result.added).toHaveLength(1);
-  expect(result.resolved).toHaveLength(1);
-  expect(result.added[0]!.rule).toBe("public-surface-bypass");
-  expect(result.resolved[0]!.rule).toBe("public-surface-bypass");
-  expect(result.added[0]!.evidence).toContain("renamed");
-  expect(result.resolved[0]!.evidence).not.toContain("renamed");
-  expect(fingerprintOf(result.added[0]!)).not.toBe(fingerprintOf(result.resolved[0]!));
-  expect(result.unchangedCount).toBe(0);
+  expect(result.added).toEqual([]);
+  expect(result.resolved).toEqual([]);
+  expect(result.unchangedCount).toBe(1);
 }));
 
 test("the project config cannot be deleted by a simulation", () => project(async root => {
   await expect(simulate(root, [{ path: "archstrict.config.ts", content: null }]))
     .rejects.toThrow("cannot delete archstrict.config.ts");
+}));
+
+// The bug this covers: a single-file module's glob names a file that
+// doesn't exist on disk yet. Before this fix, module classification
+// (module-graph.ts's own moduleRelativeDir/buildDeclaredModules) asked
+// disk directly, read "not a file", and treated the module as a
+// directory - so its surface glob resolved against the wrong base and
+// matched nothing, making the module read as entirely private. Every real
+// import into the proposed file then misread as a public-surface-bypass,
+// even the one import this test itself writes into a file the change set
+// creates in the same breath.
+test("a change set creating a single-file module's own file classifies it as existing, not as a directory", () => project(async root => {
+  put(root, "archstrict.config.ts", `export default ${JSON.stringify({
+    declaredModules: [
+      { name: "app", glob: "src/app/**" },
+      { name: "newmod", glob: "src/newmod.ts", surface: "newmod.ts" },
+    ],
+    exclude: ["*.ts"], because: "test",
+  })};`);
+  put(root, "src/app/index.ts", 'import { value } from "../newmod.js";\nexport const x = value;\n');
+  const result = await simulate(
+    root,
+    [{ path: "src/newmod.ts", content: "export const value = 1;\n" }],
+    { wholeProject: true },
+  );
+  expect(result.added.filter(v => v.rule === "public-surface-bypass")).toEqual([]);
+  expect(result.resolved.filter(v => v.rule === "public-surface-bypass")).toEqual([]);
 }));

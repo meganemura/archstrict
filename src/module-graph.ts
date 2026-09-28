@@ -336,15 +336,27 @@ function pathIsFile(path: string): boolean {
 // and not `src/index.ts/index.ts`. The parent is computed with string
 // ops, not `path.dirname`: globs are project-relative posix even on
 // Windows, and `path.dirname` would follow the platform separator.
-function moduleRelativeDir(projectRoot: string, glob: string): string {
+// `fileExists` defaults to a real disk check (every caller but simulate's
+// own overlay build); simulate passes one backed by the change set too, so
+// a file the change set creates - not yet written to disk - still counts
+// as existing here. Without that, a single-file module's glob resolves as
+// though its own file were a directory the moment simulate proposes
+// creating it, and every real import into it misreads as reaching past a
+// surface that was never computed at all.
+function moduleRelativeDir(projectRoot: string, glob: string, fileExists: (path: string) => boolean = pathIsFile): string {
   const base = moduleGlobBaseDir(glob);
-  if (!pathIsFile(join(projectRoot, base))) return base;
+  if (!fileExists(join(projectRoot, base))) return base;
   const slash = base.lastIndexOf("/");
   return slash === -1 ? "" : base.slice(0, slash);
 }
 
-function moduleRelativeGlob(projectRoot: string, glob: string, relativePath: string): string {
-  const base = moduleRelativeDir(projectRoot, glob);
+function moduleRelativeGlob(
+  projectRoot: string,
+  glob: string,
+  relativePath: string,
+  fileExists: (path: string) => boolean = pathIsFile,
+): string {
+  const base = moduleRelativeDir(projectRoot, glob, fileExists);
   const joined = base === "" ? relativePath : `${base}/${relativePath}`;
   return joined.replace(/\/{2,}/g, "/").replace(/^\//, "");
 }
@@ -400,11 +412,14 @@ export function surfaceGlobsFor(
   dm: DeclaredModule,
   projectRoot: string,
   globalDefaultSurface: string | readonly string[],
+  // See moduleRelativeDir's own comment - simulate's overlay build passes
+  // one here so a change set's own new file classifies correctly.
+  fileExists: (path: string) => boolean = pathIsFile,
 ): string[] {
   const moduleDir = join(projectRoot, moduleGlobBaseDir(dm.glob));
   const surface = effectiveSurface(dm, moduleDir, globalDefaultSurface);
   const entries = Array.isArray(surface) ? surface : [surface as string];
-  return entries.map((s) => moduleRelativeGlob(projectRoot, dm.glob, s));
+  return entries.map((s) => moduleRelativeGlob(projectRoot, dm.glob, s, fileExists));
 }
 
 function surfaceGlobsAllowingDts(
@@ -883,6 +898,14 @@ function buildDeclaredModules(
   globalDefaultSurface: string | readonly string[] = DEFAULT_SURFACE,
   relativePath: ProjectRelativePath = makeProjectRelativePosix(projectRoot),
 ): Map<string, Module> {
+  // `allFiles` is already overlay-aware by the time this runs - simulate's
+  // own fileListOverride adds a change set's new file to it before this
+  // call. A single-file module's glob names a file that may not exist on
+  // disk yet in that case; counting it as existing here (not just via a
+  // real disk stat) keeps its surface/rootIsFile classification correct
+  // for a proposed file the same way it already is for one that exists.
+  const allFilesSet = new Set(allFiles);
+  const existsForClassification = (path: string) => allFilesSet.has(path) || pathIsFile(path);
   const membership = declaredModules.map((dm) => ({ glob: dm.glob, value: dm.name }));
   const modules = new Map<string, Module>(
     declaredModules.map((dm): [string, Module] => {
@@ -892,12 +915,12 @@ function buildDeclaredModules(
         {
           name: dm.name,
           dir,
-          rootIsFile: pathIsFile(dir),
+          rootIsFile: existsForClassification(dir),
           files: [],
           surfaceFiles: [],
           surfaceName: effectiveSurface(dm, dir, globalDefaultSurface),
           friends: (dm.friends ?? []).map((f) => ({
-            fileGlob: moduleRelativeGlob(projectRoot, dm.glob, f.file),
+            fileGlob: moduleRelativeGlob(projectRoot, dm.glob, f.file, existsForClassification),
             from: f.from,
             because: f.because,
           })),
@@ -907,7 +930,10 @@ function buildDeclaredModules(
   );
 
   const surfaceGlobs = new Map(
-    declaredModules.map((dm) => [dm.name, surfaceGlobsFor(dm, projectRoot, globalDefaultSurface).map((g) => compileGlob(g))]),
+    declaredModules.map((dm) => [
+      dm.name,
+      surfaceGlobsFor(dm, projectRoot, globalDefaultSurface, existsForClassification).map((g) => compileGlob(g)),
+    ]),
   );
 
   for (const file of allFiles) {

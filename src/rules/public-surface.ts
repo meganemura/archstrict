@@ -35,6 +35,19 @@ export type Violation = {
   // Where a todo for this violation is filed: the exposed module, not the
   // importer.
   todoModule: string;
+  // The debt's own identity, apart from evidence's own explanatory prose:
+  // the literal import specifier text, and the real file it resolved to.
+  // Both are edge-intrinsic - neither depends on whether THIS bypass's own
+  // target module (targetModuleName below) gains or loses a surface,
+  // unlike evidence's own sentence, which names that module's surface
+  // state directly and so reads differently the moment it changes, even
+  // though the edge itself never moved. todo-store.ts's own fingerprintOf
+  // reads these two fields instead of evidence for this rule, so a frozen
+  // bypass survives its own target module gaining a surface step by step
+  // (declaring one surface entry, then another, while the rest of that
+  // module's real bypasses stay frozen throughout).
+  specifier: string;
+  target: string;
 };
 
 const BECAUSE = "a module's public surface is its only public surface; everything else is private";
@@ -139,5 +152,7 @@ function violationFor(
     because: BECAUSE,
     do: doText,
     todoModule: targetModuleName,
+    specifier: edge.specifier,
+    target: edge.resolvedFile,
   };
 }

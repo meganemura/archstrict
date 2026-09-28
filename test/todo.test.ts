@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -489,6 +490,159 @@ describe("todo", () => {
 
       const result = await todo(root);
       expect(result.firstRun).toBe(false);
+    });
+  });
+
+  // The bug this covers: freezing three bypasses into a surface-less
+  // module, then giving that module a surface, used to reword every OTHER
+  // bypass's own evidence too ("has no index.ts" -> "other than its
+  // a.ts") - a frozen entry's stored fingerprint was hashed from that old
+  // sentence, so it stopped matching the reworded violation and read as
+  // an active, unfreezable violation, even though the edge it names never
+  // moved. An agent moving a module to a surface file by file could never
+  // finish without every earlier step un-freezing everyone else's debt.
+  test("giving a module a surface reworks the OTHER frozen bypasses' evidence without un-freezing them", async () => {
+    await withTempProject(async (root) => {
+      mkdirSync(join(root, "src", "shared"), { recursive: true });
+      mkdirSync(join(root, "src", "app"), { recursive: true });
+      writeFileSync(join(root, "src", "shared", "a.ts"), "export const a = 1;\n");
+      writeFileSync(join(root, "src", "shared", "b.ts"), "export const b = 1;\n");
+      writeFileSync(join(root, "src", "shared", "c.ts"), "export const c = 1;\n");
+      writeFileSync(join(root, "src", "app", "usesA.ts"), 'import { a } from "../shared/a.js";\nexport const x = a;\n');
+      writeFileSync(join(root, "src", "app", "usesB.ts"), 'import { b } from "../shared/b.js";\nexport const y = b;\n');
+      writeFileSync(join(root, "src", "app", "usesC.ts"), 'import { c } from "../shared/c.js";\nexport const z = c;\n');
+      const configPath = join(root, "archstrict.config.ts");
+      const configWithSurface = (surface: string | undefined) => `export default ${JSON.stringify({
+        declaredModules: [
+          { name: "shared", glob: "src/shared/**", ...(surface !== undefined ? { surface } : {}) },
+          { name: "app", glob: "src/app/**", surface: "index.ts" },
+        ],
+        exclude: ["archstrict.config.ts"],
+        because: "test",
+      })};`;
+      writeFileSync(configPath, configWithSurface(undefined));
+
+      const before = await check(root);
+      const bypasses = before.violations.filter((v) => v.rule === "public-surface-bypass");
+      expect(bypasses).toHaveLength(3);
+      expect(bypasses.every((v) => v.evidence.includes("which has no"))).toBe(true);
+
+      const frozen = await todo(root);
+      expect(frozen.added).toBe(3);
+      expect((await check(root)).violations).toHaveLength(0);
+
+      // Give the module a surface naming one of the three internal files -
+      // the other two importers now read a reworded sentence ("other than
+      // its a.ts" instead of "which has no ...").
+      writeFileSync(configPath, configWithSurface("a.ts"));
+      const afterSurface = await check(root);
+      const stillBypassing = afterSurface.violations.filter((v) => v.rule === "public-surface-bypass");
+      expect(stillBypassing).toHaveLength(0); // b and c: still frozen, not reported as active bypasses
+      // a's own frozen entry now matches nothing at all (a is no longer a
+      // violation, since it resolved to the module's own new surface) -
+      // that entry is correctly flagged stale (only `archstrict todo`
+      // itself prunes it), not silently kept forever.
+      expect(afterSurface.violations.filter((v) => v.rule === "stale-todo")).toHaveLength(1);
+      expect(afterSurface.todo).toBe(2); // b and c still suppressed; a is no longer a violation at all
+
+      // Confirm the evidence really did change (the bug this test guards
+      // against never fires if the sentence stayed the same) - the frozen
+      // entry's own stored evidence is still the OLD wording, since todo
+      // only ever prunes or freezes, never rewrites a surviving entry.
+      const todoFile = JSON.parse(readFileSync(join(root, "src", "shared", "archstrict.todo.json"), "utf8"));
+      expect(todoFile.entries).toHaveLength(3); // not yet pruned - todo never adds, but also never auto-prunes on check
+      const bEntry = todoFile.entries.find((e: { path: string }) => e.path.endsWith("usesB.ts"));
+      expect(bEntry.evidence).toContain("which has no"); // frozen at the OLD wording; still matches the reworded live violation
+
+      // A later, prune-only run removes exactly the one entry (a) that
+      // stopped being a violation at all - b and c stay frozen.
+      const pruneResult = await todo(root);
+      expect(pruneResult.firstRun).toBe(false);
+      expect(pruneResult.pruned).toBe(1);
+      const prunedFile = JSON.parse(readFileSync(join(root, "src", "shared", "archstrict.todo.json"), "utf8"));
+      expect(prunedFile.entries).toHaveLength(2);
+      expect((await check(root)).violations).toHaveLength(0);
+    });
+  });
+
+  // Same family of bug as the surface one above, for rule 7's tag-order:
+  // its own evidence embeds the FULL configured sequence purely to explain
+  // the direction, not to name the edge. Adding a value to that sequence
+  // that this edge never touches must not un-freeze an already-frozen
+  // tag-order entry.
+  test("a frozen tag-order entry survives an unrelated value added to its own sequence", async () => {
+    await withTempProject(async (root) => {
+      mkdirSync(join(root, "src", "core"), { recursive: true });
+      mkdirSync(join(root, "src", "ui"), { recursive: true });
+      writeFileSync(join(root, "src", "core", "a.ts"), 'import { b } from "../ui/b.js";\nexport const a = b;\n');
+      writeFileSync(join(root, "src", "ui", "b.ts"), "export const b = 1;\n");
+      const configPath = join(root, "archstrict.config.ts");
+      const configWithSequence = (sequence: string[]) => `export default ${JSON.stringify({
+        declaredModules: [{ name: "all", glob: "src/**", surface: "index.ts" }],
+        classifyByDirectoryName: { tagNamespace: "layer", names: ["core", "ui", "mid"] },
+        edges: { order: [{ tagNamespace: "layer", sequence: { "": sequence }, because: "core stays innermost" }] },
+        exclude: ["archstrict.config.ts"],
+        because: "test",
+      })};`;
+      writeFileSync(configPath, configWithSequence(["core", "ui"]));
+
+      const before = await check(root);
+      const orderViolations = before.violations.filter((v) => v.rule === "tag-order");
+      expect(orderViolations).toHaveLength(1);
+      expect(orderViolations[0]!.evidence).toContain("core -> ui");
+
+      const frozen = await todo(root);
+      expect(frozen.added).toBe(1);
+      expect((await check(root)).violations).toHaveLength(0);
+
+      // Insert an unrelated value into the SAME sequence - the edge's own
+      // two layers (core, ui) are unaffected, but evidence's own displayed
+      // sequence now reads differently.
+      writeFileSync(configPath, configWithSequence(["core", "mid", "ui"]));
+      const afterInsert = await check(root);
+      expect(afterInsert.violations.filter((v) => v.rule === "tag-order")).toHaveLength(0);
+      expect(afterInsert.violations.some((v) => v.rule === "stale-todo")).toBe(false);
+      expect(afterInsert.todo).toBe(1);
+    });
+  });
+
+  // A later prune-only run rewrites a legacy public-surface-bypass entry
+  // (frozen before specifier/target existed) to the current format the
+  // moment it's confirmed to still match - self-healing, the same as
+  // readTodo already does for a legacy absolute `path`. A later run then
+  // matches it by the primary fingerprint lookup alone, with no evidence
+  // parse at all.
+  test("a prune-only run upgrades a legacy bypass entry it still matches to the current, specifier/target format", async () => {
+    await withTempProject(async (unresolvedRoot) => {
+      const root = writeSurfaceProject(unresolvedRoot);
+      await todo(root); // freezes in the current format
+      const todoFile = join(root, "src", "b", "archstrict.todo.json");
+      const frozen = JSON.parse(readFileSync(todoFile, "utf8"));
+      expect(frozen.entries).toHaveLength(1);
+      expect(frozen.entries[0].specifier).toBeDefined();
+
+      // Roll that one entry back to the legacy, pre-migration shape: no
+      // specifier/target, and its fingerprint computed HEAD's own old way.
+      const legacy = {
+        rule: frozen.entries[0].rule,
+        path: frozen.entries[0].path,
+        evidence: frozen.entries[0].evidence,
+      };
+      const legacyFingerprint = createHash("sha256")
+        .update(`${legacy.rule}\n${legacy.path}\n${legacy.evidence}`)
+        .digest("hex").slice(0, 12);
+      writeFileSync(todoFile, JSON.stringify({ entries: [{ fingerprint: legacyFingerprint, ...legacy }] }, null, 2));
+
+      const result = await todo(root);
+      expect(result.firstRun).toBe(false);
+      expect(result.pruned).toBe(0); // still matches - not dropped
+
+      const upgraded = JSON.parse(readFileSync(todoFile, "utf8"));
+      expect(upgraded.entries).toHaveLength(1);
+      expect(upgraded.entries[0].specifier).toBeDefined();
+      expect(upgraded.entries[0].target).toBeDefined();
+
+      expect((await check(root)).violations).toHaveLength(0);
     });
   });
 });

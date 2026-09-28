@@ -35,7 +35,7 @@ import {
   type EdgeRuleCoverage,
 } from "../rules/constraints.js";
 import { checkConfigMeaning, type Prover, type Violation as ConfigMeaningViolation } from "../rules/config-meaning.js";
-import { fingerprintOf, readTodo, type TodoEntry } from "../todo-store.js";
+import { buildTodoIndex, EMPTY_TODO_INDEX, findMatchingEntry, readTodo, type TodoEntry } from "../todo-store.js";
 import {
   createConfigLocator,
   declaredModulePointerForName,
@@ -556,6 +556,14 @@ export function applyTodo(graph: ModuleGraph, config: Config, result: CheckResul
   const strict = new Set(config.strict ?? []);
   const locator = options.configLocator ?? createConfigLocator(config);
   const remaining: AnyViolation[] = [];
+  // Keyed by the matched entry's OWN stored fingerprint string, not the
+  // entry object: a real project can carry more than one stored entry
+  // with identical content (the same edge frozen twice - runRules itself
+  // can report the same edge more than once), and buildTodoIndex's own
+  // byFingerprint map keeps only the last one written for a given key.
+  // Tracking by string, not by which particular object a lookup happened
+  // to return, means every duplicate with that fingerprint reads as
+  // matched below, the same as a plain string-set comparison always did.
   const matchedByModule = new Map<string, Set<string>>();
   let suppressed = 0;
 
@@ -574,6 +582,19 @@ export function applyTodo(graph: ModuleGraph, config: Config, result: CheckResul
     }
     return entries;
   }
+  // Indexed once per module (todo-store.ts's own buildTodoIndex), reusing
+  // the same cached entries `todoFor` reads once per module: a lookup per
+  // violation would otherwise recompute a fresh sha256 and rescan every
+  // entry, and a module can carry tens of thousands of both.
+  const todoIndexByModuleDir = new Map<string, ReturnType<typeof buildTodoIndex>>();
+  function todoIndexFor(moduleDir: string) {
+    let index = todoIndexByModuleDir.get(moduleDir);
+    if (index === undefined) {
+      index = buildTodoIndex(todoFor(moduleDir));
+      todoIndexByModuleDir.set(moduleDir, index);
+    }
+    return index;
+  }
 
   for (const v of result.violations) {
     // A module configured to stay clean has its own violations never
@@ -586,16 +607,16 @@ export function applyTodo(graph: ModuleGraph, config: Config, result: CheckResul
       continue;
     }
     const targetModule = graph.modules.get(v.todoModule);
-    const entries = targetModule === undefined ? [] : todoFor(targetModule.dir);
-    const fp = fingerprintOf(v);
-    if (entries.some((e) => e.fingerprint === fp)) {
+    const index = targetModule === undefined ? EMPTY_TODO_INDEX : todoIndexFor(targetModule.dir);
+    const matchedEntry = findMatchingEntry(index, v, graph.relativePath);
+    if (matchedEntry !== undefined) {
       suppressed++;
       let matched = matchedByModule.get(v.todoModule);
       if (matched === undefined) {
         matched = new Set();
         matchedByModule.set(v.todoModule, matched);
       }
-      matched.add(fp);
+      matched.add(matchedEntry.fingerprint);
     } else {
       remaining.push(v);
     }

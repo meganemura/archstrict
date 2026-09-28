@@ -574,7 +574,7 @@ describe("check", () => {
       // hand-written expected object, not a snapshot, so a shape change
       // here is a deliberate edit to this test, not an accepted diff.
       expect(Object.keys(violation).sort()).toEqual(
-        ["because", "column", "config", "evidence", "line", "do", "path", "rule", "todoModule"].sort(),
+        ["because", "column", "config", "evidence", "line", "do", "path", "rule", "specifier", "target", "todoModule"].sort(),
       );
       expect(JSON.parse(JSON.stringify(result))).toEqual({
         modules: 2,
@@ -601,6 +601,8 @@ describe("check", () => {
             config: violation.config,
             do: violation.do,
             todoModule: violation.todoModule,
+            specifier: violation.specifier,
+            target: violation.target,
           },
         ],
       });

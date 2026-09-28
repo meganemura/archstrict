@@ -3,6 +3,7 @@ import { fingerprintOf, readTodo, todoPath, writeTodo } from "../src/todo-store.
 import * as todoStore from "../src/todo-store.js";
 import * as hegel from "@hegeldev/hegel";
 import * as gen from "@hegeldev/hegel/generators";
+import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
@@ -85,6 +86,127 @@ describe("fingerprintOf", () => {
       evidence: "'OtherInternal', declared in 'src/m/hidden.ts', is never exported by name from module 'm' - referenced by 'A'",
     });
     expect(a).not.toBe(b);
+  });
+
+  // A module's surfaceFiles can grow from one entry to two (the same
+  // step-by-step surface move this ticket is about) - checkTypeLeaks
+  // anchors `path` at whichever surface file's own qualifying export site
+  // sorts earliest, an accident of the new file's own line/column, not
+  // part of the leak's own identity. Excluding `path` (like "cycle"
+  // already does, for the same "this field is an implementation detail of
+  // which one the walk picked" reason) keeps an already-frozen leak frozen
+  // through that re-anchoring.
+  test("a type-leak violation's fingerprint excludes path too, so a second surface file re-anchoring it doesn't un-freeze it", () => {
+    const before = fingerprintOf({
+      rule: "type-leak",
+      path: "/src/m/index.ts",
+      evidence: "'Internal', declared in 'src/m/hidden.ts', is never exported by name from module 'm' - referenced by 'A'",
+    });
+    const afterSecondSurfaceReanchors = fingerprintOf({
+      rule: "type-leak",
+      path: "/src/m/other-surface.ts",
+      evidence: "'Internal', declared in 'src/m/hidden.ts', is never exported by name from module 'm' - referenced by 'A'",
+    });
+    expect(afterSecondSurfaceReanchors).toBe(before);
+  });
+
+  test("a tag-order violation's fingerprint excludes the configured sequence display, so an unrelated value added to it doesn't un-freeze an existing entry", () => {
+    const before = fingerprintOf({
+      rule: "tag-order",
+      path: "/src/ui/widget.ts",
+      evidence: "'./core.js' reaches 'layer:core' from 'layer:ui' (layer sequence: core -> ui)",
+    });
+    const afterUnrelatedValueAdded = fingerprintOf({
+      rule: "tag-order",
+      path: "/src/ui/widget.ts",
+      evidence: "'./core.js' reaches 'layer:core' from 'layer:ui' (layer sequence: core -> mid -> ui)",
+    });
+    expect(afterUnrelatedValueAdded).toBe(before);
+  });
+
+  test("a tag-order violation's fingerprint still distinguishes a genuinely different edge", () => {
+    const a = fingerprintOf({
+      rule: "tag-order",
+      path: "/src/ui/widget.ts",
+      evidence: "'./core.js' reaches 'layer:core' from 'layer:ui' (layer sequence: core -> ui)",
+    });
+    const b = fingerprintOf({
+      rule: "tag-order",
+      path: "/src/ui/widget.ts",
+      evidence: "'./other.js' reaches 'layer:core' from 'layer:ui' (layer sequence: core -> ui)",
+    });
+    expect(a).not.toBe(b);
+  });
+
+  test("a public-surface-bypass violation's fingerprint keys off specifier/target, not evidence's own prose, when both are present", () => {
+    hegel.test(tc => {
+      const path = tc.draw(gen.fromRegex("src/[a-z]{1,6}/[a-z]{1,6}\\.ts"));
+      const specifier = tc.draw(gen.fromRegex("\\.\\./[a-z]{1,6}\\.js"));
+      const target = tc.draw(gen.fromRegex("src/[a-z]{1,6}/[a-z]{1,6}\\.ts"));
+      const evidenceA = tc.draw(gen.fromRegex("[a-z]{1,20}"));
+      const evidenceB = tc.draw(gen.fromRegex("[a-z]{1,20}"));
+      const base = { rule: "public-surface-bypass", path, specifier, target };
+
+      // Changing only the explanatory text - evidence's own sentence -
+      // never changes the key.
+      expect(fingerprintOf({ ...base, evidence: evidenceA })).toBe(fingerprintOf({ ...base, evidence: evidenceB }));
+
+      // Changing the importing file, the specifier, or the resolved
+      // target always changes it (each compared against a genuinely
+      // different draw, so the test can't pass by both draws colliding).
+      const otherPath = tc.draw(gen.fromRegex("src/[a-z]{1,6}/[a-z]{1,6}\\.ts"));
+      tc.assume(otherPath !== path);
+      expect(fingerprintOf({ ...base, path: otherPath, evidence: evidenceA }))
+        .not.toBe(fingerprintOf({ ...base, evidence: evidenceA }));
+
+      const otherSpecifier = tc.draw(gen.fromRegex("\\.\\./[a-z]{1,6}\\.js"));
+      tc.assume(otherSpecifier !== specifier);
+      expect(fingerprintOf({ ...base, specifier: otherSpecifier, evidence: evidenceA }))
+        .not.toBe(fingerprintOf({ ...base, evidence: evidenceA }));
+
+      const otherTarget = tc.draw(gen.fromRegex("src/[a-z]{1,6}/[a-z]{1,6}\\.ts"));
+      tc.assume(otherTarget !== target);
+      expect(fingerprintOf({ ...base, target: otherTarget, evidence: evidenceA }))
+        .not.toBe(fingerprintOf({ ...base, evidence: evidenceA }));
+    }, { testCases: 30 });
+  });
+});
+
+describe("findMatchingEntry's migration path for a legacy public-surface-bypass entry", () => {
+  test("an entry frozen before specifier/target existed still matches the same edge, reworded evidence and all", () => {
+    // HEAD's own formula, reproduced exactly (not imported): sha256 of
+    // `rule\npath\nevidence`, hex, sliced to 12 - the shape every entry
+    // frozen before this fix actually has on disk.
+    function legacyFingerprint(rule: string, path: string, evidence: string): string {
+      return createHash("sha256").update(`${rule}\n${path}\n${evidence}`).digest("hex").slice(0, 12);
+    }
+    const path = "src/app/importer.ts";
+    const oldEvidence = "'../shared/internal.js' resolved to module 'shared', which has no index.ts";
+    const legacyEntry = {
+      fingerprint: legacyFingerprint("public-surface-bypass", path, oldEvidence),
+      rule: "public-surface-bypass",
+      path,
+      evidence: oldEvidence,
+      // no specifier/target: exactly what an old entry lacks.
+    };
+    const index = todoStore.buildTodoIndex([legacyEntry]);
+
+    // The module gained a surface: the SAME edge now reads a different
+    // sentence, and carries the structured fields every fresh violation
+    // has.
+    const reworded = {
+      rule: "public-surface-bypass" as const,
+      path: "/abs/root/src/app/importer.ts",
+      evidence: "'../shared/internal.js' resolved to a file inside module 'shared' other than its index.ts",
+      specifier: "../shared/internal.js",
+      target: "/abs/root/src/shared/internal.ts",
+    };
+    const relativePath = (p: string) => p.replace("/abs/root/", "");
+    expect(todoStore.findMatchingEntry(index, reworded, relativePath)).toBe(legacyEntry);
+
+    // A genuinely different specifier at the same path must not match.
+    const different = { ...reworded, specifier: "../shared/other.js" };
+    expect(todoStore.findMatchingEntry(index, different, relativePath)).toBeUndefined();
   });
 });
 
