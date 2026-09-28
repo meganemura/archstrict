@@ -227,7 +227,7 @@ the same name, and nothing suggests one copied another. This is an
 observation about a real, independently-arrived-at idea for managing
 existing boundary debt over time, not a documented convention any tool
 ships - and it is the same shape, arrived at from a different direction, as
-archstrict's own per-module todo file: a frozen list that can only shrink.
+archstrict's own todo file: a frozen list that can only shrink.
 
 **Tags from sources other than a directory name (observations, not counted
 patterns).** Two repositories in the second sample derive a file's tag from

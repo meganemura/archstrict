@@ -6,8 +6,7 @@ import { createInterface } from "node:readline";
 import { resolve } from "node:path";
 import { compileGlob } from "../classify.js";
 import { buildModuleGraphForRules, moduleForDeclaredFile, type ModuleGraph } from "../module-graph.js";
-import { readTodo } from "../todo-store.js";
-import { applyTodo, loadConfig, runRules } from "./check.js";
+import { applyTodo, loadConfig, readCurrentTodo, runRules } from "./check.js";
 
 export type RuleCounts = Record<string, number>;
 
@@ -228,6 +227,7 @@ export async function hotspots(projectRoot: string, since?: string): Promise<Hot
   const summary = summarizeCommitHistory([...graph.modules.keys()], history.commits);
   const fan = fanByModule(graph);
   const boundaries = graphBoundaries(graph);
+  const currentTodo = readCurrentTodo(graph);
 
   const modules = [...graph.modules.values()].map((module): HotspotModule => {
     const commits = summary.commitsByModule.get(module.name) ?? 0;
@@ -238,7 +238,7 @@ export async function hotspots(projectRoot: string, since?: string): Promise<Hot
       changedLines: summary.linesByModule.get(module.name) ?? 0,
       fanIn,
       fanOut: fan.fanOut.get(module.name) ?? 0,
-      frozenDebtByRule: countRules(readTodo(module.dir, graph.rootDir).map((entry) => entry.rule)),
+      frozenDebtByRule: countRules((currentTodo.entriesByModule.get(module.name) ?? []).map((entry) => entry.rule)),
       activeViolationsByRule: countRules(activeByModule.get(module.name) ?? []),
       score: commits * fanIn,
       // `--module` scopes the whole rule set to one module; a single file

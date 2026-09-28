@@ -16,7 +16,7 @@ export type Prover = (request: {
 }) => Promise<{ answers: Record<string, ChoiceAnswer> }>;
 
 // Like src/rules/empty-rule.ts, these findings use config.configPath and have no owning module to freeze debt against.
-// isFreezable() in src/verbs/check.ts tests for todoModule; omitting that field excludes these findings from todo files.
+// isFreezable() in src/verbs/check.ts tests for todoModule; omitting that field excludes these findings from archstrict.todo.json.
 type BaseFinding = {
   rule: "config-meaning";
   path: string;

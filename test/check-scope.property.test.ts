@@ -16,7 +16,7 @@ import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
 import { buildModuleGraph } from "../src/module-graph.js";
 import { applyTodo, check, filterToFile, runRules, type AnyViolation } from "../src/verbs/check.js";
-import { fingerprintOf, readTodo, writeTodo } from "../src/todo-store.js";
+import { fingerprintOf, readTodoFile, writeTodoFile } from "../src/todo-store.js";
 import { todo } from "../src/verbs/todo.js";
 
 const CONFIG = { because: "Keep app callers off shared's internals." };
@@ -65,7 +65,6 @@ describe("check <file> scoping equals filtering the full result", () => {
         // fixture exercises both a match and a real miss.
         const toFreeze = bypassViolations.filter((_, i) => frozenMask[i]);
         const entries = toFreeze.map((v) => ({
-          fingerprint: fingerprintOf(v),
           rule: v.rule,
           path: v.path,
           evidence: v.evidence,
@@ -73,13 +72,12 @@ describe("check <file> scoping equals filtering the full result", () => {
         if (includeStaleEntry) {
           const stalePath = realpathSync(resolve(root)) + "/src/app/phantom.ts";
           entries.push({
-            fingerprint: fingerprintOf({ rule: "public-surface-bypass", path: stalePath, evidence: "stale fixture entry" }),
             rule: "public-surface-bypass",
             path: stalePath,
             evidence: "stale fixture entry",
           });
         }
-        writeTodo(sharedDir, entries);
+        writeTodoFile(root, new Map([["shared", entries]]));
 
         // focusIndex selects one of: an importer (has a real violation,
         // frozen or not), shared/index.ts (the target's own surface - no
@@ -166,20 +164,6 @@ describe("check() end-to-end: a scoped call equals filterToFile(a full call)", (
     breakCycleAfterFreeze: boolean;
   };
 
-  // Every module a todo entry could ever be filed under, by its own
-  // directory - hardcoded from this function's own fixture layout, not
-  // read back off a built graph, so the oracle below never depends on the
-  // same module-graph code the property is checking.
-  function moduleDirs(root: string): { name: string; dir: string }[] {
-    return [
-      { name: "shared", dir: join(root, "src", "shared") },
-      { name: "app", dir: join(root, "src", "app") },
-      { name: "cyca", dir: join(root, "src", "cyca.ts") },
-      { name: "cycb", dir: join(root, "src", "cycb.ts") },
-      { name: "banned", dir: join(root, "src", "banned") },
-    ];
-  }
-
   function writeFixture(root: string, opts: FixtureOptions): void {
     mkdirSync(join(root, "src", "shared"), { recursive: true });
     mkdirSync(join(root, "src", "app"), { recursive: true });
@@ -230,29 +214,30 @@ describe("check() end-to-end: a scoped call equals filterToFile(a full call)", (
     );
   }
 
-  // Which of a module's own todo entries the full run's own applyTodo call
-  // suppressed (matched a still-real violation), restricted to the ones
-  // recorded at `focus` - reads each module's real todo file directly
-  // (todo-store.ts's own readTodo, not runRules/applyTodo), and reads
-  // which entries `fullViolations` already reports as `stale-todo` (the
-  // ones NOT suppressed) - every other entry, with no `strict` module in
-  // this fixture, was suppressed.
+  // Which of the project's own todo entries the full run's own applyTodo
+  // call suppressed (matched a still-real violation), restricted to the
+  // ones recorded at `focus` - reads the real archstrict.todo.json
+  // directly (todo-store.ts's own readTodoFile, not runRules/applyTodo),
+  // and identifies which entries `fullViolations` already reports as
+  // `stale-todo` by each stale-todo violation's own line:column, which
+  // check.ts's own applyTodo sets to the exact entry's position in the
+  // file (todo-store.ts's own ParsedTodoFile.entryLocation) - every other
+  // entry, with no `strict` module in this fixture, was suppressed.
   function suppressedAtFocusOracle(
     root: string,
-    fullViolations: readonly { rule: string; path: string; evidence: string }[],
+    fullViolations: readonly { rule: string; line: number; column: number }[],
     focus: string,
   ): number {
+    const parsed = readTodoFile(root);
+    if (parsed === undefined) return 0;
+    const staleLocations = new Set(
+      fullViolations.filter((v) => v.rule === "stale-todo").map((v) => `${v.line}:${v.column}`),
+    );
     let count = 0;
-    for (const { dir } of moduleDirs(root)) {
-      const entries = readTodo(dir, root);
-      if (entries.length === 0) continue;
-      const staleFingerprints = new Set(
-        fullViolations
-          .filter((v) => v.rule === "stale-todo" && resolve(v.path) === resolve(dir))
-          .map((v) => v.evidence.match(/^todo entry (\S+) /)?.[1]),
-      );
+    for (const entries of parsed.modules.values()) {
       for (const entry of entries) {
-        if (staleFingerprints.has(entry.fingerprint)) continue;
+        const at = parsed.entryLocation.get(entry);
+        if (at !== undefined && staleLocations.has(`${at.line}:${at.column}`)) continue;
         if (resolve(join(root, entry.path)) === focus) count++;
       }
     }

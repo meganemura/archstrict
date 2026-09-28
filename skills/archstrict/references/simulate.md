@@ -79,11 +79,11 @@ A config entry with `content: null` fails with `cannot delete archstrict.config.
 
 ## Todo freeze
 
-Both checks apply the existing todo files before the fingerprint comparison.
+Both checks apply the existing archstrict.todo.json before the fingerprint comparison.
 A violation suppressed by a matching todo entry is absent from the baseline violation list.
 If the proposal fixes that violation, it does not appear in `resolved`.
 Instead, a frozen entry that no longer matches can produce an added `stale-todo` violation.
-Simulation leaves the todo files unchanged.
+Simulation leaves archstrict.todo.json unchanged.
 
 ## MCP
 

@@ -23,7 +23,7 @@ import { check } from "../src/verbs/check.js";
 import * as writes from "../src/verbs/agents.js";
 import * as graphs from "../src/module-graph.js";
 import * as warmGraphs from "../src/warm-graph.js";
-import { fingerprintOf, writeTodo } from "../src/todo-store.js";
+import { fingerprintOf, writeTodoFile } from "../src/todo-store.js";
 
 type Fixture = { root: string; surface: string; put: (path: string, text: string) => void; options: graphs.BuildOptions };
 async function project(run: (fixture: Fixture) => Promise<void>) {
@@ -188,7 +188,7 @@ test("dry-run preserves the entire project and reports the real run's statements
 
 test("frozen type leak stays untouched", () => project(async ({ root, surface }) => {
   const leak = (await check(root)).violations.find(v => v.rule === "type-leak")!;
-  writeTodo(join(root, "src/app"), [{ fingerprint: fingerprintOf(leak), rule: leak.rule, path: leak.path, evidence: leak.evidence }]);
+  writeTodoFile(root, new Map([["app", [{ rule: leak.rule, path: leak.path, evidence: leak.evidence }]]]));
   const before = readFileSync(surface);
   const spy = vi.spyOn(writes, "writeTarget");
   expect((await fix(root)).fixed).toEqual([]);

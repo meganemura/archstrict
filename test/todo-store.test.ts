@@ -1,47 +1,15 @@
 import { describe, expect, test, vi } from "vitest";
-import { fingerprintOf, readTodo, todoPath, writeTodo } from "../src/todo-store.js";
+import { parseTodoFileText, readTodoFile, serializeTodoFile, writeTodoFile } from "../src/todo-store.js";
 import * as todoStore from "../src/todo-store.js";
 import * as hegel from "@hegeldev/hegel";
 import * as gen from "@hegeldev/hegel/generators";
-import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, sep } from "node:path";
+import { join } from "node:path";
 import { buildModuleGraph } from "../src/module-graph.js";
 import { runRules, applyTodo } from "../src/verbs/check.js";
 
-describe("todoPath", () => {
-  // A file-shaped module root must never produce `<file>/archstrict.todo.json`:
-  // that path is what makes `todo` throw ENOTDIR. A directory root keeps the
-  // in-directory file so existing modules do not move their todo.
-  test("a file root stores the todo beside the file; a directory root stores it inside", () => {
-    hegel.test(tc => {
-      const name = tc.draw(gen.fromRegex("[a-z]{1,12}"));
-      const asFile = tc.draw(gen.booleans());
-      const root = mkdtempSync(join(tmpdir(), "archstrict-todo-path-"));
-      try {
-        const moduleRoot = join(root, asFile ? `${name}.ts` : name);
-        if (asFile) writeFileSync(moduleRoot, "export const x = 1;\n");
-        else mkdirSync(moduleRoot);
-
-        const path = todoPath(moduleRoot);
-        const entry = { fingerprint: "abc123abc123", rule: "public-surface-bypass", path: moduleRoot, evidence: "e" };
-        writeTodo(moduleRoot, [entry]);
-        expect(readTodo(moduleRoot)).toEqual([entry]);
-        expect(existsSync(path)).toBe(true);
-        if (asFile) {
-          expect(path).toBe(join(root, `${name}.ts.archstrict.todo.json`));
-          expect(path.startsWith(moduleRoot + sep)).toBe(false);
-          expect(existsSync(join(moduleRoot, "archstrict.todo.json"))).toBe(false);
-        } else {
-          expect(path).toBe(join(moduleRoot, "archstrict.todo.json"));
-        }
-      } finally {
-        rmSync(root, { recursive: true, force: true });
-      }
-    }, { testCases: 20 });
-  });
-});
+const { fingerprintOf } = todoStore;
 
 describe("fingerprintOf", () => {
   test("a cycle violation's fingerprint excludes path, so it survives which file's edge happened to be reported", () => {
@@ -174,16 +142,9 @@ describe("fingerprintOf", () => {
 
 describe("findMatchingEntry's migration path for a legacy public-surface-bypass entry", () => {
   test("an entry frozen before specifier/target existed still matches the same edge, reworded evidence and all", () => {
-    // HEAD's own formula, reproduced exactly (not imported): sha256 of
-    // `rule\npath\nevidence`, hex, sliced to 12 - the shape every entry
-    // frozen before this fix actually has on disk.
-    function legacyFingerprint(rule: string, path: string, evidence: string): string {
-      return createHash("sha256").update(`${rule}\n${path}\n${evidence}`).digest("hex").slice(0, 12);
-    }
     const path = "src/app/importer.ts";
     const oldEvidence = "'../shared/internal.js' resolved to module 'shared', which has no index.ts";
     const legacyEntry = {
-      fingerprint: legacyFingerprint("public-surface-bypass", path, oldEvidence),
       rule: "public-surface-bypass",
       path,
       evidence: oldEvidence,
@@ -217,20 +178,15 @@ describe("findMatchingEntry's migration path for a legacy public-surface-bypass 
 // step, pre-fix, hashed straight from the live violation before
 // relativizing anything for storage). buildTodoIndex must recompute a
 // fresh, matching key from each such entry's own stored fields with
-// today's algorithm - not trust its stored `fingerprint` string, which is
-// permanently a hash of the OLD formula - so `check` reads them as still
-// matching with zero stale-todo findings, not just `todo` after a fresh
-// prune.
+// today's algorithm - not trust a stored fingerprint string, which this
+// shape no longer even carries - so `check` reads them as still matching
+// with zero stale-todo findings, not just `todo` after a fresh prune.
 describe("an old-format todo file keeps matching today's algorithm, for every rule whose formula changed", () => {
-  function preFixFingerprint(rule: string, path: string, evidence: string): string {
-    const key = rule === "cycle" ? `${rule}\n${evidence}` : `${rule}\n${path}\n${evidence}`;
-    return createHash("sha256").update(key).digest("hex").slice(0, 12);
-  }
   const relativePath = (p: string) => p.replace("/root/", "");
 
   test("cycle: already path-excluded pre-fix too, so an old entry matches unchanged", () => {
     const evidence = "a -> b -> a";
-    const entry = { fingerprint: preFixFingerprint("cycle", "src/a/module.ts", evidence), rule: "cycle", path: "src/a/module.ts", evidence };
+    const entry = { rule: "cycle", path: "src/a/module.ts", evidence };
     const index = todoStore.buildTodoIndex([entry]);
     const live = { rule: "cycle", path: "/root/src/a/renamed.ts", evidence };
     expect(todoStore.findMatchingEntry(index, live, relativePath)).toBe(entry);
@@ -239,7 +195,7 @@ describe("an old-format todo file keeps matching today's algorithm, for every ru
   test("type-leak: an old entry frozen with path included (pre-fix) still matches after a second surface file re-anchors path", () => {
     const oldPath = "src/m/index.ts";
     const evidence = "'Internal', declared in 'src/m/hidden.ts', is never exported by name from module 'm' - referenced by 'A'";
-    const entry = { fingerprint: preFixFingerprint("type-leak", oldPath, evidence), rule: "type-leak", path: oldPath, evidence };
+    const entry = { rule: "type-leak", path: oldPath, evidence };
     const index = todoStore.buildTodoIndex([entry]);
     const live = {
       rule: "type-leak",
@@ -252,7 +208,7 @@ describe("an old-format todo file keeps matching today's algorithm, for every ru
   test("tag-order: an old entry frozen with the full sequence in evidence still matches after an unrelated value is inserted", () => {
     const path = "src/ui/widget.ts";
     const evidence = "'./core.js' reaches 'layer:core' from 'layer:ui' (layer sequence: core -> ui)";
-    const entry = { fingerprint: preFixFingerprint("tag-order", path, evidence), rule: "tag-order", path, evidence };
+    const entry = { rule: "tag-order", path, evidence };
     const index = todoStore.buildTodoIndex([entry]);
     const live = {
       rule: "tag-order",
@@ -285,36 +241,119 @@ describe("buildTodoEntry's round trip: a freshly frozen entry always matches the
   });
 });
 
-
-describe("readTodo's optional projectRoot normalization", () => {
-  test("normalizes a legacy absolute path when projectRoot is given; leaves it untouched otherwise", () => {
+describe("readTodoFile's projectRoot normalization", () => {
+  test("normalizes an absolute stored path against the project root it's read with", () => {
     const root = mkdtempSync(join(tmpdir(), "archstrict-todo-normalize-"));
     try {
-      const moduleDir = join(root, "src", "shared");
-      mkdirSync(moduleDir, { recursive: true });
       const importer = join(root, "src", "app", "module.ts");
-      mkdirSync(join(root, "src", "app"), { recursive: true });
-      writeFileSync(importer, "export const x = 1;\n");
-      const legacyEntry = {
-        fingerprint: "abc123abc123",
-        rule: "public-surface-bypass",
-        path: importer,
-        evidence: "e",
-      };
-      writeTodo(moduleDir, [legacyEntry]);
+      writeTodoFile(root, new Map([["shared", [{ rule: "public-surface-bypass", path: importer, evidence: "e" }]]]));
 
-      // No projectRoot: entry comes back exactly as stored, absolute path
-      // untouched - the parameter is genuinely optional, not a breaking
-      // change for a caller that doesn't pass it.
-      expect(readTodo(moduleDir)).toEqual([legacyEntry]);
-
-      // With projectRoot: the same on-disk absolute path normalizes to
-      // its project-relative POSIX form.
-      const normalized = readTodo(moduleDir, root);
-      expect(normalized).toEqual([{ ...legacyEntry, path: "src/app/module.ts" }]);
+      const parsed = readTodoFile(root)!;
+      expect(parsed.modules.get("shared")).toEqual([
+        { rule: "public-surface-bypass", path: "src/app/module.ts", evidence: "e" },
+      ]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe("readTodoFile's schemaVersion guard", () => {
+  test("returns undefined only for the legacy { entries: [...] } shape, with no schemaVersion", () => {
+    const root = mkdtempSync(join(tmpdir(), "archstrict-todo-schema-guard-"));
+    try {
+      writeFileSync(join(root, "archstrict.todo.json"), JSON.stringify({ entries: [{ rule: "cycle", path: "src/a.ts", evidence: "e" }] }));
+      expect(readTodoFile(root)).toBeUndefined();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("throws on a schemaVersion-less object that isn't the legacy shape either, rather than silently reading as absent", () => {
+    const root = mkdtempSync(join(tmpdir(), "archstrict-todo-schema-guard-"));
+    try {
+      writeFileSync(join(root, "archstrict.todo.json"), JSON.stringify({ modules: { shared: [] } }));
+      expect(() => readTodoFile(root)).toThrow(/not a valid archstrict\.todo\.json/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("throws on an empty object", () => {
+    const root = mkdtempSync(join(tmpdir(), "archstrict-todo-schema-guard-"));
+    try {
+      writeFileSync(join(root, "archstrict.todo.json"), "{}");
+      expect(() => readTodoFile(root)).toThrow(/not a valid archstrict\.todo\.json/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("throws on truncated JSON (an unresolved merge conflict, a partial write)", () => {
+    const root = mkdtempSync(join(tmpdir(), "archstrict-todo-schema-guard-"));
+    try {
+      writeFileSync(join(root, "archstrict.todo.json"), '{\n  "schemaVersion": 1,\n  "modules": {\n    "shared": [\n      {"rule":');
+      expect(() => readTodoFile(root)).toThrow(/not a valid archstrict\.todo\.json/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("throws on an unsupported schemaVersion", () => {
+    const root = mkdtempSync(join(tmpdir(), "archstrict-todo-schema-guard-"));
+    try {
+      writeFileSync(join(root, "archstrict.todo.json"), JSON.stringify({ schemaVersion: 2, modules: {} }));
+      expect(() => readTodoFile(root)).toThrow(/schemaVersion 2 is not supported/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("serializeTodoFile/parseTodoFileText round trip", () => {
+  const entryGen = gen.record({
+    rule: gen.sampledFrom(["cycle", "type-leak", "tag-order", "public-surface-bypass"]),
+    // Quotes, backslashes, newlines, and non-ASCII: every character JSON
+    // itself has to escape, plus a few it doesn't - all must survive
+    // serializeTodoFile's own hand-built (not JSON.stringify(file, null,
+    // 2)) wrapping unchanged.
+    path: gen.fromRegex("src/[a-z]{1,4}/[a-z]{1,4}\\.ts"),
+    evidence: gen.oneOf(
+      gen.fromRegex("[a-z ]{1,20}"),
+      gen.just("has \"quotes\" and a\nnewline"),
+      gen.just("has a back\\slash"),
+      gen.just("has unicode: éèê café 日本語"),
+    ),
+  });
+
+  test("a shuffled module map always serializes to the same bytes, and parsing it back gives the same entries per module", () => {
+    hegel.test(tc => {
+      const moduleNames = [...new Set(tc.draw(gen.arrays(gen.fromRegex("[a-z]{1,6}"), { minSize: 1, maxSize: 4 })))];
+      const entriesByName = new Map<string, { rule: string; path: string; evidence: string }[]>();
+      for (const name of moduleNames) {
+        // Duplicates allowed and expected - a real project can carry the
+        // same edge frozen twice (runRules itself can report an edge more
+        // than once); the writer must never silently dedupe them away.
+        entriesByName.set(name, tc.draw(gen.arrays(entryGen, { minSize: 0, maxSize: 4 })));
+      }
+
+      const canonical = serializeTodoFile(entriesByName);
+
+      // Shuffle both module order and each module's own entry order - the
+      // written bytes must depend only on CONTENT, never on the Map's own
+      // iteration order.
+      const shuffledNames = [...moduleNames].reverse();
+      const shuffled = new Map(shuffledNames.map((name) => [name, [...entriesByName.get(name)!].reverse()]));
+      expect(serializeTodoFile(shuffled)).toBe(canonical);
+
+      const parsed = parseTodoFileText("archstrict.todo.json", canonical);
+      expect(parsed.schemaVersion).toBe(1);
+      for (const name of moduleNames) {
+        const original = [...entriesByName.get(name)!].map((e) => JSON.stringify(e)).sort();
+        const roundTripped = (parsed.modules.get(name) ?? []).map((e) => JSON.stringify(e)).sort();
+        expect(roundTripped).toEqual(original);
+      }
+    }, { testCases: 40 });
   });
 });
 
@@ -341,17 +380,15 @@ describe("matching survives regardless of stored path format", () => {
       const result = runRules(graph, config);
       expect(result.violations).toHaveLength(1);
       const violation = result.violations[0]!;
-      const fingerprint = fingerprintOf(violation);
 
-      const sharedDir = graph.modules.get("shared")!.dir;
-      const absoluteEntry = { fingerprint, rule: violation.rule, path: violation.path, evidence: violation.evidence };
+      const absoluteEntry = { rule: violation.rule, path: violation.path, evidence: violation.evidence };
       const relativeEntry = { ...absoluteEntry, path: "src/app/module.ts" };
-      writeTodo(sharedDir, [absoluteEntry]);
+      writeTodoFile(root, new Map([["shared", [absoluteEntry]]]));
       const withAbsolute = applyTodo(graph, config, result);
       expect(withAbsolute.todo).toBe(1);
       expect(withAbsolute.violations).toEqual([]);
 
-      writeTodo(sharedDir, [relativeEntry]);
+      writeTodoFile(root, new Map([["shared", [relativeEntry]]]));
       const withRelative = applyTodo(graph, config, result);
       expect(withRelative.todo).toBe(1);
       expect(withRelative.violations).toEqual([]);
@@ -361,18 +398,15 @@ describe("matching survives regardless of stored path format", () => {
   });
 });
 
-describe("applyTodo reads each module's todo file once per run", () => {
+describe("applyTodo reads the todo file once per run", () => {
   // A module with N public-surface-bypass violations - the ordinary shape
   // of a fresh, un-frozen module on a large project (every one of them
   // carries the SAME target module as `todoModule`, since that field
-  // names the module whose surface was bypassed, not the importer). Before
-  // the fix, applyTodo's first loop called readTodo once per violation
-  // (todo-store.ts's own readTodo does an existsSync + a readFileSync +
-  // JSON.parse each time); after it, both of applyTodo's loops share one
-  // `Map<moduleDir, TodoEntry[]>`, so the module's own todo file is read
-  // at most once for the whole call, regardless of how many of its
-  // violations exist.
-  test("N violations against the same module give 1 real readTodo call for it", () => {
+  // names the module whose surface was bypassed, not the importer). The
+  // whole project's frozen debt lives in one file now, so one real
+  // readTodoFile call covers every module for the whole `applyTodo` call,
+  // regardless of how many violations target it.
+  test("N violations against the same module give 1 real readTodoFile call for the whole run", () => {
     const root = mkdtempSync(join(tmpdir(), "archstrict-todo-read-once-"));
     try {
       mkdirSync(join(root, "src", "target"), { recursive: true });
@@ -400,11 +434,9 @@ describe("applyTodo reads each module's todo file once per run", () => {
       expect(bypassViolations).toHaveLength(N);
       expect(bypassViolations.every((v) => "todoModule" in v && v.todoModule === "target")).toBe(true);
 
-      const spy = vi.spyOn(todoStore, "readTodo");
+      const spy = vi.spyOn(todoStore, "readTodoFile");
       applyTodo(graph, config, result);
-      const targetDir = graph.modules.get("target")!.dir;
-      const readsForTarget = spy.mock.calls.filter((args) => args[0] === targetDir);
-      expect(readsForTarget).toHaveLength(1);
+      expect(spy).toHaveBeenCalledTimes(1);
       spy.mockRestore();
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -433,7 +465,7 @@ test("a real legacy cycle stays frozen across diagnostic changes and file rename
       const legacy = { rule: "cycle", path: cycle.path, evidence: "a -> b -> a" };
       const fingerprint = fingerprintOf(legacy);
       expect(fingerprintOf(cycle)).toBe(fingerprint);
-      writeTodo(before.graph.modules.get("a")!.dir, [{ ...legacy, fingerprint }]);
+      writeTodoFile(root, new Map([["a", [legacy]]]));
       const frozen = applyTodo(before.graph, config, before.result);
       expect(frozen.todo).toBe(1);
       expect(frozen.violations).toEqual([]);

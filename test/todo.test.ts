@@ -94,16 +94,17 @@ describe("todo", () => {
     });
   });
 
-  test("todo file lives inside the exposed module's own directory", async () => {
+  test("todo entries live in one project-root archstrict.todo.json, grouped by module name", async () => {
     await withTempProject(async (root) => {
       writeBypassProject(root);
       await init(root);
       await todo(root);
 
-      const todoFile = join(root, "src", "shared", "archstrict.todo.json");
+      const todoFile = join(root, "archstrict.todo.json");
       const parsed = JSON.parse(readFileSync(todoFile, "utf8"));
-      expect(parsed.entries).toHaveLength(1);
-      expect(parsed.entries[0].rule).toBe("public-surface-bypass");
+      expect(parsed.schemaVersion).toBe(1);
+      expect(parsed.modules.shared).toHaveLength(1);
+      expect(parsed.modules.shared[0].rule).toBe("public-surface-bypass");
     });
   });
 
@@ -232,7 +233,15 @@ describe("todo", () => {
       );
 
       const result = await check(root);
-      expect(result.violations.some((v) => v.rule === "clean-module-has-todo")).toBe(true);
+      const clean = result.violations.find((v) => v.rule === "clean-module-has-todo");
+      expect(clean).toBeDefined();
+      // Points at the "shared" module's own key inside the "modules"
+      // object, not line 1 - the same real position stale-todo's own
+      // entries use.
+      expect(clean!.path).toBe(join(realpathSync(root), "archstrict.todo.json"));
+      const todoText = readFileSync(join(root, "archstrict.todo.json"), "utf8");
+      const sharedKeyLine = todoText.split("\n").findIndex((l) => l.trim().startsWith('"shared"')) + 1;
+      expect(clean!.line).toBe(sharedKeyLine);
       // The frozen violation itself must not be silently suppressed just
       // because it happens to be in a todo file: strict means clean.
       expect(result.todo).toBe(0);
@@ -251,10 +260,10 @@ describe("todo", () => {
       await todo(root); // freezes the one leak (Hidden, referenced by A)
 
       const beforeTodoFile = JSON.parse(
-        readFileSync(join(root, "src", "m", "archstrict.todo.json"), "utf8"),
-      ) as { entries: { fingerprint: string; rule: string }[] };
-      expect(beforeTodoFile.entries).toHaveLength(1);
-      expect(beforeTodoFile.entries[0]!.rule).toBe("type-leak");
+        readFileSync(join(root, "archstrict.todo.json"), "utf8"),
+      ) as { modules: Record<string, { rule: string }[]> };
+      expect(beforeTodoFile.modules.m!).toHaveLength(1);
+      expect(beforeTodoFile.modules.m![0]!.rule).toBe("type-leak");
 
       // A second real export starts referencing the SAME internal type -
       // a real code change, not a fix and not a new leak (Hidden still
@@ -311,7 +320,10 @@ describe("todo", () => {
 
       const result = await todo(root);
       expect(result).toEqual({ firstRun: true, added: 0, pruned: 0 });
-      expect(existsSync(join(root, "src", "index.ts", "archstrict.todo.json"))).toBe(false);
+      // The file is always written after the first run, even with nothing
+      // to freeze, so its own existence keeps meaning "todo has run".
+      expect(JSON.parse(readFileSync(join(root, "archstrict.todo.json"), "utf8")).modules).toEqual({});
+      expect(existsSync(join(root, "src", "index.ts.archstrict.todo.json"))).toBe(false);
     });
   });
 
@@ -348,11 +360,11 @@ describe("todo", () => {
       const result = await todo(root);
       expect(result).toEqual({ firstRun: true, added: 2, pruned: 0 });
 
-      for (const file of ["secret.ts", "other.ts"]) {
-        const beside = join(root, "src", `${file}.archstrict.todo.json`);
-        expect(JSON.parse(readFileSync(beside, "utf8")).entries).toHaveLength(1);
-        expect(existsSync(join(root, "src", file, "archstrict.todo.json"))).toBe(false);
-      }
+      const todoFile = JSON.parse(readFileSync(join(root, "archstrict.todo.json"), "utf8"));
+      expect(todoFile.modules.secret).toHaveLength(1);
+      expect(todoFile.modules.other).toHaveLength(1);
+      expect(existsSync(join(root, "src", "secret.ts.archstrict.todo.json"))).toBe(false);
+      expect(existsSync(join(root, "src", "other.ts.archstrict.todo.json"))).toBe(false);
 
       const after = await check(root);
       expect(after.violations.filter((v) => v.rule === "public-surface-bypass")).toEqual([]);
@@ -366,64 +378,76 @@ describe("todo", () => {
       await init(root);
       await todo(root);
 
-      const todoFile = join(root, "src", "shared", "archstrict.todo.json");
-      const parsed = JSON.parse(readFileSync(todoFile, "utf8")) as { entries: { path: string }[] };
-      expect(parsed.entries).toHaveLength(1);
-      expect(parsed.entries[0]!.path).toBe("src/app/module.ts");
+      const todoFile = join(root, "archstrict.todo.json");
+      const parsed = JSON.parse(readFileSync(todoFile, "utf8")) as { modules: Record<string, { path: string }[]> };
+      expect(parsed.modules.shared!).toHaveLength(1);
+      expect(parsed.modules.shared![0]!.path).toBe("src/app/module.ts");
     });
   });
 
-  test("a legacy absolute-path entry that survives pruning is rewritten to relative form (self-healing); one that gets pruned is simply dropped", async () => {
+  test("an absolute-path entry that survives pruning is rewritten to relative form (self-healing); one that gets pruned is simply dropped", async () => {
     await withTempProject(async (root) => {
       writeBypassProject(root);
       await init(root);
       await todo(root); // marks the project as past its first run
 
-      // Hand-write a legacy-shaped entry (absolute path) whose fingerprint
-      // still matches the live violation todo(root) above already froze in
-      // relative form - simulating a todo file written before this fix.
-      const todoFile = join(root, "src", "shared", "archstrict.todo.json");
+      // Hand-write the entry back with an absolute path - simulating a
+      // todo file whose entry was never relativized (or a hand edit).
+      const todoFile = join(root, "archstrict.todo.json");
       const before = JSON.parse(readFileSync(todoFile, "utf8")) as {
-        entries: { fingerprint: string; rule: string; path: string; evidence: string }[];
+        modules: Record<string, { rule: string; path: string; evidence: string }[]>;
       };
-      expect(before.entries).toHaveLength(1);
-      // realpathSync(root), not root itself: an old archstrict wrote a
-      // live violation's already-realpath'd `.path` verbatim (the same
-      // path TypeScript's own program resolved to, e.g. through macOS's
-      // /tmp -> /private/tmp), so a faithful legacy fixture must be
-      // realpath'd too.
-      const legacyPath = join(realpathSync(root), "src", "app", "module.ts");
-      writeFileSync(todoFile, JSON.stringify({ entries: [{ ...before.entries[0]!, path: legacyPath }] }, null, 2));
+      expect(before.modules.shared!).toHaveLength(1);
+      // realpathSync(root), not root itself: a live violation's own `path`
+      // is already realpath'd (the same path TypeScript's own program
+      // resolved to, e.g. through macOS's /tmp -> /private/tmp), so a
+      // faithful absolute fixture must be realpath'd too.
+      const absolutePath = join(realpathSync(root), "src", "app", "module.ts");
+      writeFileSync(todoFile, JSON.stringify({
+        schemaVersion: 1,
+        modules: { shared: [{ ...before.modules.shared![0]!, path: absolutePath }] },
+      }, null, 2));
 
       const result = await todo(root); // prune pass, not first-run
       expect(result.firstRun).toBe(false);
       expect(result.pruned).toBe(0); // the entry still matches - it survives, it isn't dropped
 
-      const after = JSON.parse(readFileSync(todoFile, "utf8")) as { entries: { path: string }[] };
-      expect(after.entries).toHaveLength(1);
-      expect(after.entries[0]!.path).toBe("src/app/module.ts"); // rewritten from the legacy absolute form
+      const after = JSON.parse(readFileSync(todoFile, "utf8")) as { modules: Record<string, { path: string }[]> };
+      expect(after.modules.shared!).toHaveLength(1);
+      expect(after.modules.shared![0]!.path).toBe("src/app/module.ts"); // rewritten from the absolute form
     });
   });
 
-  test("a stale todo entry (hand-edited to no longer match) is its own violation", async () => {
+  test("a stale todo entry (hand-edited to no longer match) is its own violation, at the entry's own line", async () => {
     await withTempProject(async (root) => {
       writeBypassProject(root);
       await init(root);
       await todo(root);
 
-      // Hand-edit the todo to name a fingerprint nothing produces.
-      const todoFile = join(root, "src", "shared", "archstrict.todo.json");
-      writeFileSync(
-        todoFile,
-        JSON.stringify(
-          { entries: [{ fingerprint: "000000000000", rule: "public-surface-bypass", path: "x", evidence: "y" }] },
-          null,
-          2,
-        ),
+      // Hand-edit the todo to name a rule/path/evidence nothing produces -
+      // written with JSON.stringify's own pretty-printer (NOT
+      // serializeTodoFile's one-entry-per-line layout), so this also
+      // proves stale-todo's own line comes from parsing the real file,
+      // not from re-deriving a position against archstrict's own
+      // canonical serialization.
+      const todoFile = join(root, "archstrict.todo.json");
+      const text = JSON.stringify(
+        { schemaVersion: 1, modules: { shared: [{ rule: "public-surface-bypass", path: "x", evidence: "y" }] } },
+        null,
+        2,
       );
+      writeFileSync(todoFile, text);
+      // The entry object's own opening brace sits one line above its
+      // first property - JSON.stringify's pretty printer always puts a
+      // nested object's own "{" on its own line.
+      const ruleLineIndex = text.split("\n").findIndex((l) => l.includes('"rule": "public-surface-bypass"'));
+      const expectedLine = ruleLineIndex; // 0-based index of that line IS the 1-based line number of the "{" above it
 
       const result = await check(root);
-      expect(result.violations.some((v) => v.rule === "stale-todo")).toBe(true);
+      const stale = result.violations.find((v) => v.rule === "stale-todo");
+      expect(stale).toBeDefined();
+      expect(stale!.path).toBe(join(realpathSync(root), "archstrict.todo.json"));
+      expect(stale!.line).toBe(expectedLine);
     });
   });
 
@@ -443,8 +467,7 @@ describe("todo", () => {
       });
       await expect(todo(root)).rejects.toBeInstanceOf(ReportError);
 
-      expect(existsSync(join(root, ".archstrict-todo-initialized"))).toBe(false);
-      expect(existsSync(join(root, "src", "app", "archstrict.todo.json"))).toBe(false);
+      expect(existsSync(join(root, "archstrict.todo.json"))).toBe(false);
     });
   });
 
@@ -471,7 +494,7 @@ describe("todo", () => {
 
       const result = await todo(root);
       expect(result.firstRun).toBe(true);
-      expect(existsSync(join(root, ".archstrict-todo-initialized"))).toBe(true);
+      expect(existsSync(join(root, "archstrict.todo.json"))).toBe(true);
 
       const after = await check(root);
       expect(after.violations.some((v) => v.rule === "uncovered-module")).toBe(false);
@@ -549,9 +572,9 @@ describe("todo", () => {
       // against never fires if the sentence stayed the same) - the frozen
       // entry's own stored evidence is still the OLD wording, since todo
       // only ever prunes or freezes, never rewrites a surviving entry.
-      const todoFile = JSON.parse(readFileSync(join(root, "src", "shared", "archstrict.todo.json"), "utf8"));
-      expect(todoFile.entries).toHaveLength(3); // not yet pruned - todo never adds, but also never auto-prunes on check
-      const bEntry = todoFile.entries.find((e: { path: string }) => e.path.endsWith("usesB.ts"));
+      const todoFile = JSON.parse(readFileSync(join(root, "archstrict.todo.json"), "utf8"));
+      expect(todoFile.modules.shared).toHaveLength(3); // not yet pruned - todo never adds, but also never auto-prunes on check
+      const bEntry = todoFile.modules.shared.find((e: { path: string }) => e.path.endsWith("usesB.ts"));
       expect(bEntry.evidence).toContain("which has no"); // frozen at the OLD wording; still matches the reworded live violation
 
       // A later, prune-only run removes exactly the one entry (a) that
@@ -559,8 +582,8 @@ describe("todo", () => {
       const pruneResult = await todo(root);
       expect(pruneResult.firstRun).toBe(false);
       expect(pruneResult.pruned).toBe(1);
-      const prunedFile = JSON.parse(readFileSync(join(root, "src", "shared", "archstrict.todo.json"), "utf8"));
-      expect(prunedFile.entries).toHaveLength(2);
+      const prunedFile = JSON.parse(readFileSync(join(root, "archstrict.todo.json"), "utf8"));
+      expect(prunedFile.modules.shared).toHaveLength(2);
       expect((await check(root)).violations).toHaveLength(0);
     });
   });
@@ -616,31 +639,28 @@ describe("todo", () => {
     await withTempProject(async (unresolvedRoot) => {
       const root = writeSurfaceProject(unresolvedRoot);
       await todo(root); // freezes in the current format
-      const todoFile = join(root, "src", "b", "archstrict.todo.json");
+      const todoFile = join(root, "archstrict.todo.json");
       const frozen = JSON.parse(readFileSync(todoFile, "utf8"));
-      expect(frozen.entries).toHaveLength(1);
-      expect(frozen.entries[0].specifier).toBeDefined();
+      expect(frozen.modules.b).toHaveLength(1);
+      expect(frozen.modules.b[0].specifier).toBeDefined();
 
       // Roll that one entry back to the legacy, pre-migration shape: no
-      // specifier/target, and its fingerprint computed HEAD's own old way.
+      // specifier/target at all.
       const legacy = {
-        rule: frozen.entries[0].rule,
-        path: frozen.entries[0].path,
-        evidence: frozen.entries[0].evidence,
+        rule: frozen.modules.b[0].rule,
+        path: frozen.modules.b[0].path,
+        evidence: frozen.modules.b[0].evidence,
       };
-      const legacyFingerprint = createHash("sha256")
-        .update(`${legacy.rule}\n${legacy.path}\n${legacy.evidence}`)
-        .digest("hex").slice(0, 12);
-      writeFileSync(todoFile, JSON.stringify({ entries: [{ fingerprint: legacyFingerprint, ...legacy }] }, null, 2));
+      writeFileSync(todoFile, JSON.stringify({ schemaVersion: 1, modules: { b: [legacy] } }, null, 2));
 
       const result = await todo(root);
       expect(result.firstRun).toBe(false);
       expect(result.pruned).toBe(0); // still matches - not dropped
 
       const upgraded = JSON.parse(readFileSync(todoFile, "utf8"));
-      expect(upgraded.entries).toHaveLength(1);
-      expect(upgraded.entries[0].specifier).toBeDefined();
-      expect(upgraded.entries[0].target).toBeDefined();
+      expect(upgraded.modules.b).toHaveLength(1);
+      expect(upgraded.modules.b[0].specifier).toBeDefined();
+      expect(upgraded.modules.b[0].target).toBeDefined();
 
       expect((await check(root)).violations).toHaveLength(0);
     });

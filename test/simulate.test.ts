@@ -10,7 +10,7 @@ import { spawnSync } from "node:child_process";
 import * as graphs from "../src/module-graph.js";
 import { applyTodo, check, loadConfig, runRules, type AnyViolation } from "../src/verbs/check.js";
 import { simulate, formatSimulateText, type Change } from "../src/verbs/simulate.js";
-import { fingerprintOf, writeTodo } from "../src/todo-store.js";
+import { fingerprintOf, writeTodoFile } from "../src/todo-store.js";
 
 function put(root: string, path: string, content: string) {
   mkdirSync(dirname(join(root, path)), { recursive: true });
@@ -197,7 +197,7 @@ test("simulation preserves disk bytes, timestamps, todo, and a subsequent real c
   const violation = (await check(root)).violations.find(v => v.rule === "public-surface-bypass")!;
   expect(violation.rule).toBe("public-surface-bypass");
   if (violation.rule !== "public-surface-bypass") throw new Error("expected surface violation");
-  writeTodo(join(root, "src", violation.todoModule), [{ fingerprint: fingerprintOf(violation), rule: violation.rule, path: violation.path, evidence: violation.evidence }]);
+  writeTodoFile(root, new Map([[violation.todoModule, [{ rule: violation.rule, path: violation.path, evidence: violation.evidence }]]]));
   const before = JSON.stringify(await check(root));
   const bytes = snapshot(root);
   const result = await simulate(root, [{ path: "src/a/index.ts", content: "export {};" }]);

@@ -1,5 +1,5 @@
 // Responsibility: compare proposed source and config changes with the current project through the full rule pipeline.
-// Boundary: all changes stay in memory; the baseline and todo files remain inputs from disk.
+// Boundary: all changes stay in memory; the baseline and archstrict.todo.json remain inputs from disk.
 import { existsSync, realpathSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import ts from "typescript";

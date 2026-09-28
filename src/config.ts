@@ -46,9 +46,9 @@ export type Config = {
     count: number;
     because: string;
   }[];
-  // Module names whose todo file may only shrink, never gain a new entry -
-  // not even on todo's first run. check treats any existing entry in a
-  // strict module's todo as a violation in its own right (clean means no
+  // Module names whose todo entries may only shrink, never gain a new one -
+  // not even on todo's first run. check treats any existing entry for a
+  // strict module as a violation in its own right (clean means no
   // debt, not debt frozen at whatever existed when the module was added
   // here), so marking a module strict never hides a violation from check,
   // old or new.

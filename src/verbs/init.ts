@@ -335,8 +335,8 @@ export type Config = {
     count: number;
     because: string;
   }[];
-  // Module names whose todo file may only shrink, never gain a new entry.
-  // check reports any existing entry in one of these modules' todo as a
+  // Module names whose todo entries may only shrink, never gain a new one.
+  // check reports any existing entry for one of these modules as a
   // violation in its own right.
   strict?: readonly ModuleName[];
   // A specific known cycle (naming any two modules in it, in either

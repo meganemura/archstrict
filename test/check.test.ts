@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { init } from "../src/verbs/init.js";
 import { todo } from "../src/verbs/todo.js";
-import { check, formatText, loadConfig } from "../src/verbs/check.js";
+import { check, filterToFile, formatText, loadConfig } from "../src/verbs/check.js";
 import type { Prover } from "../src/rules/config-meaning.js";
 import { ReportError } from "../src/report-error.js";
 import { buildModuleGraph, buildPreparedGraph, prepareGraph } from "../src/module-graph.js";
@@ -1308,19 +1308,13 @@ describe("check", () => {
     });
   });
 
-  // `applyTodo`'s stale-todo check only evaluates a todo entry whose
-  // OWN stored path is the focus file (check.ts's own entryReportedAtFocus
-  // comment). Only a file-module's own todo (module.dir IS the file, so
-  // stale-todo's own `path: module.dir` can equal `focus`) can ever show
-  // stale-todo in a `check <file>` run's own output at all - a directory
-  // module's stale-todo always reports at its directory, never a single
-  // file, so filterToFile drops it regardless of this change. A cycle's
-  // own `path` (the arbitrary edge module-graph.ts's shortest-cycle search
-  // happened to return first) can be that file-module's own path when the
-  // module is the cycle's own anchor - this fixture forces that: two
-  // single-file modules cycling into each other, "a" sorted first so it
-  // is always the anchor `checkCycles` picks.
-  test("check <file> still reports stale-todo for a file-module's own cycle entry, once the cycle is broken", async () => {
+  // stale-todo now reports at the single archstrict.todo.json (its own
+  // entry's real line, todo-store.ts's own ParsedTodoFile.entryLocation),
+  // never at the module or file the entry is ABOUT - so a `check <file>`
+  // scoped to that module drops it via filterToFile, the same as any
+  // other violation whose own `path` doesn't resolve to the requested
+  // target. Only a plain, unscoped `check` still reports it.
+  test("check <file> reports no stale-todo for a broken cycle (filtered out); the full run reports it at the todo file's own line", async () => {
     await withTempProject(async (root) => {
       mkdirSync(join(root, "src"), { recursive: true });
       writeFileSync(join(root, "src", "a.ts"), 'import "./b.js";\nexport const a = 1;\n');
@@ -1346,26 +1340,25 @@ describe("check", () => {
       // longer exists.
       writeFileSync(join(root, "src", "b.ts"), "export const b = 1;\n");
 
+      const full = await check(root);
+      expect(full.violations.some((v) => v.rule === "cycle")).toBe(false);
+      const stale = full.violations.find((v) => v.rule === "stale-todo");
+      expect(stale).toBeDefined();
+      expect(stale!.path).toBe(join(realpathSync(root), "archstrict.todo.json"));
+      expect(stale!.line).toBeGreaterThan(0);
+      expect(full.todo).toBe(0);
+
       const after = await check(root, aPath);
       expect(after.violations.some((v) => v.rule === "cycle")).toBe(false);
-      const stale = after.violations.find((v) => v.rule === "stale-todo");
-      expect(stale).toBeDefined();
-      expect(stale!.path).toBe(realpathSync(aPath));
-      expect(after.todo).toBe(0);
+      expect(after.violations.some((v) => v.rule === "stale-todo")).toBe(false); // reported only at the todo file, dropped by filterToFile
+      expect(after.violations).toEqual(filterToFile(full, aPath).violations);
     });
   });
 
-  // Scoping the rules to a directory would drop `stale-todo`, which
-  // reports at the module's own directory, never at any one file inside
-  // it, since no rule this file scopes reports at a directory.
-  // `tryRealpath` therefore returns a value only for a real, existing,
-  // REGULAR FILE
-  // (`statSync(...).isFile()`); a directory leaves `focus` undefined, so
-  // every rule runs its full, unscoped logic and `filterToFile` alone
-  // decides what survives - the same as a plain `check` narrowed
-  // afterward, and the same as this test's own baseline (`full`) already
-  // gets.
-  test("check <a module's directory> still reports that module's own stale-todo", async () => {
+  // Same reasoning as the cycle test above, for a directory-scoped check:
+  // clean-module-has-todo's/stale-todo's own `path` is the todo file too,
+  // never the module's directory, so a directory focus drops it as well.
+  test("check <a module's directory> reports no stale-todo (filtered out); the full run does", async () => {
     await withTempProject(async (root) => {
       mkdirSync(join(root, "src", "shared"), { recursive: true });
       mkdirSync(join(root, "src", "app"), { recursive: true });
@@ -1387,8 +1380,8 @@ describe("check", () => {
       expect(full.violations.some((v) => v.rule === "stale-todo")).toBe(true);
 
       const dirScoped = await check(root, join(root, "src", "shared"));
-      expect(dirScoped.violations.some((v) => v.rule === "stale-todo")).toBe(true);
-      expect(dirScoped.violations).toEqual(full.violations);
+      expect(dirScoped.violations.some((v) => v.rule === "stale-todo")).toBe(false);
+      expect(dirScoped.violations).toEqual(filterToFile(full, join(root, "src", "shared")).violations);
     });
   });
 

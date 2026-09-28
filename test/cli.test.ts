@@ -396,8 +396,10 @@ describe("cli", () => {
 
       const todoResult = JSON.parse(execFileSync("node", [CLI_PATH, "todo", "--json"], { cwd: root, encoding: "utf8" }));
       expect(todoResult).toEqual({ firstRun: true, added: 1, pruned: 0 });
-      expect(readFileSync(join(root, "src", "secret.ts.archstrict.todo.json"), "utf8")).toContain("public-surface-bypass");
-      expect(() => readFileSync(join(root, "src", "secret.ts", "archstrict.todo.json"), "utf8")).toThrow();
+      const todoFile = JSON.parse(readFileSync(join(root, "archstrict.todo.json"), "utf8"));
+      expect(todoFile.modules.secret).toHaveLength(1);
+      expect(todoFile.modules.secret[0].rule).toBe("public-surface-bypass");
+      expect(existsSync(join(root, "src", "secret.ts.archstrict.todo.json"))).toBe(false);
 
       const after = JSON.parse(execFileSync("node", [CLI_PATH, "check", "--json"], { cwd: root, encoding: "utf8" }));
       expect(after.violations.filter((v: { rule: string }) => v.rule === "public-surface-bypass")).toEqual([]);

@@ -139,8 +139,8 @@ A directory a team decided must hold no code at all (e.g. a project that keeps r
 
 ## Not a rule of its own: stale-todo, clean-module-has-todo, and stale-cycle-exception
 
-`stale-todo`: a todo entry matches no current violation. Prune it with `archstrict todo`, don't leave it - an unmatched entry hides nothing real.
+`stale-todo`: a todo entry matches no current violation. `path` is `archstrict.todo.json`, at that entry's own line. Prune it with `archstrict todo`, don't leave it - an unmatched entry hides nothing real. Because `path` is the todo file, not the module or file the entry is about, a `check <file>` or `check <dir>` scoped to that module never surfaces this violation - only a plain, unscoped `check` does.
 
-`clean-module-has-todo`: a module in the config's `strict` list has any todo entries at all, existing or new. Staying clean means no debt, not debt frozen at whatever existed when the module was marked - fix the violation(s), then run `archstrict todo` to prune.
+`clean-module-has-todo`: a module in the config's `strict` list has any todo entries at all, existing or new. `path` is `archstrict.todo.json`, at that module's own key. Staying clean means no debt, not debt frozen at whatever existed when the module was marked - fix the violation(s), then run `archstrict todo` to prune.
 
 `stale-cycle-exception`: an `ignoredCycles` entry names two modules that aren't part of any real cycle at all (never were, or no longer are). `path` is the config file. Remove the entry - same reasoning as `stale-todo`: an exception that hides nothing real must be visible, not silently kept.
