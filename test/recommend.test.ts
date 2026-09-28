@@ -306,3 +306,136 @@ test("at most 5 pattern proposals are shown, ranked by support, even when more a
   expect(result.detected).toBeGreaterThan(5);
   expect(result.patternProposals).toHaveLength(5);
 }));
+
+test("app-over-library: an app area depending on the rest, with a small reverse, still ranks into the shown 5 among many trivial leaf kernels", async () => fixture(async (root, put) => {
+  // The app area: 5 forward edges into a library area, and 2 reverse
+  // edges back - a real, mostly-clean fit (support well under 1), not a
+  // perfectly clean one.
+  for (let i = 0; i < 5; i++) {
+    put(`src/app/a${i}.ts`, `import "../lib/x${i}.ts";\nexport const a${i} = ${i};\n`);
+    put(`src/lib/x${i}.ts`, `export const x${i} = ${i};\n`);
+  }
+  put("src/lib/back0.ts", 'import "../app/a0.ts";\nexport const back0 = 1;\n');
+  put("src/lib/back1.ts", 'import "../app/a1.ts";\nexport const back1 = 1;\n');
+  // Six unrelated, perfectly clean leaf kernels (support 1 each) competing for the same 5 slots.
+  for (let i = 0; i < 6; i++) {
+    put(`src/util${i}/index.ts`, `export const util${i} = ${i};\n`);
+    put(`src/consumer${i}/index.ts`, `import "../util${i}/index.ts";\nexport const consumer${i} = ${i};\n`);
+  }
+  const result = await recommend(root);
+  const proposal = result.patternProposals.find(p => p.pattern === "app-over-library");
+  expect(proposal).toBeDefined();
+  expect(proposal!.support).toBeCloseTo(5 / 7);
+  expect(proposal!.evidence[0]).toBe("library -> app: 2 of 7 edges; app -> library: 5");
+  expect(proposal!.configFragment).toContain('sequence: { "": ["lib","app"] }');
+}));
+
+test("no app-over-library proposal when nothing in the tree names an app/cli area", async () => fixture(async (root, put) => {
+  put("src/one/index.ts", 'import "../two/index.ts";\nexport const one = 1;\n');
+  put("src/two/index.ts", "export const two = 1;\n");
+  const result = await recommend(root);
+  expect(result.patternProposals.find(p => p.pattern === "app-over-library")).toBeUndefined();
+}));
+
+test("external-package-confined: a node builtin imported from only one module is proposed", async () => fixture(async (root, put) => {
+  put("src/core/a.ts", 'import "node:fs";\nexport const a = 1;\n');
+  put("src/core/b.ts", 'import "node:fs";\nexport const b = 1;\n');
+  // A second module importing a different builtin - real evidence the
+  // proposed rule's own targetNamespace judges at least one real edge.
+  put("src/other/c.ts", 'import "node:path";\nexport const c = 1;\n');
+  const result = await recommend(root);
+  const proposal = result.patternProposals.find(p => p.pattern === "external-package-confined");
+  expect(proposal).toBeDefined();
+  expect(proposal!.support).toBe(1);
+  expect(proposal!.addedViolations).toBe(0);
+  expect(proposal!.evidence[0]).toContain("'fs' is imported 2 time(s), all from 'core'");
+  expect(proposal!.configFragment).toContain('deny: ["fs"]');
+}));
+
+test("no external-package-confined proposal when the same package is imported from more than one module", async () => fixture(async (root, put) => {
+  put("src/core/a.ts", 'import "node:fs";\nexport const a = 1;\n');
+  put("src/other/b.ts", 'import "node:fs";\nexport const b = 1;\n');
+  const result = await recommend(root);
+  expect(result.patternProposals.find(p => p.pattern === "external-package-confined")).toBeUndefined();
+}));
+
+test("test-code-isolation: a fixtures module that imports production code, and is never imported back, is proposed", async () => fixture(async (root, put) => {
+  put("src/app/one.ts", "export const one = 1;\n");
+  put("src/fixtures/index.ts", 'import "../app/one.ts";\nexport const f = 1;\n');
+  put("archstrict.config.ts", `export default {
+    declaredModules: [{ name: "app", glob: "src/app/**" }, { name: "fixtures", glob: "src/fixtures/**" }],
+    because: "Keep production and fixtures independent."
+  };`);
+  const result = await recommend(root);
+  const proposal = result.patternProposals.find(p => p.pattern === "test-code-isolation");
+  expect(proposal).toBeDefined();
+  expect(proposal!.support).toBe(1);
+  expect(proposal!.addedViolations).toBe(0);
+  expect(proposal!.evidence[0]).toContain("'fixtures' is never imported by any of 1 production module(s) today; it imports 1 of them");
+}));
+
+test("no test-code-isolation proposal once production code already imports the fixtures module", async () => fixture(async (root, put) => {
+  put("src/app/one.ts", 'import "../fixtures/index.ts";\nexport const one = 1;\n');
+  put("src/fixtures/index.ts", 'import "../app/one.ts";\nexport const f = 1;\n');
+  put("archstrict.config.ts", `export default {
+    declaredModules: [{ name: "app", glob: "src/app/**" }, { name: "fixtures", glob: "src/fixtures/**" }],
+    because: "Keep production and fixtures independent."
+  };`);
+  const result = await recommend(root);
+  expect(result.patternProposals.find(p => p.pattern === "test-code-isolation")).toBeUndefined();
+}));
+
+test("host-plugin-inversion: a plugin depending on a host that never depends back is proposed", async () => fixture(async (root, put) => {
+  put("src/plugin/a.ts", 'import "../core/index.ts";\nexport const a = 1;\n');
+  put("src/core/index.ts", "export const core = 1;\n");
+  const result = await recommend(root);
+  const proposal = result.patternProposals.find(p => p.pattern === "host-plugin-inversion");
+  expect(proposal).toBeDefined();
+  expect(proposal!.support).toBe(1);
+  expect(proposal!.addedViolations).toBe(0);
+  expect(proposal!.evidence[0]).toBe("plugin -> host: 1 edge(s); host -> plugin: 0 edge(s)");
+}));
+
+test("no host-plugin-inversion proposal when the plugin never depends on the host", async () => fixture(async (root, put) => {
+  put("src/plugin/a.ts", "export const a = 1;\n");
+  put("src/core/index.ts", "export const core = 1;\n");
+  const result = await recommend(root);
+  expect(result.patternProposals.find(p => p.pattern === "host-plugin-inversion")).toBeUndefined();
+}));
+
+// Declared modules must name each feature separately (freshRun's own
+// no-config walk collapses a nested "src/features/**" into one module for
+// the whole container, giving this detector only one candidate, never
+// two siblings to compare).
+const FEATURE_CONFIG = `export default {
+  declaredModules: [
+    { name: "orders", glob: "src/features/orders/**" },
+    { name: "payments", glob: "src/features/payments/**" },
+    { name: "shared", glob: "src/shared/**" },
+  ],
+  because: "Keep features independent of each other."
+};`;
+
+test("feature-isolation: sibling features importing a shared kernel but not each other are proposed", async () => fixture(async (root, put) => {
+  put("src/features/orders/index.ts", 'import "../../shared/index.ts";\nexport const orders = 1;\n');
+  put("src/features/payments/index.ts", 'import "../../shared/index.ts";\nexport const payments = 1;\n');
+  put("src/shared/index.ts", "export const shared = 1;\n");
+  put("archstrict.config.ts", FEATURE_CONFIG);
+  const result = await recommend(root);
+  const proposal = result.patternProposals.find(p => p.pattern === "feature-isolation");
+  expect(proposal).toBeDefined();
+  expect(proposal!.support).toBe(1);
+  expect(proposal!.addedViolations).toBe(0);
+  expect(proposal!.evidence[0]).toBe("features -> kernel ('shared'): 2 edge(s); features -> each other: 0 edge(s)");
+}));
+
+test("no feature-isolation proposal with only one feature module under the container", async () => fixture(async (root, put) => {
+  put("src/features/orders/index.ts", 'import "../../shared/index.ts";\nexport const orders = 1;\n');
+  put("src/shared/index.ts", "export const shared = 1;\n");
+  put("archstrict.config.ts", `export default {
+    declaredModules: [{ name: "orders", glob: "src/features/orders/**" }, { name: "shared", glob: "src/shared/**" }],
+    because: "Keep features independent of each other."
+  };`);
+  const result = await recommend(root);
+  expect(result.patternProposals.find(p => p.pattern === "feature-isolation")).toBeUndefined();
+}));

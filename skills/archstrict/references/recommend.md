@@ -9,13 +9,21 @@ semantics.
 
 ## `patternProposals`
 
-At most 5 proposals, ranked by `support` (highest first) - a project with
-more detectable shapes than that sees only its strongest-evidenced ones.
-`detected` on the top-level result is the count before that cut, so a
-capped list never reads as "nothing else was found." Each proposal carries:
+At most 5 proposals, ranked by evidence - a project with more detectable
+shapes than that sees only its strongest-evidenced ones. `detected` on the
+top-level result is the count before that cut, so a capped list never reads
+as "nothing else was found." Ranking is not `support` alone: a proposal with
+almost no real evidence behind it (one importer, one edge) can still reach a
+clean `support` of 1, so the rank shrinks `support` toward 0 by how little
+evidence backs it - a real, mostly-clean fit backed by hundreds of edges
+outranks a trivially clean one backed by a single edge, even though the
+trivial one's own `support` field reads higher. `support` itself is
+unchanged by this: it always reports the plain fraction, not the rank.
+Each proposal carries:
 
-- `pattern` - a stable id (`layered-order`, `leaf-kernel`,
-  `public-entry-only` today).
+- `pattern` - a stable id: `layered-order`, `app-over-library`, `leaf-kernel`,
+  `external-package-confined`, `test-code-isolation`, `public-entry-only`,
+  `host-plugin-inversion`, `feature-isolation`.
 - `support` - 0 to 1, the fraction of the pattern's own measured evidence
   that agrees with it. A `layered-order` proposal with three modules and
   one reverse edge among otherwise-unanimous real edges reports well below

@@ -6,7 +6,7 @@ import { applyTodo, loadConfig, runRules, type AnyViolation } from "./check.js";
 import type { Config } from "../config.js";
 import { createConfigLocator } from "../config-pointer.js";
 import { fingerprintOf, relativizeForTodo } from "../todo-store.js";
-import { buildModuleGraphForRules, DEFAULT_SURFACE, type Module, type ModuleGraph } from "../module-graph.js";
+import { buildModuleGraphForRules, DEFAULT_SURFACE, moduleGlobBaseDir, type Module, type ModuleGraph } from "../module-graph.js";
 // Without a config, recommend previews init's own walk in memory (same
 // argument rules, same groups and globs) instead of running its own
 // single-level "src/*" discovery - the two could disagree about which
@@ -184,7 +184,7 @@ function detectLayeredOrder(
   declaredModules: readonly { name: string; glob: string }[],
   baseConfig: Config,
   graph: ModuleGraph,
-): PatternProposal | undefined {
+): { proposal: PatternProposal; weight: number } | undefined {
   const names = modules.map(m => m.name);
   if (names.length < 2) return undefined;
   // `before.get(X)` is every module that imports X - X must precede them
@@ -241,15 +241,18 @@ function detectLayeredOrder(
     edges: { ...baseConfig.edges, order: [...(baseConfig.edges?.order ?? []), orderRule] },
   };
   return {
-    pattern: "layered-order",
-    support,
-    evidence: [
-      `order supported by these modules' own real edges: ${order.join(" -> ")}`,
-      `${forward} of ${forward + reverse} directed edges between them match this order (the rest would need fixing, or a deliberate skip)`,
-    ],
-    configFragment,
-    addedViolations: countAddedViolations(graph, baseConfig, proposedConfig, "tag-order"),
-    do: PROVE_RULES_DO,
+    proposal: {
+      pattern: "layered-order",
+      support,
+      evidence: [
+        `order supported by these modules' own real edges: ${order.join(" -> ")}`,
+        `${forward} of ${forward + reverse} directed edges between them match this order (the rest would need fixing, or a deliberate skip)`,
+      ],
+      configFragment,
+      addedViolations: countAddedViolations(graph, baseConfig, proposedConfig, "tag-order"),
+      do: PROVE_RULES_DO,
+    },
+    weight: forward + reverse,
   };
 }
 
@@ -263,7 +266,7 @@ function detectLeafKernels(
   graph: ModuleGraph,
   declaredModules: readonly { name: string; glob: string }[],
   baseConfig: Config,
-): PatternProposal[] {
+): { proposal: PatternProposal; weight: number }[] {
   const outgoing = new Map<string, number>();
   const incoming = new Map<string, number>();
   for (const edge of graph.crossModuleEdges) {
@@ -271,7 +274,7 @@ function detectLeafKernels(
     outgoing.set(edge.fromModule, (outgoing.get(edge.fromModule) ?? 0) + 1);
     incoming.set(edge.toModule, (incoming.get(edge.toModule) ?? 0) + 1);
   }
-  const proposals: PatternProposal[] = [];
+  const proposals: { proposal: PatternProposal; weight: number }[] = [];
   for (const module of modules) {
     const inCount = incoming.get(module.name) ?? 0;
     if (inCount === 0 || (outgoing.get(module.name) ?? 0) > 0) continue;
@@ -285,15 +288,18 @@ function detectLeafKernels(
       edges: { ...baseConfig.edges, allowDeny: [...(baseConfig.edges?.allowDeny ?? []), allowDenyRule] },
     };
     proposals.push({
-      pattern: "leaf-kernel",
-      support: 1,
-      evidence: [`'${module.name}': 0 outgoing edges to another declared module; ${inCount} other module(s) import it`],
-      configFragment: [
-        "classify: [", `  { glob: ${JSON.stringify(glob)}, tags: ${JSON.stringify([tag])} },`, "],",
-        "edges: { allowDeny: [", `  { source: ${JSON.stringify(tag)}, targetNamespace: "kind", allow: [], because: ${JSON.stringify(because)} },`, "] },",
-      ].join("\n"),
-      addedViolations: countAddedViolations(graph, baseConfig, proposedConfig, "tag-boundary"),
-      do: PROVE_RULES_DO,
+      proposal: {
+        pattern: "leaf-kernel",
+        support: 1,
+        evidence: [`'${module.name}': 0 outgoing edges to another declared module; ${inCount} other module(s) import it`],
+        configFragment: [
+          "classify: [", `  { glob: ${JSON.stringify(glob)}, tags: ${JSON.stringify([tag])} },`, "],",
+          "edges: { allowDeny: [", `  { source: ${JSON.stringify(tag)}, targetNamespace: "kind", allow: [], because: ${JSON.stringify(because)} },`, "] },",
+        ].join("\n"),
+        addedViolations: countAddedViolations(graph, baseConfig, proposedConfig, "tag-boundary"),
+        do: PROVE_RULES_DO,
+      },
+      weight: inCount,
     });
   }
   return proposals;
@@ -308,28 +314,422 @@ function detectLeafKernels(
 // counts as `public-surface-bypass` (rule 1, always on), it can only
 // retire an existing finding, never create a new rule or a new kind of
 // violation.
-function detectPublicEntryOnly(surfaceProposals: readonly SurfaceProposal[]): PatternProposal | undefined {
+function detectPublicEntryOnly(surfaceProposals: readonly SurfaceProposal[]): { proposal: PatternProposal; weight: number } | undefined {
   const totalImports = surfaceProposals.reduce((sum, p) => sum + p.totalImports, 0);
   if (totalImports === 0) return undefined;
   const coveredImports = surfaceProposals.reduce((sum, p) => sum + p.coveredImports, 0);
   return {
-    pattern: "public-entry-only",
-    support: coveredImports / totalImports,
-    evidence: surfaceProposals.map(p => `'${p.module}': ${JSON.stringify(p.proposedSurface)} covers ${p.coveredImports} of ${p.totalImports} real imports into it`),
-    configFragment: [
-      "declaredModules: [",
-      ...surfaceProposals.map(p => `  { name: ${JSON.stringify(p.module)}, glob: /* this module's existing glob */ "...", surface: ${JSON.stringify(p.proposedSurface)} },`),
-      "],",
-    ].join("\n"),
-    addedViolations: 0,
-    do: "run archstrict check to see which public-surface-bypass violations naming each proposed surface retire, then archstrict todo to freeze what remains",
+    proposal: {
+      pattern: "public-entry-only",
+      support: coveredImports / totalImports,
+      evidence: surfaceProposals.map(p => `'${p.module}': ${JSON.stringify(p.proposedSurface)} covers ${p.coveredImports} of ${p.totalImports} real imports into it`),
+      configFragment: [
+        "declaredModules: [",
+        ...surfaceProposals.map(p => `  { name: ${JSON.stringify(p.module)}, glob: /* this module's existing glob */ "...", surface: ${JSON.stringify(p.proposedSurface)} },`),
+        "],",
+      ].join("\n"),
+      addedViolations: 0,
+      do: "run archstrict check to see which public-surface-bypass violations naming each proposed surface retire, then archstrict todo to freeze what remains",
+    },
+    weight: totalImports,
   };
 }
 
-// At most 5 proposals survive, highest support first - a project with
-// more detectable shapes than that sees only its strongest-evidenced
-// ones; `detected` (recommend()'s own field) keeps the cut visible.
+// Every path segment before the glob's own wildcard, lowercased - the
+// directory-name evidence a proposal reads (patterns.md's own "look at
+// directory names first"), not the declared module's name, which a
+// project can set to anything regardless of where the module lives.
+function moduleSegments(glob: string): string[] {
+  return moduleGlobBaseDir(glob).replace(/\.(ts|tsx|mts|cts)$/i, "").split("/").filter(Boolean).map(s => s.toLowerCase());
+}
+
+function matchesAnySegment(glob: string, pattern: RegExp): boolean {
+  return moduleSegments(glob).some(segment => pattern.test(segment));
+}
+
+function moduleGlob(declaredModules: readonly { name: string; glob: string }[], name: string): string {
+  return declaredModules.find(d => d.name === name)!.glob;
+}
+
+// Sums real cross-module edges from every member of `from` to every
+// member of `to` - the shared unit every grouped detector below reads a
+// directed edge count from, instead of each re-walking crossModuleEdges.
+function edgesBetweenGroups(counts: ReadonlyMap<string, ReadonlyMap<string, number>>, from: readonly string[], to: readonly string[]): number {
+  let total = 0;
+  for (const a of from) for (const b of to) total += counts.get(a)?.get(b) ?? 0;
+  return total;
+}
+
+// Every tag namespace `baseConfig` already assigns, real or previewed -
+// `order`'s own config check throws the first time a real edge carries a
+// `layer` (or whichever namespace) value missing from that rule's
+// `sequence`, so proposing a namespace a real config already populates
+// would make `countAddedViolations` crash instead of report, not just
+// read wrong. `allowDeny`/`point` have no such throw, but reusing a live
+// namespace would still misread as extending a rule the project already
+// wrote for a different reason - so every new detector below picks a
+// namespace free of both classify's own tags and classifyByDirectoryName.
+function usedTagNamespaces(config: Config): Set<string> {
+  const namespaces = new Set<string>();
+  for (const entry of config.classify ?? []) for (const tag of entry.tags) namespaces.add(tag.split(":")[0] ?? tag);
+  if (config.classifyByDirectoryName) namespaces.add(config.classifyByDirectoryName.tagNamespace);
+  return namespaces;
+}
+
+function freeTagNamespace(config: Config, preferred: string): string {
+  const used = usedTagNamespaces(config);
+  if (!used.has(preferred)) return preferred;
+  for (let i = 2; ; i++) if (!used.has(`${preferred}${i}`)) return `${preferred}${i}`;
+}
+
+// patterns.md's "app vs lib": an application area (a CLI entry file, or a
+// directory segment named app/apps/cli/cmd anywhere in its glob) that
+// depends on the rest of the project, with few or no edges back. Unlike
+// `detectLayeredOrder` (which reads whichever direction the evidence
+// between EVERY pair of modules agrees on), this looks for one specific,
+// named direction - the shape a real adoption picked by hand over the
+// general detector, because "app" and "library" are recognizable on
+// sight in a way an arbitrary majority-direction graph is not.
+const APP_SEGMENT_PATTERN = /^(app|apps|cli|cmd)$/;
+
+function detectAppOverLibrary(
+  modules: readonly Module[],
+  counts: ReadonlyMap<string, ReadonlyMap<string, number>>,
+  declaredModules: readonly { name: string; glob: string }[],
+  baseConfig: Config,
+  graph: ModuleGraph,
+): { proposal: PatternProposal; weight: number } | undefined {
+  const appNames = modules.filter(m => matchesAnySegment(moduleGlob(declaredModules, m.name), APP_SEGMENT_PATTERN)).map(m => m.name);
+  const libNames = modules.map(m => m.name).filter(n => !appNames.includes(n));
+  if (appNames.length === 0 || libNames.length === 0) return undefined;
+  const forward = edgesBetweenGroups(counts, appNames, libNames); // app -> library, the intended direction
+  const reverse = edgesBetweenGroups(counts, libNames, appNames); // library -> app, the direction this proposal forbids
+  if (forward === 0) return undefined; // no evidence an app area depends on a library area at all
+  const total = forward + reverse;
+  const ns = freeTagNamespace(baseConfig, "tier");
+  const classify = [
+    ...libNames.map(name => ({ glob: moduleGlob(declaredModules, name), tags: [`${ns}:lib`] })),
+    ...appNames.map(name => ({ glob: moduleGlob(declaredModules, name), tags: [`${ns}:app`] })),
+  ];
+  const because = `library -> app: ${reverse} of ${total} edges; app -> library: ${forward}`;
+  const orderRule = { tagNamespace: ns, sequence: { "": ["lib", "app"] }, direction: "downward-only" as const, because };
+  const proposedConfig: Config = {
+    ...baseConfig,
+    classify: [...(baseConfig.classify ?? []), ...classify],
+    edges: { ...baseConfig.edges, order: [...(baseConfig.edges?.order ?? []), orderRule] },
+  };
+  const configFragment = [
+    "classify: [",
+    ...classify.map(c => `  { glob: ${JSON.stringify(c.glob)}, tags: ${JSON.stringify(c.tags)} },`),
+    "],",
+    "edges: { order: [",
+    `  { tagNamespace: ${JSON.stringify(ns)}, sequence: { "": ["lib","app"] }, direction: "downward-only", because: ${JSON.stringify(because)} },`,
+    "] },",
+  ].join("\n");
+  return {
+    proposal: {
+      pattern: "app-over-library",
+      support: forward / total,
+      evidence: [because, `app area(s): ${appNames.join(", ")}`, `library area(s): ${libNames.join(", ")}`],
+      configFragment,
+      addedViolations: countAddedViolations(graph, baseConfig, proposedConfig, "tag-order"),
+      do: PROVE_RULES_DO,
+    },
+    weight: total,
+  };
+}
+
+// A bare-name equivalent for a package resolved through its own
+// `@types/<name>` shadow package (constraints.ts's own convention: a
+// deny/allow rule against either identity matches the same real edge).
+// Grouping by this bare name, not the raw resolved identity, keeps a
+// package's value-import edges and its type-only `@types/` edges from
+// splitting into two separate, half-evidenced candidates.
+function bareExternalPackageName(name: string): string {
+  if (!name.startsWith("@types/")) return name;
+  const rest = name.slice("@types/".length);
+  const scopeSplit = rest.indexOf("__");
+  return scopeSplit === -1 ? rest : `@${rest.slice(0, scopeSplit)}/${rest.slice(scopeSplit + 2)}`;
+}
+
+// patterns.md's "external package confined to one area" - the most common
+// shape kept in a real import graph even when no config declares it. Read
+// from `graph.edges` (not `crossModuleEdges`): an external package's own
+// target is never a declared module, so `toModule` is always undefined
+// and `crossModuleEdges` filters every such edge out by construction.
+// Capped to the 3 most-evidenced packages so a project with many
+// confined dependencies (43 of 50 surveyed keep at least one) does not by
+// itself fill every slot the overall 5-proposal cap allows.
+const EXTERNAL_PACKAGE_PROPOSAL_CAP = 3;
+
+function detectExternalPackageConfined(
+  modules: readonly Module[],
+  graph: ModuleGraph,
+  declaredModules: readonly { name: string; glob: string }[],
+  baseConfig: Config,
+): { proposal: PatternProposal; weight: number }[] {
+  if (modules.length < 2) return []; // "confined to one area" needs another area it is absent from
+  const byPackage = new Map<string, Map<string, number>>(); // bare package name -> (owning module -> edge count)
+  for (const edge of graph.edges) {
+    if (edge.externalPackage === undefined) continue;
+    const name = bareExternalPackageName(edge.externalPackage);
+    const byModule = byPackage.get(name) ?? new Map<string, number>();
+    byModule.set(edge.fromModule, (byModule.get(edge.fromModule) ?? 0) + 1);
+    byPackage.set(name, byModule);
+  }
+  const candidates: { name: string; module: string; edgeCount: number }[] = [];
+  for (const [name, byModule] of byPackage) {
+    if (byModule.size !== 1) continue; // imported from more than one area: not confined
+    const [module, edgeCount] = [...byModule.entries()][0]!;
+    candidates.push({ name, module, edgeCount });
+  }
+  candidates.sort((a, b) => b.edgeCount - a.edgeCount || a.name.localeCompare(b.name));
+  return candidates.slice(0, EXTERNAL_PACKAGE_PROPOSAL_CAP).map(({ name, module, edgeCount }) => {
+    const restNames = modules.map(m => m.name).filter(n => n !== module);
+    const ns = freeTagNamespace(baseConfig, "kind");
+    const classify = [
+      ...restNames.map(n => ({ glob: moduleGlob(declaredModules, n), tags: [`${ns}:rest`] })),
+      { glob: moduleGlob(declaredModules, module), tags: [`${ns}:confined`] },
+    ];
+    const because = `'${name}' is imported ${edgeCount} time(s), all from '${module}'; no other module imports it today`;
+    const allowDenyRule = { source: `${ns}:rest`, targetNamespace: "pkg", deny: [name], because };
+    const proposedConfig: Config = {
+      ...baseConfig,
+      classify: [...(baseConfig.classify ?? []), ...classify],
+      edges: { ...baseConfig.edges, allowDeny: [...(baseConfig.edges?.allowDeny ?? []), allowDenyRule] },
+    };
+    const configFragment = [
+      "classify: [",
+      ...classify.map(c => `  { glob: ${JSON.stringify(c.glob)}, tags: ${JSON.stringify(c.tags)} },`),
+      "],",
+      "edges: { allowDeny: [",
+      `  { source: ${JSON.stringify(`${ns}:rest`)}, targetNamespace: "pkg", deny: ${JSON.stringify([name])}, because: ${JSON.stringify(because)} },`,
+      "] },",
+    ].join("\n");
+    return {
+      proposal: {
+        pattern: "external-package-confined",
+        support: 1,
+        evidence: [because],
+        configFragment,
+        addedViolations: countAddedViolations(graph, baseConfig, proposedConfig, "tag-boundary"),
+        do: PROVE_RULES_DO,
+      },
+      weight: edgeCount,
+    };
+  });
+}
+
+// patterns.md's "test code kept out of production": a test/fixture/mock
+// module that already imports production code (real evidence it exists
+// to exercise the rest of the project) but that no production module
+// imports back today. Requiring evidence in both directions rules out an
+// empty, disconnected directory that merely happens to share the name -
+// zero edges either way is not a kept habit, it is silence.
+const TEST_SEGMENT_PATTERN = /^(tests?|__tests__|test-utils|fixtures?|mocks?|helpers?)$/;
+
+function detectTestCodeIsolation(
+  modules: readonly Module[],
+  counts: ReadonlyMap<string, ReadonlyMap<string, number>>,
+  declaredModules: readonly { name: string; glob: string }[],
+  baseConfig: Config,
+  graph: ModuleGraph,
+): { proposal: PatternProposal; weight: number }[] {
+  const testNames = modules.filter(m => matchesAnySegment(moduleGlob(declaredModules, m.name), TEST_SEGMENT_PATTERN)).map(m => m.name);
+  const prodNames = modules.map(m => m.name).filter(n => !testNames.includes(n));
+  if (prodNames.length === 0) return [];
+  const proposals: { proposal: PatternProposal; weight: number }[] = [];
+  for (const testName of testNames) {
+    const prodToTest = edgesBetweenGroups(counts, prodNames, [testName]);
+    const testToProd = edgesBetweenGroups(counts, [testName], prodNames);
+    if (prodToTest > 0 || testToProd === 0) continue; // already reached from production, or no evidence it exercises any production module
+    const ns = freeTagNamespace(baseConfig, "kind");
+    const classify = [
+      ...prodNames.map(n => ({ glob: moduleGlob(declaredModules, n), tags: [`${ns}:prod`] })),
+      { glob: moduleGlob(declaredModules, testName), tags: [`${ns}:test`] },
+    ];
+    const because = `'${testName}' is never imported by any of ${prodNames.length} production module(s) today; it imports ${testToProd} of them, real evidence it exercises production code`;
+    const pointRule = { from: { tags: [`${ns}:prod`] }, to: { tags: [`${ns}:test`] }, because };
+    const proposedConfig: Config = {
+      ...baseConfig,
+      classify: [...(baseConfig.classify ?? []), ...classify],
+      edges: { ...baseConfig.edges, point: [...(baseConfig.edges?.point ?? []), pointRule] },
+    };
+    const configFragment = [
+      "classify: [",
+      ...classify.map(c => `  { glob: ${JSON.stringify(c.glob)}, tags: ${JSON.stringify(c.tags)} },`),
+      "],",
+      "edges: { point: [",
+      `  { from: { tags: [${JSON.stringify(`${ns}:prod`)}] }, to: { tags: [${JSON.stringify(`${ns}:test`)}] }, because: ${JSON.stringify(because)} },`,
+      "] },",
+    ].join("\n");
+    proposals.push({
+      proposal: {
+        pattern: "test-code-isolation",
+        support: 1,
+        evidence: [because],
+        configFragment,
+        addedViolations: countAddedViolations(graph, baseConfig, proposedConfig, "point-rule"),
+        do: PROVE_RULES_DO,
+      },
+      weight: testToProd,
+    });
+  }
+  return proposals;
+}
+
+// patterns.md's "host/plugin inversion": a host/core area a plugin area
+// already depends on, that never depends back. `support` reads below 1
+// exactly like `detectLayeredOrder`'s reverse edge does - a real host
+// that names one concrete plugin today is still worth proposing, with the
+// existing edge counted as the added violation this proposal would create.
+const HOST_SEGMENT_PATTERN = /^(core|host)$/;
+const PLUGIN_SEGMENT_PATTERN = /^(plugins?|extensions?)$/;
+
+function detectHostPluginInversion(
+  modules: readonly Module[],
+  counts: ReadonlyMap<string, ReadonlyMap<string, number>>,
+  declaredModules: readonly { name: string; glob: string }[],
+  baseConfig: Config,
+  graph: ModuleGraph,
+): { proposal: PatternProposal; weight: number } | undefined {
+  const hostNames = modules.filter(m => matchesAnySegment(moduleGlob(declaredModules, m.name), HOST_SEGMENT_PATTERN)).map(m => m.name);
+  const pluginNames = modules.filter(m => matchesAnySegment(moduleGlob(declaredModules, m.name), PLUGIN_SEGMENT_PATTERN)).map(m => m.name);
+  if (hostNames.length === 0 || pluginNames.length === 0) return undefined;
+  const pluginToHost = edgesBetweenGroups(counts, pluginNames, hostNames);
+  const hostToPlugin = edgesBetweenGroups(counts, hostNames, pluginNames);
+  if (pluginToHost === 0) return undefined; // no evidence a plugin depends on the host at all
+  const total = pluginToHost + hostToPlugin;
+  const ns = freeTagNamespace(baseConfig, "kind");
+  const classify = [
+    ...hostNames.map(name => ({ glob: moduleGlob(declaredModules, name), tags: [`${ns}:host`] })),
+    ...pluginNames.map(name => ({ glob: moduleGlob(declaredModules, name), tags: [`${ns}:plugin`] })),
+  ];
+  const because = `plugin -> host: ${pluginToHost} edge(s); host -> plugin: ${hostToPlugin} edge(s)`;
+  const allowDenyRule = { source: `${ns}:host`, targetNamespace: ns, deny: ["plugin"], because };
+  const proposedConfig: Config = {
+    ...baseConfig,
+    classify: [...(baseConfig.classify ?? []), ...classify],
+    edges: { ...baseConfig.edges, allowDeny: [...(baseConfig.edges?.allowDeny ?? []), allowDenyRule] },
+  };
+  const configFragment = [
+    "classify: [",
+    ...classify.map(c => `  { glob: ${JSON.stringify(c.glob)}, tags: ${JSON.stringify(c.tags)} },`),
+    "],",
+    "edges: { allowDeny: [",
+    `  { source: ${JSON.stringify(`${ns}:host`)}, targetNamespace: ${JSON.stringify(ns)}, deny: ["plugin"], because: ${JSON.stringify(because)} },`,
+    "] },",
+  ].join("\n");
+  return {
+    proposal: {
+      pattern: "host-plugin-inversion",
+      support: pluginToHost / total,
+      evidence: [because, `host area(s): ${hostNames.join(", ")}`, `plugin area(s): ${pluginNames.join(", ")}`],
+      configFragment,
+      addedViolations: countAddedViolations(graph, baseConfig, proposedConfig, "tag-boundary"),
+      do: PROVE_RULES_DO,
+    },
+    weight: total,
+  };
+}
+
+// patterns.md's "feature isolation with a shared kernel": at least two
+// sibling modules under the same features/modules/pages container, plus
+// one kernel-named module (shared/core/common/lib) they import - grouped
+// by the container's own literal prefix so an unrelated directory sharing
+// a feature's own name elsewhere in the tree never joins the group.
+const FEATURE_CONTAINER_PATTERN = /^(features?|modules|pages)$/;
+const KERNEL_SEGMENT_PATTERN = /^(shared|core|common|lib)$/;
+
+function featureContainerKey(glob: string): string | undefined {
+  const segments = moduleSegments(glob);
+  const index = segments.findIndex(s => FEATURE_CONTAINER_PATTERN.test(s));
+  if (index === -1 || index === segments.length - 1) return undefined; // needs a feature name segment after the container
+  return segments.slice(0, index + 1).join("/");
+}
+
+function detectFeatureIsolation(
+  modules: readonly Module[],
+  counts: ReadonlyMap<string, ReadonlyMap<string, number>>,
+  declaredModules: readonly { name: string; glob: string }[],
+  baseConfig: Config,
+  graph: ModuleGraph,
+): { proposal: PatternProposal; weight: number }[] {
+  const groups = new Map<string, string[]>();
+  for (const module of modules) {
+    const key = featureContainerKey(moduleGlob(declaredModules, module.name));
+    if (key === undefined) continue;
+    (groups.get(key) ?? groups.set(key, []).get(key)!).push(module.name);
+  }
+  const kernelNames = modules.filter(m => matchesAnySegment(moduleGlob(declaredModules, m.name), KERNEL_SEGMENT_PATTERN)
+    && featureContainerKey(moduleGlob(declaredModules, m.name)) === undefined).map(m => m.name);
+  const proposals: { proposal: PatternProposal; weight: number }[] = [];
+  for (const [, featureNames] of groups) {
+    if (featureNames.length < 2 || kernelNames.length === 0) continue;
+    // The kernel candidate these features lean on most - the strongest
+    // evidence for which shared module, if more than one name matches.
+    const kernelName = [...kernelNames].sort((a, b) => edgesBetweenGroups(counts, featureNames, [b]) - edgesBetweenGroups(counts, featureNames, [a]) || a.localeCompare(b))[0]!;
+    const featureToKernel = edgesBetweenGroups(counts, featureNames, [kernelName]);
+    if (featureToKernel === 0) continue; // no evidence these features actually use this kernel
+    const crossFeature = edgesBetweenGroups(counts, featureNames, featureNames);
+    const featureNs = freeTagNamespace(baseConfig, "feature");
+    const kernelNs = freeTagNamespace(baseConfig, "kind");
+    const classify = [
+      ...featureNames.map(name => ({ glob: moduleGlob(declaredModules, name), tags: [`${featureNs}:${name}`] })),
+      { glob: moduleGlob(declaredModules, kernelName), tags: [`${kernelNs}:shared`] },
+    ];
+    const because = `features -> kernel ('${kernelName}'): ${featureToKernel} edge(s); features -> each other: ${crossFeature} edge(s)`;
+    const allowDenyRules = featureNames.map(name => ({ source: `${featureNs}:${name}`, targetNamespace: featureNs, allow: [] as string[], because }));
+    const proposedConfig: Config = {
+      ...baseConfig,
+      classify: [...(baseConfig.classify ?? []), ...classify],
+      edges: { ...baseConfig.edges, allowDeny: [...(baseConfig.edges?.allowDeny ?? []), ...allowDenyRules] },
+    };
+    const configFragment = [
+      "classify: [",
+      ...classify.map(c => `  { glob: ${JSON.stringify(c.glob)}, tags: ${JSON.stringify(c.tags)} },`),
+      "],",
+      "edges: { allowDeny: [",
+      ...allowDenyRules.map(r => `  { source: ${JSON.stringify(r.source)}, targetNamespace: ${JSON.stringify(featureNs)}, allow: [], because: ${JSON.stringify(because)} },`),
+      "] },",
+    ].join("\n");
+    proposals.push({
+      proposal: {
+        pattern: "feature-isolation",
+        support: featureToKernel / (featureToKernel + crossFeature),
+        evidence: [because, `sibling features: ${featureNames.join(", ")}`],
+        configFragment,
+        addedViolations: countAddedViolations(graph, baseConfig, proposedConfig, "tag-boundary"),
+        do: PROVE_RULES_DO,
+      },
+      weight: featureToKernel + crossFeature,
+    });
+  }
+  return proposals;
+}
+
+// At most 5 proposals survive - a project with more detectable shapes than
+// that sees only its strongest-evidenced ones; `detected` (recommend()'s
+// own field) keeps the cut visible.
+//
+// Ranking cannot sort on `support` alone: a leaf kernel with exactly one
+// importer scores a clean 1, tying or beating a real, near-total fit like
+// an application depending on a library through hundreds of edges with a
+// small, real handful of exceptions (support just under 1). `rankScore`
+// shrinks `support` toward 0 by how little evidence backs it
+// (`weight / (weight + RANK_SHRINKAGE)`, the same idea a ratings site
+// uses so five five-star reviews don't outrank a thousand at 4.9) - a
+// trivially clean proposal with almost no real evidence sinks below a
+// large, mostly-clean one, without changing `support` itself (still the
+// plain fraction a reader sees, and what the two existing layered-order
+// tests already assert exactly).
+const RANK_SHRINKAGE = 5;
+
 const PATTERN_PROPOSAL_CAP = 5;
+
+function rankScore(proposal: PatternProposal, weight: number): number {
+  return proposal.support * (weight / (weight + RANK_SHRINKAGE));
+}
 
 function detectPatterns(
   modules: readonly Module[],
@@ -339,12 +739,19 @@ function detectPatterns(
   baseConfig: Config,
   surfaceProposals: readonly SurfaceProposal[],
 ): PatternProposal[] {
-  const detected = [
-    detectLayeredOrder(modules, counts, declaredModules, baseConfig, graph),
+  const publicEntryOnly = detectPublicEntryOnly(surfaceProposals);
+  const weighted: { proposal: PatternProposal; weight: number }[] = [
+    ...[detectLayeredOrder(modules, counts, declaredModules, baseConfig, graph)].filter((w): w is { proposal: PatternProposal; weight: number } => w !== undefined),
     ...detectLeafKernels(modules, graph, declaredModules, baseConfig),
-    detectPublicEntryOnly(surfaceProposals),
-  ].filter((p): p is PatternProposal => p !== undefined);
-  return detected.sort((a, b) => b.support - a.support || a.pattern.localeCompare(b.pattern));
+    ...(publicEntryOnly === undefined ? [] : [publicEntryOnly]),
+    ...[detectAppOverLibrary(modules, counts, declaredModules, baseConfig, graph)].filter((w): w is { proposal: PatternProposal; weight: number } => w !== undefined),
+    ...detectExternalPackageConfined(modules, graph, declaredModules, baseConfig),
+    ...detectTestCodeIsolation(modules, counts, declaredModules, baseConfig, graph),
+    ...[detectHostPluginInversion(modules, counts, declaredModules, baseConfig, graph)].filter((w): w is { proposal: PatternProposal; weight: number } => w !== undefined),
+    ...detectFeatureIsolation(modules, counts, declaredModules, baseConfig, graph),
+  ];
+  weighted.sort((a, b) => rankScore(b.proposal, b.weight) - rankScore(a.proposal, a.weight) || a.proposal.pattern.localeCompare(b.proposal.pattern));
+  return weighted.map(w => w.proposal);
 }
 
 // Report every eligible pair, even when the count is large; a hidden cap would conceal choices the reader should make.
