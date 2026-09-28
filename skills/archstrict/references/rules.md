@@ -1,6 +1,6 @@
 # The rules
 
-Every rule's violation carries `rule`, `path`, `line`, `column`, `evidence`, `because`, `do`. Rules 1, 2, 6, and 7 (the constraint engine) also carry `todoModule` - the module a violation belongs to, and the only rules `archstrict todo` can freeze (a violation with no `todoModule` names a module directory, a module pair, or the config file, none of which `todo` has anywhere to freeze it into).
+Every rule's violation carries `rule`, `path`, `line`, `column`, `evidence`, `because`, `config`, and `do`. `config` is one pointer or an array of pointers. Each pointer has `{ path, pointer, value, line, column, role }`. `pointer` is a property path such as `edges.allowDeny[0].deny[1]`. `value` is the JSON value at that path. `line` and `column` locate its source text. `role` is `fired` when the value produced the violation, `governs` when the value makes the rule apply, or `edit-here` when the remediation names a different config location. An array keeps the `fired` pointer first. Text output prints the same data as `config: <path>:<line>:<column> <pointer> (<role>)` before `do:`. Rules 1, 2, 6, and 7 (the constraint engine) also carry `todoModule` - the module a violation belongs to, and the only rules `archstrict todo` can freeze (a violation with no `todoModule` names a module directory, a module pair, or the config file, none of which `todo` has anywhere to freeze it into).
 
 ## 1. public-surface-bypass
 

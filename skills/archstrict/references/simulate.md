@@ -34,7 +34,8 @@ With `--json`, the result has this shape:
 }
 ```
 
-Each violation includes `rule`, `path`, `line`, `column`, `evidence`, `because`, and `do`.
+Each violation includes `rule`, `path`, `line`, `column`, `evidence`, `because`, `config`, and `do`.
+`config` is one `{ path, pointer, value, line, column, role }` object, or an array when the violation needs more than one config location.
 The comparison uses the same fingerprints as todo tracking:
 
 - `added`: violations whose fingerprints occur after the proposal but not before it.

@@ -39,6 +39,7 @@
 import type { Config } from "../config.ts";
 import type { Edge, ModuleGraph } from "../module-graph.ts";
 import type { ProjectRelativePath } from "../project-path.js";
+import { withPointerSpecs } from "../config-pointer.js";
 
 export type Violation = {
   rule: "cycle";
@@ -338,11 +339,11 @@ export function checkStaleCycleExceptions(
   const componentSets = components.map((c) => new Set(c));
 
   const violations: StaleExceptionViolation[] = [];
-  for (const [a, b] of config.ignoredCycles ?? []) {
+  for (const [entryIndex, [a, b]] of (config.ignoredCycles ?? []).entries()) {
     const stillCycles = componentSets.some((members) => members.has(a) && members.has(b));
     if (stillCycles) continue;
 
-    violations.push({
+    violations.push(withPointerSpecs({
       rule: "stale-cycle-exception",
       path: config.configPath,
       line: 1,
@@ -350,7 +351,7 @@ export function checkStaleCycleExceptions(
       evidence: `ignoredCycles entry ['${a}', '${b}'] names no real cycle`,
       because: STALE_BECAUSE,
       do: `remove ['${a}', '${b}'] from ignoredCycles in archstrict.config.ts`,
-    });
+    }, [{ pointer: `ignoredCycles[${entryIndex}]`, role: "fired" }]));
   }
   return violations;
 }

@@ -8,7 +8,8 @@ import { checkMustBeEmpty, type Violation as MustBeEmptyViolation } from "../rul
 import { uncoveredViolationFor, type Violation as UncoveredViolation } from "../rules/uncovered.js";
 import { groupForRelFile, suggestUncovered } from "../module-candidates.js";
 import { assertSequenceListsValue, formatPredicate, matchesPredicate, sequenceFor } from "../rules/constraints.js";
-import { loadConfig } from "./check.js";
+import { formatConfigPointerLines, loadConfig } from "./check.js";
+import { createConfigLocator, locateViolation, type LocatedViolation } from "../config-pointer.js";
 
 export type AllowDenyProjection = {
   source: string;
@@ -53,8 +54,8 @@ export type RulesResult = {
   isSurfaceFile: boolean;
   importableFrom: { module: string; surfaceFiles: string[] }[];
   friendAccess: { module: string; file: string; from: string; because: string }[];
-  mustBeEmptyViolation: MustBeEmptyViolation | undefined;
-  uncoveredViolation: UncoveredViolation | undefined;
+  mustBeEmptyViolation: LocatedViolation<MustBeEmptyViolation> | undefined;
+  uncoveredViolation: LocatedViolation<UncoveredViolation> | undefined;
 };
 
 // The graph uses real paths. Resolve existing ancestors so new paths also
@@ -103,6 +104,7 @@ export async function rules(projectRoot: string, path: string): Promise<RulesRes
     throw new Error(`rules ${path}: path is outside project root '${root}'`);
   }
   const config = await loadConfig(resolve(root, "archstrict.config.ts"));
+  const configLocator = createConfigLocator(config);
   const graph = buildModuleGraphForRules({ projectRoot: root, declaredModules: config.declaredModules!, exclude: config.exclude, surface: config.surface });
   const exists = existsSync(resolvedPath);
   const excluded = (config.exclude ?? []).some((glob) => compileGlob(glob).test(rel));
@@ -176,6 +178,8 @@ export async function rules(projectRoot: string, path: string): Promise<RulesRes
       importForm: rule.importForm ?? "both",
       because: rule.because,
     }));
+  const mustBeEmptyViolation = excluded ? undefined : checkMustBeEmpty([rel], config)[0];
+  const uncoveredViolation = uncoveredViolationForQuery(resolvedPath, rel, exists, module, excluded, graph, config);
   return {
     allowDenyConstraints,
     orderConstraints,
@@ -191,8 +195,12 @@ export async function rules(projectRoot: string, path: string): Promise<RulesRes
     friendAccess: modules.flatMap((m) => m.friends
       .filter((friend) => compileGlob(friend.from).test(rel))
       .map((friend) => ({ module: m.name, file: friend.fileGlob, from: friend.from, because: friend.because }))),
-    mustBeEmptyViolation: excluded ? undefined : checkMustBeEmpty([rel], config)[0],
-    uncoveredViolation: uncoveredViolationForQuery(resolvedPath, rel, exists, module, excluded, graph, config),
+    mustBeEmptyViolation: mustBeEmptyViolation === undefined
+      ? undefined
+      : locateViolation(mustBeEmptyViolation, config, configLocator),
+    uncoveredViolation: uncoveredViolation === undefined
+      ? undefined
+      : locateViolation(uncoveredViolation, config, configLocator),
   };
 }
 
@@ -211,7 +219,9 @@ export function formatRulesText(result: RulesResult): string {
   for (const violation of [result.mustBeEmptyViolation, result.uncoveredViolation]) {
     if (violation === undefined) continue;
     lines.push(`[${violation.rule}] ${violation.path}:${violation.line}:${violation.column}`,
-      `  evidence: ${violation.evidence}`, `  because: ${violation.because}`, `  do: ${violation.do}`);
+      `  evidence: ${violation.evidence}`, `  because: ${violation.because}`);
+    lines.push(...formatConfigPointerLines(violation.config));
+    lines.push(`  do: ${violation.do}`);
   }
   lines.push(`importable from:${result.importableFrom.length === 0 ? " (none)" : ""}`);
   for (const entry of result.importableFrom) {

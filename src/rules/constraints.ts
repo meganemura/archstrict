@@ -28,6 +28,7 @@ import { type Edge, type ModuleGraph } from "../module-graph.js";
 import type { ProjectRelativePath } from "../project-path.js";
 import type { Config } from "../config.js";
 import { ReportError } from "../report-error.js";
+import { withPointerSpecs } from "../config-pointer.js";
 
 export type ConstraintViolation = {
   rule: "tag-boundary" | "tag-order" | "point-rule";
@@ -230,7 +231,13 @@ export function computeAllowDeny(
       if (violatingTag === undefined) return;
       if (focus !== undefined && edge.fromFile !== focus) return; // evaluated (coverage counted above); not built for a scoped run
 
-      const violation: ConstraintViolation = {
+      const pointers = rule.deny === undefined
+        ? [{ pointer: `edges.allowDeny[${i}].allow`, role: "fired" as const }]
+        : [
+          { pointer: `edges.allowDeny[${i}].deny[${rule.deny.indexOf(violatingTag.slice(namespacePrefix.length))}]`, role: "fired" as const },
+          { pointer: `edges.allowDeny[${i}].allow`, role: "edit-here" as const },
+        ];
+      const violation: ConstraintViolation = withPointerSpecs({
         rule: "tag-boundary",
         path: edge.fromFile,
         line: edge.fromPosition.line,
@@ -239,7 +246,7 @@ export function computeAllowDeny(
         because: rule.because,
         do: `remove this edge, or add '${violatingTag.slice(namespacePrefix.length)}' to '${rule.source}'s allow list in archstrict.config.ts and record why`,
         todoModule: edge.fromModule,
-      };
+      }, pointers);
       violations.push(violation);
       matches.push({ violation, edge, ruleIndex: i, violatingTag });
     });
@@ -290,7 +297,7 @@ export function checkExhaustiveAllow(graph: ModuleGraph, config: Config): { iden
 export function checkAllowDeny(graph: ModuleGraph, config: Config, focus?: string): ConstraintViolation[] {
   return computeAllowDeny(graph, config, focus).matches.map(match => {
     const moves = computeMoves(match.violation, graph, config, match);
-    return moves?.length ? { ...match.violation, moves } : match.violation;
+    return moves?.length ? Object.assign(match.violation, { moves }) : match.violation;
   }).sort(byPosition);
 }
 
@@ -376,7 +383,7 @@ function computeOrder(
       if (targetIndex <= sourceIndex) return;
       if (focus !== undefined && edge.fromFile !== focus) return; // evaluated (coverage counted above); not built for a scoped run
 
-      violations.push({
+      violations.push(withPointerSpecs({
         rule: "tag-order",
         path: edge.fromFile,
         line: edge.fromPosition.line,
@@ -385,7 +392,7 @@ function computeOrder(
         because: rule.because,
         do: `move this edge to depend only on '${rule.tagNamespace}' values at or before '${sourceLayer.slice(namespacePrefix.length)}' in archstrict.config.ts's sequence, or restructure the code so it does`,
         todoModule: edge.fromModule,
-      });
+      }, [{ pointer: `edges.order[${i}].sequence`, role: "fired" }]));
     });
   }
 
@@ -440,7 +447,7 @@ function computePoint(
       if (!matchesPredicate(rule.to, targetRel, targetTags)) return;
       if (focus !== undefined && edge.fromFile !== focus) return; // evaluated (coverage counted above); not built for a scoped run
 
-      violations.push({
+      violations.push(withPointerSpecs({
         rule: "point-rule",
         path: edge.fromFile,
         line: edge.fromPosition.line,
@@ -449,7 +456,7 @@ function computePoint(
         because: rule.because,
         do: `remove this edge, or narrow the point rule '${identifiers[i]}' in archstrict.config.ts if it's too broad`,
         todoModule: edge.fromModule,
-      });
+      }, [{ pointer: `edges.point[${i}]`, role: "fired" }]));
     });
   }
 

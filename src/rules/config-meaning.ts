@@ -1,6 +1,7 @@
 // Responsibility: assess contradictions between edge rules and their reasons through one Jev batch.
 // Boundary: advisory config findings only; no module ownership or todo policy.
 import type { Config } from "../config.js";
+import { withPointerSpecs } from "../config-pointer.js";
 
 type ChoiceAnswer = {
   type: "choice";
@@ -77,9 +78,10 @@ export const realProver: Prover = async (request) => {
 // Fixed, authored reasons prevent caught request details from leaking TYPESAFE_API_KEY into evidence without repeated sanitization.
 // Error categories can select a reason, but evidence must never copy error.message or error.name.
 function skipped(config: Config, reason: string, doText: string): Violation[] {
-  return [{ rule: "config-meaning", path: config.configPath, line: 1, column: 1,
+  return [withPointerSpecs({ rule: "config-meaning", path: config.configPath, line: 1, column: 1,
     tier: "calibrated", skipped: true, evidence: reason,
-    because: "a rule that checks nothing must not look like a pass", do: doText }];
+    because: "a rule that checks nothing must not look like a pass", do: doText },
+  [{ pointer: "edges", role: "governs" }])];
 }
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -104,11 +106,11 @@ export async function checkConfigMeaning(config: Config, prove: boolean, prover:
   // Kind and index provide unique keys within one batch request and response; stable identities serve no purpose here.
   // These keys are neither persisted nor compared across checks, and this config-level check never uses todo fingerprints.
   const entries = [
-    ...(config.edges?.allowDeny ?? []).map((rule, i) => ({ id: `allowDeny-${i}`, kind: "allowDeny", rule,
+    ...(config.edges?.allowDeny ?? []).map((rule, i) => ({ id: `allowDeny-${i}`, kind: "allowDeny", rule, pointer: `edges.allowDeny[${i}]`,
       label: `allowDeny rule (source '${rule.source}', targetNamespace '${rule.targetNamespace}')` })),
-    ...(config.edges?.order ?? []).map((rule, i) => ({ id: `order-${i}`, kind: "order", rule,
+    ...(config.edges?.order ?? []).map((rule, i) => ({ id: `order-${i}`, kind: "order", rule, pointer: `edges.order[${i}]`,
       label: `order rule (tagNamespace '${rule.tagNamespace}', within ${JSON.stringify(rule.within ?? null)}, sequence ${JSON.stringify(rule.sequence)})` })),
-    ...(config.edges?.point ?? []).map((rule, i) => ({ id: `point-${i}`, kind: "point", rule,
+    ...(config.edges?.point ?? []).map((rule, i) => ({ id: `point-${i}`, kind: "point", rule, pointer: `edges.point[${i}]`,
       label: `point rule (from ${JSON.stringify(rule.from)}, to ${JSON.stringify(rule.to)})` })),
   ];
   if (entries.length === 0) return [];
@@ -138,24 +140,24 @@ export async function checkConfigMeaning(config: Config, prove: boolean, prover:
       assessments.push({ type: "choice", choice: answer.choice, confidence: answer.confidence,
         probabilities: { consistent: answer.probabilities.consistent, contradicts: answer.probabilities.contradicts } });
     }
-    return entries.flatMap(({ rule, label }, i): Violation[] => {
+    return entries.flatMap(({ rule, label, pointer }, i): Violation[] => {
       const { choice, confidence, probabilities } = assessments[i]!;
       if (choice === "consistent") return [];
       // A skip means the request never ran or failed to yield a valid assessment; it cannot establish agreement with the reason.
       // Here Jev answered contradicts successfully, but its confidence does not justify a finding.
       // A separate undecided category preserves this inconclusive assessment instead of hiding it among request failures.
       if (confidence < CONTRADICTION_THRESHOLD) {
-        return [{ rule: "config-meaning", path: config.configPath, line: 1, column: 1,
+        return [withPointerSpecs({ rule: "config-meaning", path: config.configPath, line: 1, column: 1,
           evidence: `${label}: Jev returned contradicts but could not decide with sufficient confidence (confidence ${confidence}; probabilities ${JSON.stringify(probabilities)})`,
           because: rule.because,
           do: `request a human review of the ${label} in archstrict.config.ts: the automated check could not decide`,
-          undecided: true, tier: "calibrated" }];
+          undecided: true, tier: "calibrated" }, [{ pointer, role: "fired" }])];
       }
-      return [{ rule: "config-meaning", path: config.configPath, line: 1, column: 1,
+      return [withPointerSpecs({ rule: "config-meaning", path: config.configPath, line: 1, column: 1,
         evidence: `${label}: Jev assessed that its configured shape contradicts its 'because' text (confidence ${confidence})`,
         because: rule.because,
         do: `review the ${label} in archstrict.config.ts: correct its configured shape or its because text so they describe the same restriction`,
-        confidence, tier: "calibrated" }];
+        confidence, tier: "calibrated" }, [{ pointer, role: "fired" }])];
     });
   } catch (error) {
     if (error instanceof ProverFailure && error.kind === "missing-key") {

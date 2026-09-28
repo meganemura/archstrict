@@ -67,7 +67,8 @@ The built-in assessment instead checks whether the configured shape contradicts 
 
 ## 3. Violation shape
 
-Each calibrated result carries the five required fields `rule`, `path`, `evidence`, `because`, and `do`.
+Each calibrated result carries the required fields `rule`, `path`, `line`, `column`, `evidence`, `because`, `config`, and `do`.
+The `config` field identifies the assessed edge-rule entry as structured data.
 It also carries two fields that deterministic violations do not carry:
 
 | Field | Value |

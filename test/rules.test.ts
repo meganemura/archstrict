@@ -118,12 +118,14 @@ describe("rules", () => {
       // at "src") - old.ts and new.ts share the one "empty" suggestion.
       const groups = suggestUncovered(["src/empty/old.ts", "src/empty/new.ts"], config.declaredModules);
       const group = groupForRelFile(`src/empty/${name}`, groups)!;
-      expect(result.uncoveredViolation).toEqual(uncoveredViolationFor(path, root, group));
-      expect(result.mustBeEmptyViolation).toEqual(checkMustBeEmpty([`src/empty/${name}`], config)[0]);
+      expect(result.uncoveredViolation).toMatchObject(uncoveredViolationFor(path, root, group));
+      expect(result.mustBeEmptyViolation).toMatchObject(checkMustBeEmpty([`src/empty/${name}`], config)[0]!);
       for (const violation of [result.uncoveredViolation!, result.mustBeEmptyViolation!]) {
         const text = formatRulesText(result);
+        const pointer = Array.isArray(violation.config) ? violation.config[0]! : violation.config;
         expect(text).toContain(`evidence: ${violation.evidence}`);
         expect(text).toContain(`because: ${violation.because}`);
+        expect(text).toContain(`config: ${pointer.path}:${pointer.line}:${pointer.column}`);
         expect(text).toContain(`do: ${violation.do}`);
       }
     }

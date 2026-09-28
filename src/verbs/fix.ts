@@ -9,6 +9,7 @@ import { fingerprintOf } from "../todo-store.js";
 import type { Violation } from "../rules/type-leak.js";
 import { loadConfig, runRules, applyTodo, filterToFile } from "./check.js";
 import { resolveWriteTarget, writeTarget } from "./agents.js";
+import { createConfigLocator } from "../config-pointer.js";
 
 export type FixResult = {
   fixed: { path: string; lines: string[] }[];
@@ -36,6 +37,7 @@ export async function fix(projectRoot: string, file?: string, dryRun = false): P
   const focus = file === undefined ? undefined : resolve(projectRoot, file);
   if (focus !== undefined && !existsSync(focus)) return result;
   const config = await loadConfig(resolve(projectRoot, "archstrict.config.ts"));
+  const configLocator = createConfigLocator(config);
   // loadConfig already guarantees declaredModules is a well-shaped array
   // (assertDeclaredModulesShapeValid) - see check.ts's own comment.
   const options = { projectRoot, declaredModules: config.declaredModules!, exclude: config.exclude, surface: config.surface };
@@ -43,7 +45,12 @@ export async function fix(projectRoot: string, file?: string, dryRun = false): P
   let graph = warm.refresh(options);
   const notesSeen = new Set<string>();
   const evaluate = () => {
-    const evaluated = applyTodo(graph, config, runRules(graph, config));
+    const evaluated = applyTodo(
+      graph,
+      config,
+      runRules(graph, config, { configLocator }),
+      { configLocator },
+    );
     for (const note of graph.programNotes) notesSeen.add(note);
     return evaluated;
   };

@@ -11,6 +11,7 @@
 // own (the caller supplies which files exist), no output formatting.
 import { compileGlob } from "../classify.js";
 import type { Config } from "../config.js";
+import { withPointerSpecs } from "../config-pointer.js";
 
 export type Violation = {
   rule: "must-be-empty";
@@ -39,7 +40,7 @@ export function checkMustBeEmpty(files: readonly string[], config: Pick<Config, 
   if (entries.length === 0) return [];
 
   const violations: Violation[] = [];
-  for (const entry of entries) {
+  for (const [entryIndex, entry] of entries.entries()) {
     const glob = compileGlob(entry.glob);
     // `files` is not a promise about order (module membership is built
     // walking rootNames order - a directory scan, not a promise about
@@ -47,7 +48,7 @@ export function checkMustBeEmpty(files: readonly string[], config: Pick<Config, 
     // same entry come out in a stable order regardless of it.
     for (const file of [...files].sort()) {
       if (!glob.test(file)) continue;
-      violations.push({
+      violations.push(withPointerSpecs({
         rule: "must-be-empty",
         path: file,
         line: 1,
@@ -55,7 +56,7 @@ export function checkMustBeEmpty(files: readonly string[], config: Pick<Config, 
         evidence: `'${file}' matches '${entry.glob}', which must stay empty`,
         because: entry.because,
         do: `move '${file}' out of '${entry.glob}', or drop this mustBeEmpty entry in archstrict.config.ts if the restriction no longer applies`,
-      });
+      }, [{ pointer: `mustBeEmpty[${entryIndex}]`, role: "fired" }]));
     }
   }
   return violations;

@@ -36,6 +36,14 @@ import {
 } from "../rules/constraints.js";
 import { checkConfigMeaning, type Prover, type Violation as ConfigMeaningViolation } from "../rules/config-meaning.js";
 import { fingerprintOf, readTodo, type TodoEntry } from "../todo-store.js";
+import {
+  createConfigLocator,
+  declaredModulePointerForName,
+  locateViolation,
+  locateViolations,
+  type ConfigLocator,
+  type ConfigPointers,
+} from "../config-pointer.js";
 
 // Not one of the six rules: reported when a todo entry matches no current
 // violation (import-linter's own default for the same case is also an
@@ -65,7 +73,7 @@ export type CleanModuleHasTodoViolation = {
   do: string;
 };
 
-export type AnyViolation =
+export type RawViolation =
   | PublicSurfaceViolation
   | CycleViolation
   | UncoveredViolation
@@ -78,6 +86,14 @@ export type AnyViolation =
   | MustBeEmptyViolation
   | ConstraintViolation
   | ConfigMeaningViolation;
+
+export type AnyViolation = RawViolation & { config: ConfigPointers };
+
+export function formatConfigPointerLines(config: ConfigPointers): string[] {
+  const pointers = Array.isArray(config) ? config : [config];
+  return pointers.map((pointer) =>
+    `  config: ${pointer.path}:${pointer.line}:${pointer.column} ${pointer.pointer} (${pointer.role})`);
+}
 
 export type CheckResult = {
   modules: number;
@@ -311,6 +327,7 @@ function unresolvedSpecifierBreakdown(specifiers: string[]): { prefix: string; c
 }
 
 export type RunRulesOptions = {
+  configLocator?: ConfigLocator;
   // Set by check() when a `check <file>` run named a file that is not any
   // module's own surface file: rule 6's own violations are always
   // reported at a surface-file path (checkTypeLeaks below groups every
@@ -392,7 +409,7 @@ export function runRules(graph: ModuleGraph, config: Config, options: RunRulesOp
   const focus = options.focus;
 
   const mustBeEmptyFiles = allProjectRelativeFiles(graph);
-  const violations: AnyViolation[] = [
+  const violations: RawViolation[] = [
     ...checkPublicSurfaceBypass(graph, focus),
     ...checkCycles(graph, config),
     ...checkStaleCycleExceptions(graph, config),
@@ -424,6 +441,7 @@ export function runRules(graph: ModuleGraph, config: Config, options: RunRulesOp
   // approximation of it. Graph counts and edge coverage stay whole-project
   // facts. Violations, todo, and a surface run's type-leak count are scoped.
   const scopedViolations = focus === undefined ? violations : violations.filter((v) => reportedAtFocus(v.path, focus));
+  const locator = options.configLocator ?? createConfigLocator(config);
 
   return {
     modules: graph.modules.size,
@@ -436,7 +454,7 @@ export function runRules(graph: ModuleGraph, config: Config, options: RunRulesOp
     unsupportedSyntax: graph.unsupportedSyntaxCount,
     typeLeaks: typeLeaks === undefined ? null : typeLeaks.length,
     todo: 0,
-    violations: scopedViolations,
+    violations: locateViolations(scopedViolations, config, locator),
     suggestions: deprecated.suggestions,
     edgeRuleCoverage: checkEdgesCoverage(graph, config),
   };
@@ -496,6 +514,7 @@ function isFreezable(v: AnyViolation): v is AnyViolation & { todoModule: string 
 // forever — the same shape packwerk's own `enforce_dependencies: strict`
 // refuses.
 export type ApplyTodoOptions = {
+  configLocator?: ConfigLocator;
   // check() sets this to ["type-leak"] on a `check <file>` run scoped to a
   // non-surface file, the same run that told runRules to skip rule 6
   // entirely (RunRulesOptions.skipTypeLeak's own comment). Without this,
@@ -532,6 +551,7 @@ export function applyTodo(graph: ModuleGraph, config: Config, result: CheckResul
   const skipStaleCheckForRules = new Set(options.skipStaleCheckForRules ?? []);
   const focus = options.focus;
   const strict = new Set(config.strict ?? []);
+  const locator = options.configLocator ?? createConfigLocator(config);
   const remaining: AnyViolation[] = [];
   const matchedByModule = new Map<string, Set<string>>();
   let suppressed = 0;
@@ -583,7 +603,7 @@ export function applyTodo(graph: ModuleGraph, config: Config, result: CheckResul
     if (entries.length === 0) continue;
 
     if (strict.has(name)) {
-      remaining.push({
+      remaining.push(locateViolation({
         rule: "clean-module-has-todo",
         path: module.dir,
         line: 1,
@@ -591,7 +611,7 @@ export function applyTodo(graph: ModuleGraph, config: Config, result: CheckResul
         evidence: `module '${name}' is configured to stay clean, but has ${entries.length} todo entrie(s)`,
         because: "a module configured to stay clean must have no todo entries, not entries frozen from before",
         do: `fix the ${entries.length} violation(s), then run archstrict todo to prune`,
-      });
+      }, config, locator));
       continue; // this module's entries are never "stale" — they're a standing violation instead
     }
 
@@ -607,7 +627,7 @@ export function applyTodo(graph: ModuleGraph, config: Config, result: CheckResul
       if (focus !== undefined && !entryReportedAtFocus(entry, graph.rootDir, focus)) continue;
       if (matched.has(entry.fingerprint)) continue;
       if (skipStaleCheckForRules.has(entry.rule)) continue;
-      remaining.push({
+      remaining.push(locateViolation({
         rule: "stale-todo",
         path: module.dir,
         line: 1,
@@ -615,7 +635,7 @@ export function applyTodo(graph: ModuleGraph, config: Config, result: CheckResul
         evidence: `todo entry ${entry.fingerprint} (${entry.rule}) no longer matches any violation`,
         because: "an unmatched todo entry hides nothing real; it must be pruned, not left behind",
         do: "archstrict todo",
-      });
+      }, config, locator, [{ pointer: declaredModulePointerForName(config, name), role: "governs" }]));
     }
   }
 
@@ -707,6 +727,7 @@ export async function check(projectRoot: string, focusFile?: string, options: Ch
   // throw (a missing file, a bad default export, ...) still names the
   // exact path the caller gave, not a form it never used.
   config.configPath = realpathSync(configPath);
+  const configLocator = createConfigLocator(config);
   // declaredModules is the only source of scope now - loadConfig already
   // guarantees a loaded config has it, as an array of well-shaped entries
   // (assertDeclaredModulesShapeValid), not merely present. config.exclude
@@ -738,6 +759,7 @@ export async function check(projectRoot: string, focusFile?: string, options: Ch
   // first build did). A no-op when rule 6 never ran (skipTypeLeak).
   let programNotes: readonly string[] = [];
   const evaluated = runRules(graph, config, {
+    configLocator,
     skipTypeLeak,
     focusedTypeLeakModule,
     focus,
@@ -756,9 +778,17 @@ export async function check(projectRoot: string, focusFile?: string, options: Ch
   // meaning.ts's own comment), and that cost must never be paid just to
   // throw the answer away.
   if (focus === undefined || focus === config.configPath) {
-    evaluated.violations.push(...await checkConfigMeaning(config, options.prove ?? false, options.prover));
+    evaluated.violations.push(...locateViolations(
+      await checkConfigMeaning(config, options.prove ?? false, options.prover),
+      config,
+      configLocator,
+    ));
   }
-  const result = applyTodo(graph, config, evaluated, { skipStaleCheckForRules: skipTypeLeak ? ["type-leak"] : [], focus });
+  const result = applyTodo(graph, config, evaluated, {
+    configLocator,
+    skipStaleCheckForRules: skipTypeLeak ? ["type-leak"] : [],
+    focus,
+  });
   return focusFile === undefined ? result : filterToFile(result, focusFile);
 }
 
@@ -778,6 +808,7 @@ export function formatText(result: CheckResult): string {
       else lines.push(`  confidence: ${v.confidence}`);
     }
     lines.push(`  because: ${v.because}`);
+    lines.push(...formatConfigPointerLines(v.config));
     lines.push(`  do: ${v.do}`);
     if (v.rule === "tag-boundary" && v.moves?.length) {
       lines.push("  moves:");

@@ -164,7 +164,8 @@ test.each([1, 0.6])("check keeps assessments advisory in strict modules and appl
   expect((await check(root, join(root, "archstrict.config.ts"), { prove: true, prover })).violations).toHaveLength(1);
   expect((await check(root)).violations).toEqual([]);
   const blocking = { ...result, violations: [...result.violations, { rule: "empty-rule-set" as const,
-    path: root, line: 1, column: 1, evidence: "no edges", because: "test", do: "fix the rule" }] };
+    path: root, line: 1, column: 1, evidence: "no edges", because: "test", do: "fix the rule",
+    config: result.violations[0]!.config }] };
   expect(hasBlockingViolations(blocking)).toBe(true);
 }));
 

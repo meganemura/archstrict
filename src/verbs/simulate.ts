@@ -6,6 +6,7 @@ import ts from "typescript";
 import { buildPreparedGraph, DEFAULT_SURFACE, isEligibleSourceFile, prepareGraph } from "../module-graph.js";
 import { fingerprintOf } from "../todo-store.js";
 import { applyTodo, formatText, loadConfig, runRules, type AnyViolation, type CheckResult } from "./check.js";
+import { createConfigLocator } from "../config-pointer.js";
 
 export type Change = { path: string; content: string | null };
 export type SimulateResult = { added: AnyViolation[]; resolved: AnyViolation[]; unchangedCount: number };
@@ -98,7 +99,13 @@ export async function simulate(projectRoot: string, changes: readonly Change[]):
   const options = { projectRoot, declaredModules: beforeConfig.declaredModules!, exclude: beforeConfig.exclude, surface: beforeConfig.surface };
   const prepared = prepareGraph(options);
   const baseline = buildPreparedGraph(prepared);
-  const before = applyTodo(baseline, beforeConfig, runRules(baseline, beforeConfig));
+  const beforeLocator = createConfigLocator(beforeConfig);
+  const before = applyTodo(
+    baseline,
+    beforeConfig,
+    runRules(baseline, beforeConfig, { configLocator: beforeLocator }),
+    { configLocator: beforeLocator },
+  );
   const roots = new Set(prepared.rootNames);
   const added = new Set<string>();
   const deleted = new Set<string>();
@@ -155,7 +162,13 @@ export async function simulate(projectRoot: string, changes: readonly Change[]):
       throw new Error(`internal simulation error: overlay mismatch for ${file}`);
     }
   }
-  const after = applyTodo(graph, afterConfig, runRules(graph, afterConfig));
+  const afterLocator = createConfigLocator(afterConfig, proposedSource);
+  const after = applyTodo(
+    graph,
+    afterConfig,
+    runRules(graph, afterConfig, { configLocator: afterLocator }),
+    { configLocator: afterLocator },
+  );
   const beforeFingerprints = new Set(before.violations.map(fingerprintOf));
   const afterFingerprints = new Set(after.violations.map(fingerprintOf));
   return {

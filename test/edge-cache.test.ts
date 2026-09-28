@@ -146,7 +146,12 @@ test("rules writes a per-file cache entry and reuses it without a per-file walk 
   expect(cache.archstrictVersion).toBe(pkg.version);
   vi.clearAllMocks();
   expect(await rules(root, path)).toEqual(first);
-  expect(ts.createSourceFile).not.toHaveBeenCalled(); // a real cache hit re-parses nothing
+  // Config pointers require one config AST per run. A cache hit still avoids
+  // parsing every project source file.
+  expect(ts.createSourceFile).toHaveBeenCalledTimes(1);
+  expect(ts.createSourceFile).toHaveBeenCalledWith(
+    join(root, "archstrict.config.ts"), expect.any(String), expect.anything(), true, expect.anything(),
+  );
   expect(ts.createProgram).not.toHaveBeenCalled();
 }));
 

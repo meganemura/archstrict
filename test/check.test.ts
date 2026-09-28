@@ -567,13 +567,14 @@ describe("check", () => {
       const text = formatText(result);
       expect(text).toContain("[public-surface-bypass]");
       expect(text).toContain("because:");
+      expect(text).toContain("config:");
       expect(text.trim().split("\n").at(-1)).toBe("do: archstrict todo");
 
       // The JSON shape is the contract: pinned against a
       // hand-written expected object, not a snapshot, so a shape change
       // here is a deliberate edit to this test, not an accepted diff.
       expect(Object.keys(violation).sort()).toEqual(
-        ["because", "column", "evidence", "line", "do", "path", "rule", "todoModule"].sort(),
+        ["because", "column", "config", "evidence", "line", "do", "path", "rule", "todoModule"].sort(),
       );
       expect(JSON.parse(JSON.stringify(result))).toEqual({
         modules: 2,
@@ -596,6 +597,7 @@ describe("check", () => {
             column: violation.column,
             evidence: violation.evidence,
             because: violation.because,
+            config: violation.config,
             do: violation.do,
             todoModule: violation.todoModule,
           },

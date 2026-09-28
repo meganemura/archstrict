@@ -10,6 +10,7 @@
 // deprecated means "shrinking," not "exempt from every other rule."
 import { assertDeprecatedModulesExist, type Config } from "../config.js";
 import type { ModuleGraph } from "../module-graph.js";
+import { withPointerSpecs } from "../config-pointer.js";
 
 export type Violation = {
   rule: "deprecated-edge-increased";
@@ -64,11 +65,11 @@ export function checkDeprecatedEdges(
   const violations: Violation[] = [];
   const suggestions: Suggestion[] = [];
 
-  for (const entry of config.deprecated ?? []) {
+  for (const [entryIndex, entry] of (config.deprecated ?? []).entries()) {
     const actual = countEdges(graph, entry.from, entry.to);
 
     if (actual > entry.count) {
-      violations.push({
+      violations.push(withPointerSpecs({
         rule: "deprecated-edge-increased",
         path: config.configPath,
         line: 1,
@@ -76,7 +77,7 @@ export function checkDeprecatedEdges(
         evidence: `${entry.from} -> ${entry.to}: declared count ${entry.count}, actual ${actual}`,
         because: entry.because,
         do: `reduce ${entry.from} -> ${entry.to} back to ${entry.count} edges, or raise count in archstrict.config.ts and record why the increase was accepted`,
-      });
+      }, [{ pointer: `deprecated[${entryIndex}].count`, role: "fired" }]));
     } else if (actual > 0 && actual < entry.count) {
       // actual === 0 is not reported here at all: the edge is gone
       // entirely, not merely smaller, which is rule 4's more specific

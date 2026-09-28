@@ -11,6 +11,7 @@ import { assertDeprecatedModulesExist, type Config } from "../config.js";
 import { compileGlob } from "../classify.js";
 import { type ModuleGraph } from "../module-graph.js";
 import { checkEdgesCoverage, checkExhaustiveAllow } from "./constraints.js";
+import { withPointerSpecs } from "../config-pointer.js";
 
 export type Violation = {
   rule: "empty-rule-set" | "exhaustive-allow-list";
@@ -25,8 +26,8 @@ export type Violation = {
 const BECAUSE =
   "a rule that checks nothing must not look like a pass";
 
-function violation(config: Config, evidence: string, doText: string): Violation {
-  return {
+function violation(config: Config, evidence: string, doText: string, pointer: string): Violation {
+  return withPointerSpecs({
     rule: "empty-rule-set",
     path: config.configPath,
     line: 1,
@@ -34,7 +35,7 @@ function violation(config: Config, evidence: string, doText: string): Violation 
     evidence,
     because: BECAUSE,
     do: doText,
-  };
+  }, [{ pointer, role: "fired" }]);
 }
 
 // Every finding here reports at `config.configPath` (see the Violation
@@ -61,6 +62,7 @@ export function checkEmptyRuleSet(graph: ModuleGraph, config: Config): Violation
         config,
         "no modules declared in declaredModules",
         "add at least one declaredModules entry in archstrict.config.ts",
+        "declaredModules",
       ),
     ];
   }
@@ -73,7 +75,7 @@ export function checkEmptyRuleSet(graph: ModuleGraph, config: Config): Violation
   // entry, either way a rule that checks nothing must not look like a
   // pass.
   const allFiles = [...graph.modules.values()].flatMap((m) => m.files).concat(graph.outsideFiles);
-  for (const entry of config.classify ?? []) {
+  for (const [entryIndex, entry] of (config.classify ?? []).entries()) {
     const glob = compileGlob(entry.glob);
     const matchesAny = allFiles.some((file) => glob.test(graph.relativePath(file)));
     if (!matchesAny) {
@@ -82,6 +84,7 @@ export function checkEmptyRuleSet(graph: ModuleGraph, config: Config): Violation
           config,
           `classify glob '${entry.glob}' matches no file in scope`,
           `remove this classify entry from archstrict.config.ts, or point its glob at real files`,
+          `classify[${entryIndex}]`,
         ),
       );
     }
@@ -93,7 +96,7 @@ export function checkEmptyRuleSet(graph: ModuleGraph, config: Config): Violation
   // deliberately does not report this case (its own header explains why),
   // so it belongs here instead: an empty-rule-set violation, not a count
   // to shrink.
-  for (const entry of config.deprecated ?? []) {
+  for (const [entryIndex, entry] of (config.deprecated ?? []).entries()) {
     const actual = graph.crossModuleEdges.filter(
       (e) => e.fromModule === entry.from && e.toModule === entry.to,
     ).length;
@@ -103,6 +106,7 @@ export function checkEmptyRuleSet(graph: ModuleGraph, config: Config): Violation
           config,
           `deprecated edge '${entry.from} -> ${entry.to}' (declared count ${entry.count}) no longer exists`,
           `remove the '${entry.from} -> ${entry.to}' entry from deprecated in archstrict.config.ts`,
+          `deprecated[${entryIndex}]`,
         ),
       );
     }
@@ -117,25 +121,29 @@ export function checkEmptyRuleSet(graph: ModuleGraph, config: Config): Violation
   // the list guarantees a pass; the exhaustive-list check reports it below.
   // rules.md explains why a nonzero clean result still needs a positive
   // control, which these checks cannot replace.
+  const coverageIndices = { allowDeny: 0, order: 0, point: 0 };
   for (const c of checkEdgesCoverage(graph, config)) {
+    const entryIndex = coverageIndices[c.kind]++;
     if (c.evaluated === 0) {
       violations.push(
         violation(
           config,
           `${c.kind} rule '${c.identifier}' matches no real edge in scope`,
           `remove or correct this ${c.kind} entry in archstrict.config.ts's edges - its own source/target never applies to any real edge this project has (a workspace-sibling import may resolve as an external package rather than a project tag; see rules.md)`,
+          `edges.${c.kind}[${entryIndex}]`,
         ),
       );
     }
   }
 
   for (const { identifier, rule } of checkExhaustiveAllow(graph, config)) {
-    violations.push({
+    const entryIndex = (config.edges?.allowDeny ?? []).indexOf(rule);
+    violations.push(withPointerSpecs({
       rule: "exhaustive-allow-list", path: config.configPath, line: 1, column: 1,
       evidence: `allowDeny rule '${identifier}' allows every real target value with allow ${JSON.stringify(rule.allow)}`,
       because: rule.because,
       do: `narrow the allow list for '${identifier}' in archstrict.config.ts to a genuine subset of real target values, or remove the rule if it should forbid nothing today`,
-    });
+    }, [{ pointer: `edges.allowDeny[${entryIndex}].allow`, role: "fired" }]));
   }
 
   return violations;
