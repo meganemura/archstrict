@@ -155,7 +155,9 @@ async function runFix(args: string[]): Promise<number> {
 }
 
 async function runSimulate(args: string[]): Promise<number> {
-  if (args.some(arg => arg !== "--json")) throw new Error("usage: archstrict simulate [--json]");
+  if (args.some(arg => arg !== "--json" && arg !== "--whole-project")) {
+    throw new Error("usage: archstrict simulate [--json] [--whole-project]");
+  }
   let input = "";
   process.stdin.setEncoding("utf8");
   for await (const chunk of process.stdin) input += chunk;
@@ -163,7 +165,7 @@ async function runSimulate(args: string[]): Promise<number> {
   if (typeof body !== "object" || body === null || !("changes" in body) || !Array.isArray(body.changes)) {
     throw new Error("stdin must contain a JSON object with a changes array");
   }
-  const result = await simulate(process.cwd(), body.changes as Change[]);
+  const result = await simulate(process.cwd(), body.changes as Change[], { wholeProject: args.includes("--whole-project") });
   process.stdout.write(args.includes("--json") ? JSON.stringify(result, null, 2) + "\n" : formatSimulateText(result));
   return result.added.length === 0 ? 0 : 1;
 }

@@ -60,7 +60,7 @@ The CLI itself:
 - `archstrict check [file] [--json]` — analyze the whole project and report violations. With a file argument, analysis still covers the whole project (resolving an edge needs it), but the report is scoped to that file's own violations.
 - `archstrict todo [--json]` — on a project's first run, freeze every current freezable violation into its owning module's todo file (`archstrict.todo.json` inside a directory module; `<filename>.archstrict.todo.json` beside a single-file module); on every later run, only prune entries that no longer match a current violation. Never adds after the first run. The first run refuses instead (exit 1, no marker, no todo file written) while any `uncovered-module` violation exists, since such a file can never be frozen and a later declared-and-covered version of it would then find freezing already closed forever; a later, prune-only run is unaffected. `--json` prints `{ firstRun, added, pruned }`, or `{ "error": "<message>" }` on a config error, the same convention `check` follows.
 
-- `archstrict simulate [--json]` — preview proposed source or config changes through the full rule pipeline without writing to disk. Read the JSON change set from stdin; see [simulation](skills/archstrict/references/simulate.md).
+- `archstrict simulate [--json] [--whole-project]` — preview proposed source or config changes without writing to disk. The default report is scoped to changed files; `--whole-project` reports the complete project delta. Read the JSON change set from stdin; see [simulation](skills/archstrict/references/simulate.md).
 
 ## Claude Code plugin
 

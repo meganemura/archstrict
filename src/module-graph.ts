@@ -249,6 +249,10 @@ export type BuildOptions = {
   // derives module metadata. All consumers then use metadata consistent
   // with that list, without a second, manually constructed prepared object.
   fileListOverride?: (realFiles: string[]) => string[];
+  // Simulation also changes which files module resolution can see. Keep
+  // that list separate because declaration and JavaScript files can be
+  // resolvable without being analyzed roots.
+  resolvableFileListOverride?: (realFiles: string[]) => string[];
   projectRoot: string;
   // The global default public-surface file name(s), default DEFAULT_SURFACE
   // below. A single string, or several - the same array-vs-string shape a
@@ -283,6 +287,10 @@ export const ANALYZED_EXTENSIONS = [".ts", ".tsx", ".mts", ".cts"] as const;
 // an import walk. TypeScript-shaped files receive only an augmentation
 // scan, because a full Program can reach one through an omitted surface.
 const RESOLVABLE_EXTENSIONS = [".ts", ".tsx", ".mts", ".cts", ".d.ts", ".d.mts", ".d.cts", ".js", ".mjs", ".cjs", ".jsx", ".json"] as const;
+
+export function isResolvableFile(file: string): boolean {
+  return RESOLVABLE_EXTENSIONS.some((extension) => file.endsWith(extension));
+}
 
 // The default public surface now names one file per analyzed source
 // extension (an array, not a single string) - a directory module whose
@@ -726,7 +734,7 @@ function walkProjectTree(
     for (const entry of files) {
       const full = join(dir, entry.name);
       if (entry.name === "package.json" && !analysisOnly) packageJsonFiles.push(full);
-      if (!analysisOnly && RESOLVABLE_EXTENSIONS.some((ext) => entry.name.endsWith(ext))) resolvableFiles.push(full);
+      if (!analysisOnly && isResolvableFile(entry.name)) resolvableFiles.push(full);
       const rel = relativePath(full);
       if (excludeGlobs.some((glob) => compileGlob(glob).test(rel))) continue;
       if (NON_TS_SOURCE_EXTENSIONS.some((ext) => entry.name.endsWith(ext))) {
@@ -773,7 +781,7 @@ function walkProjectTree(
       for (const entry of files) {
         const full = join(dir, entry.name);
         if (entry.name === "package.json") packageJsonFiles.push(full);
-        if (RESOLVABLE_EXTENSIONS.some((ext) => entry.name.endsWith(ext))) resolvableFiles.push(full);
+        if (isResolvableFile(entry.name)) resolvableFiles.push(full);
       }
       for (const { entry, real } of dirs) {
         const full = join(dir, entry.name);
@@ -1072,6 +1080,8 @@ export function prepareGraph(options: BuildOptions) {
   const tree = walkProjectTree(projectRoot, exclude, dtsSurfaceGlobs, false, relativePath);
   let rootNames = tree.analyzedFiles;
   if (options.fileListOverride) rootNames = options.fileListOverride(rootNames);
+  let resolvableFiles = tree.resolvableFiles;
+  if (options.resolvableFileListOverride) resolvableFiles = options.resolvableFileListOverride(resolvableFiles);
   const modules = buildDeclaredModules(projectRoot, declaredModules, rootNames, surface, relativePath);
   // Cached by absolute file path: buildPreparedGraph calls this once per
   // source file AND once per edge's resolvedFile, and a widely-imported
@@ -1094,7 +1104,7 @@ export function prepareGraph(options: BuildOptions) {
   };
 
   return { projectRoot, surface, rootDir, rootNames, modules, relativePath, resolveModuleForFile, compilerOptions, compilerOptionsForFile,
-    nonTsSourceFileCount: tree.nonTsSourceFileCount, resolvableFiles: tree.resolvableFiles,
+    nonTsSourceFileCount: tree.nonTsSourceFileCount, resolvableFiles,
     packageJsonFiles: tree.packageJsonFiles, nodeModulesDirs: tree.nodeModulesDirs };
 }
 
@@ -1362,6 +1372,12 @@ export type GraphBuildOverrides = {
   // TypeScript's compiler host. Production instrumentation is refused because
   // the cache behavior does not belong in the public graph interface.
   onAugmentationCandidateReadForTests?: (fileName: string) => void;
+  // Overlay content must bypass a matching disk cache entry even when the
+  // real file has the same metadata as the cached version.
+  dirtyFiles?: ReadonlySet<string>;
+  // A proposed graph can read caches, but it must not persist facts for
+  // content that is not on disk.
+  persistCache?: boolean;
 };
 
 // A file's own ambient and augmentation flags (walkFileImports' own header) -
@@ -1583,13 +1599,15 @@ function scanNonAnalyzedModuleAugmentations(
 
   for (const file of candidates) {
     let before: { mtimeMs: number; size: number };
-    try { const value = statSync(file); before = { mtimeMs: value.mtimeMs, size: value.size }; }
+    if (overrides.dirtyFiles?.has(file) && commons.host.fileExists(file)) {
+      before = { mtimeMs: -1, size: Buffer.byteLength(commons.host.readFile(file) ?? "") };
+    } else try { const value = statSync(file); before = { mtimeMs: value.mtimeMs, size: value.size }; }
     catch { if (cached?.files[file] !== undefined) dirty = true; continue; }
     const metadata = commons.augmentationScanMetadata(file);
     const old = cached?.files[file];
     let specifiers: ModuleAugmentationSpecifier[] | undefined;
     let scanned = false;
-    if (old !== undefined && old.mtimeMs === before.mtimeMs && old.size === before.size &&
+    if (!overrides.dirtyFiles?.has(file) && old !== undefined && old.mtimeMs === before.mtimeMs && old.size === before.size &&
         old.optionsHash === metadata.optionsHash && old.impliedNodeFormat === metadata.impliedNodeFormat) {
       specifiers = old.specifiers;
     } else {
@@ -1600,8 +1618,8 @@ function scanNonAnalyzedModuleAugmentations(
     // An unreadable file must be retried. Caching an empty answer is refused
     // because a later call can read the same unchanged file successfully.
     if (specifiers === undefined) { if (old !== undefined) dirty = true; continue; }
-    let stable = false;
-    try { const after = statSync(file); stable = after.mtimeMs === before.mtimeMs && after.size === before.size; }
+    let stable = overrides.dirtyFiles?.has(file) === true;
+    try { if (!stable) { const after = statSync(file); stable = after.mtimeMs === before.mtimeMs && after.size === before.size; } }
     catch { /* The next call retries a file that disappeared during the scan. */ }
     if (stable) {
       files[file] = { ...before, ...metadata, specifiers };
@@ -1613,7 +1631,7 @@ function scanNonAnalyzedModuleAugmentations(
     const oldPaths = Object.keys(cached.files);
     if (oldPaths.length !== Object.keys(files).length || oldPaths.some((file) => files[file] === undefined)) dirty = true;
   }
-  if (dirty) {
+  if (dirty && overrides.persistCache !== false) {
     try { writeAugmentationCache(path, ARCHSTRICT_VERSION, files); } catch {
       // The scan is authoritative for this call. Failing the check for an
       // optional cache write is refused because the next call can scan again.
@@ -2283,13 +2301,11 @@ function fileParseValid(
 // edges/*.json shards, per file, keyed by absolute path once decoded -
 // see edge-cache.ts's own header for the full correctness contract
 // (which input invalidates which stored fact, and where) and for why the
-// cache is sharded at all. Never touched by simulate.ts, which keeps its
-// own in-memory overlay instead (a proposed, not-yet-real change has no
-// business landing in a cache other commands would then read back as if
-// it were real).
-export function buildModuleGraphForRules(options: BuildOptions): ModuleGraph {
+// cache is sharded at all. Simulation reads this cache through an overlay,
+// marks changed paths dirty, and disables writes for both graph sides.
+export function buildModuleGraphForRules(options: BuildOptions, overrides: GraphBuildOverrides = {}): ModuleGraph {
   const prepared = prepareGraph(options);
-  const commons = makeGraphCommons(prepared, {});
+  const commons = makeGraphCommons(prepared, overrides);
   const { projectRoot, rootNames, modules, resolveModuleForFile, compilerOptionsForFile, resolvableFiles, packageJsonFiles, nodeModulesDirs } = prepared;
   const path = join(projectRoot, "node_modules/.cache/archstrict/edges.json");
   const cached = readEdgeCache(path, projectRoot);
@@ -2333,6 +2349,10 @@ export function buildModuleGraphForRules(options: BuildOptions): ModuleGraph {
 
   const stats = new Map<string, { mtimeMs: number; size: number } | undefined>();
   for (const file of rootNames) {
+    if (overrides.dirtyFiles?.has(file) && commons.host.fileExists(file)) {
+      stats.set(file, { mtimeMs: -1, size: Buffer.byteLength(commons.host.readFile(file) ?? "") });
+      continue;
+    }
     try { const st = statSync(file); stats.set(file, { mtimeMs: st.mtimeMs, size: st.size }); }
     catch { stats.set(file, undefined); }
   }
@@ -2369,7 +2389,8 @@ export function buildModuleGraphForRules(options: BuildOptions): ModuleGraph {
     const oldEntry = versionOk ? cached.files[file] : undefined;
     const optionsIndex = optionsIndexByFile.get(file)!;
     const impliedNodeFormat = impliedFormatByFile.get(file);
-    const parseValid = fileParseValid(oldEntry, stat, optionsJsonByFile.get(file)!, oldOptionsTable, impliedNodeFormat);
+    const parseValid = !overrides.dirtyFiles?.has(file) &&
+      fileParseValid(oldEntry, stat, optionsJsonByFile.get(file)!, oldOptionsTable, impliedNodeFormat);
     if (!parseValid) { dirty = true; dirtyPaths.add(file); }
 
     let imports: ImportRecord[];
@@ -2466,7 +2487,7 @@ export function buildModuleGraphForRules(options: BuildOptions): ModuleGraph {
   }
 
   // Do not label an analysis with mtimes/sizes from a concurrent edit.
-  const stillStable = rootNames.every((file) => {
+  const stillStable = overrides.persistCache !== false && rootNames.every((file) => {
     const before = stats.get(file);
     if (before === undefined) return false;
     try { const now = statSync(file); return now.mtimeMs === before.mtimeMs && now.size === before.size; }
@@ -2487,5 +2508,5 @@ export function buildModuleGraphForRules(options: BuildOptions): ModuleGraph {
 
   const walked: WalkResult = { edges, outsideFiles, fileFlags,
     unsupportedSyntaxCount, unresolvedSpecifierCount, unresolvedSpecifiers };
-  return assembleGraph(prepared, commons, walked, {});
+  return assembleGraph(prepared, commons, walked, overrides);
 }

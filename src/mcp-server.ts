@@ -59,7 +59,8 @@ export function createArchstrictMcpServer(projectRoot: string): Server {
         case "check":
           // Agents can check after every edit, as the PostToolUse hook does, so parsed-source reuse matters here.
           // Rules already uses a lighter graph builder without a type checker.
-          // Search and simulate retain their separate cold, one-shot designs.
+          // Search keeps its separate cold, one-shot design. Simulate reads
+          // the disk cache without persisting its in-memory proposal.
           result = await check(projectRoot, args.file === undefined ? undefined : stringField(args, "file"), { buildGraph: warm.refresh });
           break;
         case "rules":

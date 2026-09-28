@@ -1,6 +1,6 @@
 # Preview changes with `archstrict simulate`
 
-Run `archstrict simulate [--json]` from the project root.
+Run `archstrict simulate [--json] [--whole-project]` from the project root.
 The command reads a JSON object from stdin:
 
 ```ts
@@ -13,7 +13,10 @@ Each path identifies a file to create, replace, or delete.
 Relative paths resolve from the project root.
 A string supplies the full proposed file content, not a patch.
 Use `null` to delete a file in the simulation.
-The command checks the complete change set through the rule pipeline, including cycles and deprecated-edge limits.
+By default, the command reports only violations whose `path` is one of the changed files.
+It uses the same focused type-leak analysis as `check <file>` when a changed file is a module surface.
+Use `--whole-project` when a proposal can create a violation on an unchanged file, such as a new target that makes an existing import resolvable.
+Whole-project mode also suits CI and multi-file refactors that need the complete delta.
 It compares the proposal with the project on disk and leaves the files unchanged.
 
 For example:
@@ -28,6 +31,7 @@ With `--json`, the result has this shape:
 
 ```ts
 {
+  mode: "scoped" | "whole-project";
   added: Violation[];
   resolved: Violation[];
   unchangedCount: number;
@@ -45,9 +49,12 @@ The comparison uses the same fingerprints as todo tracking:
 Unchanged violations contribute to the count; the result does not list their values.
 A changed fingerprint can produce one resolved violation and one added violation for the same underlying problem.
 
-Without `--json`, the first line gives a summary such as:
+`mode` states whether the default changed-file scope or `--whole-project` ran.
+
+Without `--json`, the first two lines give a summary such as:
 
 ```text
+mode: scoped
 added: 0; resolved: 0; unchanged: 1
 ```
 
@@ -80,7 +87,7 @@ Simulation leaves the todo files unchanged.
 
 ## MCP
 
-The MCP `simulate` tool accepts the same `changes` array in its arguments.
+The MCP `simulate` tool accepts the same `changes` array in its arguments and uses scoped mode.
 After the MCP connection is initialized, send a JSON-RPC `tools/call` request:
 
 ```json

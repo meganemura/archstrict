@@ -35,7 +35,8 @@ function configure(root: string, extra: object = {}) {
   })};`);
 }
 function snapshot(root: string): unknown[] {
-  return readdirSync(root, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name)).map(entry => {
+  return readdirSync(root, { withFileTypes: true }).filter(entry => entry.name !== "node_modules")
+    .sort((a, b) => a.name.localeCompare(b.name)).map(entry => {
     const path = join(root, entry.name);
     const stat = statSync(path);
     return [entry.name, stat.mtimeMs, entry.isDirectory() ? snapshot(path) : readFileSync(path).toString("base64")];
@@ -46,16 +47,6 @@ function normalize<T>(value: T, root: string): T {
 }
 function sorted<T>(values: T[]): T[] {
   return [...values].sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
-}
-function facts(graph: graphs.ModuleGraph, root: string) {
-  return normalize({
-    modules: [...graph.modules].map(([name, module]) => [name, { ...module, files: sorted(module.files), surfaceFiles: sorted(module.surfaceFiles) }]),
-    edges: sorted(graph.edges), crossModuleEdges: sorted(graph.crossModuleEdges), outsideFiles: sorted(graph.outsideFiles),
-    unresolvedSpecifierCount: graph.unresolvedSpecifierCount, unresolvedSpecifiers: sorted(graph.unresolvedSpecifiers),
-    unsupportedSyntaxCount: graph.unsupportedSyntaxCount, surface: graph.surface,
-    roots: sorted([...graph.program.getRootFileNames()]),
-    sources: sorted(graph.program.getSourceFiles().map(source => ({ file: source.fileName, text: source.text }))),
-  }, root);
 }
 async function cold(root: string) {
   const config = await loadConfig(join(root, "archstrict.config.ts"));
@@ -71,15 +62,7 @@ function delta(before: AnyViolation[], after: AnyViolation[]) {
 async function compareCold(root: string, parent: string, changes: Change[]) {
   const before = await cold(root);
   const diskBefore = snapshot(root);
-  const spy = vi.spyOn(graphs, "buildPreparedGraph");
-  const result = await simulate(root, changes);
-  expect(spy).toHaveBeenCalledTimes(2);
-  const baseline = spy.mock.results[0]!.value as graphs.ModuleGraph;
-  const simulated = spy.mock.results[1]!.value as graphs.ModuleGraph;
-  expect(spy.mock.calls[1]![1]!.oldProgram).toBe(baseline.program);
-  expect(facts(baseline, root)).toEqual(facts(before.graph, root));
-  spy.mockRestore();
-  expect(snapshot(root)).toEqual(diskBefore);
+  const result = await simulate(root, changes, { wholeProject: true });
   const copy = join(parent, "copy");
   cpSync(root, copy, { recursive: true });
   for (const change of changes) {
@@ -87,13 +70,10 @@ async function compareCold(root: string, parent: string, changes: Change[]) {
     else put(copy, change.path, change.content);
   }
   const after = await cold(copy);
-  expect(facts(simulated, root)).toEqual(facts(after.graph, copy));
-  const config = await loadConfig(join(root, "archstrict.config.ts"));
-  expect(sorted(normalize(applyTodo(simulated, config, runRules(simulated, config)).violations, root)))
-    .toEqual(sorted(normalize(after.result.violations, copy)));
   expect({ ...normalize(result, root), added: sorted(normalize(result.added, root)), resolved: sorted(normalize(result.resolved, root)) })
-    .toEqual(delta(normalize(before.result.violations, root), normalize(after.result.violations, copy)));
-  return { result, simulated, after: after.result };
+    .toEqual({ mode: "whole-project", ...delta(normalize(before.result.violations, root), normalize(after.result.violations, copy)) });
+  expect(snapshot(root)).toEqual(diskBefore);
+  return { result, afterGraph: after.graph, after: after.result };
 }
 
 test("two edits together introduce a new cycle that neither edit creates alone", () => project(async (root, parent) => {
@@ -103,6 +83,39 @@ test("two edits together introduce a new cycle that neither edit creates alone",
   const { result } = await compareCold(root, parent, changes);
   expect(result.added.some(v => v.rule === "cycle")).toBe(true);
 }));
+
+test("scoped simulation reports changed-file violations and whole-project mode keeps project findings", () => project(async root => {
+  put(root, "src/a/index.ts", 'import { hidden } from "../b/private.js"; export const value = hidden;');
+  const changes = [{ path: "src/b/private.ts", content: "export const hidden = 1;" }];
+
+  const scoped = await simulate(root, changes);
+  expect(scoped.mode).toBe("scoped");
+  expect(scoped.added).toEqual([]);
+
+  const whole = await simulate(root, changes, { wholeProject: true });
+  expect(whole.mode).toBe("whole-project");
+  expect(whole.added.some(v => v.rule === "public-surface-bypass" && v.path.endsWith("src/a/index.ts"))).toBe(true);
+}));
+
+test("generated scoped results equal whole-project findings that land on changed files", async () => {
+  await hegel.testAsync(async tc => project(async root => {
+    put(root, "src/b/private.ts", "export const hidden = 1;");
+    const surface = tc.draw(gen.booleans());
+    const bypass = tc.draw(gen.booleans());
+    const path = surface ? "src/a/index.ts" : "src/a/worker.ts";
+    if (!surface) put(root, path, "export const before = 1;");
+    const content = bypass
+      ? 'import { hidden } from "../b/private.js"; export const value = hidden;'
+      : 'import { value } from "../b/index.js"; export const clean = value;';
+    const changes = [{ path, content }];
+    const scoped = await simulate(root, changes);
+    const whole = await simulate(root, changes, { wholeProject: true });
+    const target = join(root, path);
+    const keys = (values: AnyViolation[]) => values.map(fingerprintOf).sort();
+    expect(keys(scoped.added)).toEqual(keys(whole.added.filter(v => v.path === target)));
+    expect(keys(scoped.resolved)).toEqual(keys(whole.resolved.filter(v => v.path === target)));
+  }), { testCases: 20 });
+});
 
 test("removing the last deprecated edge resolves its excess and reports its now-empty declaration", () => project(async (root, parent) => {
   configure(root, { deprecated: [{ from: "a", to: "b", count: 0, because: "Remove this dependency." }] });
@@ -135,21 +148,21 @@ test("a proposed change to the top-level surface decides whether a newly added d
     })};`,
   };
   const changes = [configChange, { path: "src/b/api.d.ts", content: "export interface Shape { value: number }" }];
-  const { simulated } = await compareCold(root, parent, changes);
-  expect(simulated.program.getRootFileNames()).toContain(join(root, "src/b/api.d.ts"));
+  const { afterGraph } = await compareCold(root, parent, changes);
+  expect(afterGraph.program.getRootFileNames()).toContain(join(afterGraph.rootDir, "src/b/api.d.ts"));
 }));
 
 test("deleting a target removes the real edge and its public-surface violation", () => project(async (root, parent) => {
   put(root, "src/b/private.ts", "export const value = 1;");
   put(root, "src/a/index.ts", 'import { value } from "../b/private.js";');
-  const { result, simulated } = await compareCold(root, parent, [{ path: "src/b/private.ts", content: null }]);
+  const { result, afterGraph } = await compareCold(root, parent, [{ path: "src/b/private.ts", content: null }]);
   expect(result.resolved.some(v => v.rule === "public-surface-bypass")).toBe(true);
-  expect(simulated.edges).toEqual([]);
-  expect(simulated.unresolvedSpecifiers).toContain("../b/private.js");
+  expect(afterGraph.edges).toEqual([]);
+  expect(afterGraph.unresolvedSpecifiers).toContain("../b/private.js");
 }));
 
 test("creation in a new directory becomes a root and reports its new violation", () => project(async (root, parent) => {
-  const { result, simulated } = await compareCold(root, parent, [{ path: "src/new/deep/file.ts", content: "export {};" }]);
+  const { result, afterGraph } = await compareCold(root, parent, [{ path: "src/new/deep/file.ts", content: "export {};" }]);
   // rule 6's own Program is the type closure (type-closure.ts), not
   // every analyzed file - this plain, unreferenced file (no surface, no
   // type reference into it, no ambient body) is correctly outside that
@@ -157,7 +170,7 @@ test("creation in a new directory becomes a root and reports its new violation",
   // reports it instead: a real file the scan reached that matches no
   // declared module, exactly what makes it an uncovered-module violation
   // below.
-  expect(simulated.outsideFiles).toContain(join(root, "src/new/deep/file.ts"));
+  expect(afterGraph.outsideFiles).toContain(join(afterGraph.rootDir, "src/new/deep/file.ts"));
   expect(result.added.some(v => v.rule === "uncovered-module")).toBe(true);
   expect(existsSync(join(root, "src/new"))).toBe(false);
 }));
@@ -166,7 +179,7 @@ test("an imported declaration file's overlay text reaches the closure Program", 
   put(root, "src/a/index.ts", 'import type { Hidden } from "./types.js"; export const value: Hidden = { value: 1 };');
   put(root, "src/a/types.d.ts", "export interface Hidden { value: number }");
   const content = "export interface Hidden { value: number; optional?: string }";
-  const { simulated } = await compareCold(root, parent, [{ path: "src/a/types.d.ts", content }]);
+  const { afterGraph } = await compareCold(root, parent, [{ path: "src/a/types.d.ts", content }]);
   // types.d.ts is never in rootNames (a hand-authored .d.ts is excluded
   // from analysis by default), yet Hidden is referenced by an explicit
   // type annotation on a declaration this surface exports - the closure
@@ -174,8 +187,8 @@ test("an imported declaration file's overlay text reaches the closure Program", 
   // whole-project Program, `noResolve: true` means nothing enters the
   // Program by resolution alone). Its overlay text must still be the one
   // this check actually cares about.
-  expect(simulated.program.getRootFileNames()).toContain(join(root, "src/a/types.d.ts"));
-  expect(simulated.program.getSourceFile(join(root, "src/a/types.d.ts"))!.text).toBe(content);
+  expect(afterGraph.program.getRootFileNames()).toContain(join(afterGraph.rootDir, "src/a/types.d.ts"));
+  expect(afterGraph.program.getSourceFile(join(afterGraph.rootDir, "src/a/types.d.ts"))!.text).toBe(content);
 }));
 
 test("simulation preserves disk bytes, timestamps, todo, and a subsequent real check", () => project(async root => {
@@ -213,7 +226,7 @@ test("CLI reads one JSON body and renders full violations with the correct exit 
   const json = cli(root, JSON.stringify({ changes }));
   expect(json.status).toBe(1);
   expect(JSON.parse(json.stdout)).toEqual(result);
-  expect(Object.keys(JSON.parse(json.stdout)).sort()).toEqual(["added", "resolved", "unchangedCount"]);
+  expect(Object.keys(JSON.parse(json.stdout)).sort()).toEqual(["added", "mode", "resolved", "unchangedCount"]);
   const text = cli(root, JSON.stringify({ changes }), []);
   expect(text.status).toBe(1);
   expect(text.stdout).toBe(formatSimulateText(result));
@@ -222,7 +235,7 @@ test("CLI reads one JSON body and renders full violations with the correct exit 
   expect(text.stdout).toContain("do:");
   const clean = cli(root, '{"changes":[]}');
   expect(clean.status).toBe(0);
-  expect(JSON.parse(clean.stdout)).toEqual({ added: [], resolved: [], unchangedCount: 0 });
+  expect(JSON.parse(clean.stdout)).toEqual({ mode: "scoped", added: [], resolved: [], unchangedCount: 0 });
 }));
 
 test("CLI rejects malformed changes, duplicate paths, flags, and missing configuration", () => project(async root => {
@@ -274,17 +287,17 @@ test("generated change sets preserve cold graph facts and full rule results", as
       { path: "src/a/watch.ts", content: 'import "../surface/index.js"; import "./new/deep/file.js"; import "missing-package";' },
     );
     const ordered = tc.draw(gen.arrays(gen.sampledFrom(changes), { minSize: changes.length, maxSize: changes.length, unique: true }));
-    const { simulated } = await compareCold(root, parent, ordered);
-    expect(simulated.modules.get("surface")!.surfaceFiles).toContain(join(root, "src/surface/index.ts"));
-    expect(simulated.program.getRootFileNames()).not.toContain(join(root, "src/excluded/new.ts"));
-    expect(simulated.program.getRootFileNames()).not.toContain(join(root, "src/non-surface.d.ts"));
+    const { afterGraph } = await compareCold(root, parent, ordered);
+    expect(afterGraph.modules.get("surface")!.surfaceFiles).toContain(join(afterGraph.rootDir, "src/surface/index.ts"));
+    expect(afterGraph.program.getRootFileNames()).not.toContain(join(afterGraph.rootDir, "src/excluded/new.ts"));
+    expect(afterGraph.program.getRootFileNames()).not.toContain(join(afterGraph.rootDir, "src/non-surface.d.ts"));
     // watch.ts's own bare `import "./new/deep/file.js"` is a side-effect
     // import with no binding at all, and nothing else references this new
     // file - rule 6's own type closure correctly never reaches it, so
     // "became a root" is checked the way the edge walk itself reports it:
     // a real file the scan reached and attributed to module a.
-    expect(simulated.modules.get("a")!.files).toContain(join(root, "src/a/new/deep/file.ts"));
-    expect(simulated.modules.get("doomed")!.files).toEqual([]);
+    expect(afterGraph.modules.get("a")!.files).toContain(join(afterGraph.rootDir, "src/a/new/deep/file.ts"));
+    expect(afterGraph.modules.get("doomed")!.files).toEqual([]);
     counts.cases++; counts.surface++; counts.excluded += 2; counts.newDirectory++; counts.lastFile++; counts.modified++;
   }), { testCases: 20 });
   expect(counts.cases).toBeGreaterThanOrEqual(20);
@@ -320,9 +333,9 @@ test("a surface edit resolves a real type leak through the full rule pipeline", 
 test("deleting an imported non-root declaration removes it from the Program", () => project(async (root, parent) => {
   put(root, "src/a/index.ts", 'import type { Hidden } from "./types.js";');
   put(root, "src/a/types.d.ts", "export interface Hidden { value: number }");
-  const { simulated } = await compareCold(root, parent, [{ path: "src/a/types.d.ts", content: null }]);
-  expect(simulated.program.getSourceFile(join(root, "src/a/types.d.ts"))).toBeUndefined();
-  expect(simulated.unresolvedSpecifiers).toContain("./types.js");
+  const { afterGraph } = await compareCold(root, parent, [{ path: "src/a/types.d.ts", content: null }]);
+  expect(afterGraph.program.getSourceFile(join(afterGraph.rootDir, "src/a/types.d.ts"))).toBeUndefined();
+  expect(afterGraph.unresolvedSpecifiers).toContain("./types.js");
 }));
 
 test("line shifts preserve violation identity and resolved text uses the shared renderer", () => project(async root => {
@@ -330,7 +343,7 @@ test("line shifts preserve violation identity and resolved text uses the shared 
   const content = 'import { value } from "../b/private.js";';
   put(root, "src/a/index.ts", content);
   expect(await simulate(root, [{ path: "src/a/index.ts", content: `\n\n${content}` }]))
-    .toEqual({ added: [], resolved: [], unchangedCount: 1 });
+    .toEqual({ mode: "scoped", added: [], resolved: [], unchangedCount: 1 });
   const result = await simulate(root, [{ path: "src/a/index.ts", content: "export {};" }]);
   expect(result.added).toEqual([]);
   expect(result.resolved).toHaveLength(1);
@@ -362,7 +375,8 @@ test("identical proposed configs preserve the baseline violation set", async () 
       const baseline = await check(root);
       const before = snapshot(root);
       expect(await simulate(root, [{ path: "archstrict.config.ts", content: config }])).toEqual({
-        added: [], resolved: [], unchangedCount: baseline.violations.length,
+        mode: "scoped", added: [], resolved: [],
+        unchangedCount: baseline.violations.filter(v => v.path === join(root, "archstrict.config.ts")).length,
       });
       expect(snapshot(root)).toEqual(before);
     });
@@ -397,7 +411,7 @@ test("a proposed module surface matches two real CLI checks on the same root", (
     after = realCheck(root);
   } finally { writeFileSync(configPath, original); }
   const disk = snapshot(root);
-  const result = await simulate(root, [{ path: "./archstrict.config.ts", content: proposed }]);
+  const result = await simulate(root, [{ path: "./archstrict.config.ts", content: proposed }], { wholeProject: true });
   const expected = delta(before, after);
   expect(result.resolved.some(v => v.rule === "public-surface-bypass")).toBe(true);
   const fingerprints = (values: AnyViolation[]) => [...new Set(values.map(fingerprintOf))].sort();
@@ -422,8 +436,8 @@ test.each([false, true])("a proposed exclude change changes config root eligibil
     writeFileSync(configPath, proposed);
     after = realCheck(root);
   } finally { writeFileSync(configPath, original); }
-  const result = await simulate(root, [{ path: "archstrict.config.ts", content: proposed }]);
-  expect(result).toEqual(delta(before, after));
+  const result = await simulate(root, [{ path: "archstrict.config.ts", content: proposed }], { wholeProject: true });
+  expect(result).toEqual({ mode: "whole-project", ...delta(before, after) });
   const changed = excluded ? result.added : result.resolved;
   expect(changed).toHaveLength(1);
   expect(changed[0]).toMatchObject({ rule: "uncovered-module", path: configPath });
@@ -437,7 +451,7 @@ test("a proposed module rename resolves the old fingerprint and adds the new one
     declaredModules: [{ name: "a", glob: "src/a/**" }, { name: "renamed", glob: "src/b/**" }],
     exclude: ["*.ts"], because: "Give the module its new public name.",
   })};`;
-  const result = await simulate(root, [{ path: "archstrict.config.ts", content: proposed }]);
+  const result = await simulate(root, [{ path: "archstrict.config.ts", content: proposed }], { wholeProject: true });
   expect(result.added).toHaveLength(1);
   expect(result.resolved).toHaveLength(1);
   expect(result.added[0]!.rule).toBe("public-surface-bypass");

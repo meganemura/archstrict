@@ -3,13 +3,15 @@
 import { existsSync, realpathSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import ts from "typescript";
-import { buildPreparedGraph, DEFAULT_SURFACE, isEligibleSourceFile, prepareGraph } from "../module-graph.js";
+import { buildModuleGraphForRules, DEFAULT_SURFACE, isEligibleSourceFile, isResolvableFile, prepareGraph, type ModuleGraph } from "../module-graph.js";
 import { fingerprintOf } from "../todo-store.js";
 import { applyTodo, formatText, loadConfig, runRules, type AnyViolation, type CheckResult } from "./check.js";
 import { createConfigLocator } from "../config-pointer.js";
 
 export type Change = { path: string; content: string | null };
-export type SimulateResult = { added: AnyViolation[]; resolved: AnyViolation[]; unchangedCount: number };
+export type SimulateMode = "scoped" | "whole-project";
+export type SimulateResult = { mode: SimulateMode; added: AnyViolation[]; resolved: AnyViolation[]; unchangedCount: number };
+export type SimulateOptions = { wholeProject?: boolean };
 
 // A proposed file can belong to a directory that does not exist yet.
 // realpathSync would throw for that file or directory. Resolve only the
@@ -73,7 +75,46 @@ function overlayHost(options: ts.CompilerOptions, changes: ReadonlyMap<string, s
   return host;
 }
 
-export async function simulate(projectRoot: string, changes: readonly Change[]): Promise<SimulateResult> {
+function surfaceModuleForPath(graph: ModuleGraph, path: string): string | undefined {
+  for (const module of graph.modules.values()) {
+    if (module.surfaceFiles.includes(path)) return module.name;
+  }
+  return undefined;
+}
+
+function evaluate(
+  graph: ModuleGraph,
+  config: Awaited<ReturnType<typeof loadConfig>>,
+  locator: ReturnType<typeof createConfigLocator>,
+  focusPaths: readonly string[] | undefined,
+): AnyViolation[] {
+  if (focusPaths === undefined) {
+    const result = applyTodo(graph, config, runRules(graph, config, { configLocator: locator }), { configLocator: locator });
+    graph.releaseProgram();
+    return result.violations;
+  }
+
+  const violations = new Map<string, AnyViolation>();
+  for (const focus of focusPaths) {
+    const focusedTypeLeakModule = surfaceModuleForPath(graph, focus);
+    const skipTypeLeak = focusedTypeLeakModule === undefined;
+    const result = applyTodo(
+      graph,
+      config,
+      runRules(graph, config, { configLocator: locator, focus, focusedTypeLeakModule, skipTypeLeak }),
+      { configLocator: locator, focus, skipStaleCheckForRules: skipTypeLeak ? ["type-leak"] : [] },
+    );
+    graph.releaseProgram();
+    for (const violation of result.violations) violations.set(fingerprintOf(violation), violation);
+  }
+  return [...violations.values()];
+}
+
+export async function simulate(
+  projectRoot: string,
+  changes: readonly Change[],
+  simulateOptions: SimulateOptions = {},
+): Promise<SimulateResult> {
   projectRoot = realpathSync(projectRoot);
   const configPath = canonicalChangePath(projectRoot, "archstrict.config.ts");
   const beforeConfig = await loadConfig(configPath);
@@ -98,20 +139,16 @@ export async function simulate(projectRoot: string, changes: readonly Change[]):
   // (assertDeclaredModulesShapeValid) - see check.ts's own comment.
   const options = { projectRoot, declaredModules: beforeConfig.declaredModules!, exclude: beforeConfig.exclude, surface: beforeConfig.surface };
   const prepared = prepareGraph(options);
-  const baseline = buildPreparedGraph(prepared);
+  const baseline = buildModuleGraphForRules(options);
   const beforeLocator = createConfigLocator(beforeConfig);
-  const before = applyTodo(
-    baseline,
-    beforeConfig,
-    runRules(baseline, beforeConfig, { configLocator: beforeLocator }),
-    { configLocator: beforeLocator },
-  );
-  const roots = new Set(prepared.rootNames);
+  const mode: SimulateMode = simulateOptions.wholeProject ? "whole-project" : "scoped";
+  const focusPaths = simulateOptions.wholeProject ? undefined : [...contents.keys()];
+  const before = evaluate(baseline, beforeConfig, beforeLocator, focusPaths);
   const added = new Set<string>();
   const deleted = new Set<string>();
   for (const [file, content] of contents) {
     if (content === null) deleted.add(file);
-    else if (!roots.has(file)) added.add(file);
+    else if (!existsSync(file)) added.add(file);
   }
   const host = overlayHost(prepared.compilerOptions, contents);
   // A second preparation keeps rootNames, modules, surfaceFiles, and
@@ -119,29 +156,22 @@ export async function simulate(projectRoot: string, changes: readonly Change[]):
   // Manual reconstruction missed new surface files and admitted excluded
   // files as roots. Adjust the input list and let preparation derive the
   // metadata again, without changes to the baseline's module objects.
-  const simulatedPrepared = prepareGraph({
+  const listOverride = (realFiles: string[]) => [...new Set([
+    ...realFiles.filter(file => !deleted.has(file)),
+    ...[...added].filter(isResolvableFile),
+  ])];
+  const graphOptions = {
     projectRoot, declaredModules: afterConfig.declaredModules!, exclude: afterConfig.exclude,
     surface: afterConfig.surface,
-    fileListOverride: realFiles => [...new Set([
+    fileListOverride: (realFiles: string[]) => [...new Set([
       ...realFiles.filter(file => !deleted.has(file)),
       ...[...added].filter(file => isEligibleSourceFile(file, projectRoot, afterConfig.exclude ?? [],
         afterConfig.declaredModules!, afterConfig.surface ?? DEFAULT_SURFACE)),
     ])],
-  });
-  // `baseline.program` is a lazy getter, but `before` above already forces
-  // it: runRules always evaluates rule 6 (type-leak) here, with no file
-  // scope to skip it by (unlike check.ts's own `check <file>`). Passing it
-  // as oldProgram costs nothing extra beyond that - it accelerates this
-  // second Program build by reusing the baseline's own unaffected
-  // SourceFiles.
-  //
-  // No `resolutionCache` override here, deliberately: buildPreparedGraph's
-  // own per-options caching already gives each file's own nearest tsconfig
-  // (compilerOptionsForFile) its own cache. One shared cache across every
-  // file, keyed by the root options alone, could return a resolution
-  // cached under one tsconfig's `paths`/`baseUrl` for a specifier text
-  // that means something different under another file's own tsconfig.
-  const graph = buildPreparedGraph(simulatedPrepared, { host, oldProgram: baseline.program });
+    resolvableFileListOverride: listOverride,
+  };
+  const simulatedPrepared = prepareGraph(graphOptions);
+  const graph = buildModuleGraphForRules(graphOptions, { host, dirtyFiles: new Set(contents.keys()), persistCache: false });
   // graph.edges above already came from this same `host` (buildPreparedGraph's
   // own per-file walk reads through it, then drops each SourceFile once
   // walked - it never keeps one around to inspect). This does not force
@@ -163,18 +193,14 @@ export async function simulate(projectRoot: string, changes: readonly Change[]):
     }
   }
   const afterLocator = createConfigLocator(afterConfig, proposedSource);
-  const after = applyTodo(
-    graph,
-    afterConfig,
-    runRules(graph, afterConfig, { configLocator: afterLocator }),
-    { configLocator: afterLocator },
-  );
-  const beforeFingerprints = new Set(before.violations.map(fingerprintOf));
-  const afterFingerprints = new Set(after.violations.map(fingerprintOf));
+  const after = evaluate(graph, afterConfig, afterLocator, focusPaths);
+  const beforeFingerprints = new Set(before.map(fingerprintOf));
+  const afterFingerprints = new Set(after.map(fingerprintOf));
   return {
-    added: after.violations.filter(violation => !beforeFingerprints.has(fingerprintOf(violation))),
-    resolved: before.violations.filter(violation => !afterFingerprints.has(fingerprintOf(violation))),
-    unchangedCount: before.violations.filter(violation => afterFingerprints.has(fingerprintOf(violation))).length,
+    mode,
+    added: after.filter(violation => !beforeFingerprints.has(fingerprintOf(violation))),
+    resolved: before.filter(violation => !afterFingerprints.has(fingerprintOf(violation))),
+    unchangedCount: before.filter(violation => afterFingerprints.has(fingerprintOf(violation))).length,
   };
 }
 
@@ -190,7 +216,7 @@ export function formatSimulateText(result: SimulateResult): string {
     // Keep the shared violation rendering, but omit counts that describe a full check rather than a change set.
     return text.slice(0, text.lastIndexOf("\nmodules:") + 1);
   };
-  return `added: ${result.added.length}; resolved: ${result.resolved.length}; unchanged: ${result.unchangedCount}\n` +
+  return `mode: ${result.mode}\nadded: ${result.added.length}; resolved: ${result.resolved.length}; unchanged: ${result.unchangedCount}\n` +
     (result.added.length ? `added violations:\n${render(result.added)}` : "") +
     (result.resolved.length ? `resolved violations:\n${render(result.resolved)}` : "");
 }
