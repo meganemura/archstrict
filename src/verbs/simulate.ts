@@ -207,7 +207,7 @@ export async function simulate(
 export function formatSimulateText(result: SimulateResult): string {
   const render = (violations: AnyViolation[]) => {
     const report: CheckResult = {
-      violations, suggestions: [], modules: 0, modulesWithoutSurface: 0, edges: 0, outsideFiles: 0,
+      violations, suggestions: [], modules: 0, modulesWithoutSurface: 0, modulesWithoutSurfaceNames: [], edges: 0, outsideFiles: 0,
       nonTsSourceFiles: 0,
       unresolvedSpecifiers: 0, unresolvedSpecifierBreakdown: [], unsupportedSyntax: 0, typeLeaks: 0,
       todo: 0, edgeRuleCoverage: [],

@@ -98,6 +98,7 @@ export function formatConfigPointerLines(config: ConfigPointers): string[] {
 export type CheckResult = {
   modules: number;
   modulesWithoutSurface: number; // how many modules have no public surface present — the same fact rule 1's violations imply, restated as one count
+  modulesWithoutSurfaceNames: string[]; // names let text distinguish a missing surface from a bypass around an existing surface
   edges: number;
   outsideFiles: number;
   nonTsSourceFiles: number; // visibility count only; these files do not produce violations
@@ -427,10 +428,11 @@ export function runRules(graph: ModuleGraph, config: Config, options: RunRulesOp
   violations.push(...deprecated.violations);
   if (typeLeaks !== undefined) violations.push(...typeLeaks);
 
-  let modulesWithoutSurface = 0;
+  const modulesWithoutSurfaceNames: string[] = [];
   for (const m of graph.modules.values()) {
-    if (m.surfaceFiles.length === 0) modulesWithoutSurface++;
+    if (m.surfaceFiles.length === 0) modulesWithoutSurfaceNames.push(m.name);
   }
+  modulesWithoutSurfaceNames.sort();
 
   // Every rule above either already builds only focus-matching violations
   // (the early filters just passed in), or still runs fully and returns
@@ -445,7 +447,8 @@ export function runRules(graph: ModuleGraph, config: Config, options: RunRulesOp
 
   return {
     modules: graph.modules.size,
-    modulesWithoutSurface,
+    modulesWithoutSurface: modulesWithoutSurfaceNames.length,
+    modulesWithoutSurfaceNames,
     edges: graph.crossModuleEdges.length,
     outsideFiles: graph.outsideFiles.length,
     nonTsSourceFiles: graph.nonTsSourceFileCount,
@@ -642,10 +645,97 @@ export function applyTodo(graph: ModuleGraph, config: Config, result: CheckResul
   return { ...result, violations: remaining, todo: suppressed };
 }
 
-export type CheckOptions = { prove?: boolean; prover?: Prover; buildGraph?: (options: BuildOptions) => ModuleGraph };
+// `--rule` needs a fixed list of valid ids to reject a typo against, rather
+// than accepting anything and silently matching zero violations. Listed by
+// hand instead of derived at runtime, since a rule that never fires this
+// project (the current graph has no cycle, say) still has a real id an
+// agent can filter for once one does appear.
+export const CHECK_RULE_IDS = [
+  "clean-module-has-todo",
+  "config-meaning",
+  "cycle",
+  "deprecated-edge-decreased",
+  "deprecated-edge-increased",
+  "empty-rule-set",
+  "exhaustive-allow-list",
+  "must-be-empty",
+  "point-rule",
+  "public-surface-bypass",
+  "stale-cycle-exception",
+  "stale-todo",
+  "tag-boundary",
+  "tag-order",
+  "type-leak",
+  "uncovered-module",
+] as const;
+
+// A rule id added to AnyViolation without being added above would make
+// `--rule` reject a real id as unknown. `[X] extends [never]` (rather than
+// `X extends never`) keeps this from distributing away to `never` itself
+// when X already is `never` - a bare conditional here would compile clean
+// even while silently missing a rule id.
+type MissingCheckRuleId = Exclude<AnyViolation["rule"], (typeof CHECK_RULE_IDS)[number]>;
+const _checkRuleIdsCoverEveryRule: [MissingCheckRuleId] extends [never] ? true : never = true;
+
+export type CheckOptions = {
+  prove?: boolean;
+  prover?: Prover;
+  buildGraph?: (options: BuildOptions) => ModuleGraph;
+  rules?: readonly string[];
+  modules?: readonly string[];
+};
 
 export function hasBlockingViolations(result: CheckResult): boolean {
   return result.violations.some((v) => v.rule !== "config-meaning");
+}
+
+// Runs after the graph is built (module names depend on it) and before
+// applyFilters, so a typo'd `--rule`/`--module` reports its own error
+// instead of silently returning zero violations - the same distinction
+// an empty, but genuinely correctly filtered, result must keep (see
+// applyFilters's own comment on the empty case exiting 0).
+function validateFilters(graph: ModuleGraph, options: CheckOptions): void {
+  const validRules = new Set<string>(CHECK_RULE_IDS);
+  for (const rule of options.rules ?? []) {
+    if (!validRules.has(rule)) {
+      // The `do:` is a real, runnable example (a valid id substituted in),
+      // not `check --json` - that would print the whole, unbounded project
+      // report, the exact shape bounded text exists to avoid.
+      throw new ReportError(
+        `unknown rule id '${rule}' - valid rule ids: ${CHECK_RULE_IDS.join(", ")}`,
+        `archstrict check --rule ${CHECK_RULE_IDS[0]}`,
+      );
+    }
+  }
+  const validModules = [...graph.modules.keys()].sort();
+  const validModuleSet = new Set(validModules);
+  for (const moduleName of options.modules ?? []) {
+    if (!validModuleSet.has(moduleName)) {
+      throw new ReportError(
+        `unknown module name '${moduleName}' - valid module names: ${validModules.join(", ")}`,
+        validModules.length > 0 ? `archstrict check --module ${validModules[0]}` : "archstrict check",
+      );
+    }
+  }
+}
+
+// Filters after every rule has already run, not before: a violation's own
+// fields (todoModule, rule) are only known once the rule that produced it
+// has run, and running fewer rules to satisfy `--rule` would still cost the
+// same graph build for no saved work. `hasBlockingViolations` (cli.ts's own
+// exit-code check) reads this same, already-filtered `result.violations`,
+// so a filter given here also narrows the exit code to the filtered set,
+// by construction - no separate "filtered exit code" path exists.
+function applyFilters(result: CheckResult, options: CheckOptions): CheckResult {
+  const rules = new Set(options.rules ?? []);
+  const modules = new Set(options.modules ?? []);
+  if (rules.size === 0 && modules.size === 0) return result;
+  return {
+    ...result,
+    violations: result.violations.filter((violation) =>
+      (rules.size === 0 || rules.has(violation.rule))
+      && (modules.size === 0 || ("todoModule" in violation && modules.has(violation.todoModule)))),
+  };
 }
 
 // True when `file` is (a real, existing path to) some module's own
@@ -739,6 +829,7 @@ export async function check(projectRoot: string, focusFile?: string, options: Ch
     exclude: config.exclude,
     surface: config.surface,
   });
+  validateFilters(graph, options);
   // A `check <file>` scoped to a file that isn't any module's own
   // surface can never surface a rule-6 violation (filterToFile below
   // would filter it out regardless) - skip the rule so a whole-project
@@ -789,16 +880,16 @@ export async function check(projectRoot: string, focusFile?: string, options: Ch
     skipStaleCheckForRules: skipTypeLeak ? ["type-leak"] : [],
     focus,
   });
-  return focusFile === undefined ? result : filterToFile(result, focusFile);
+  const focused = focusFile === undefined ? result : filterToFile(result, focusFile);
+  return applyFilters(focused, options);
 }
 
 // The output must always carry: rule id, path:line:col, evidence, because,
 // and a do: line last. "Inference" (pks's shape) is the evidence + do
 // pair together, not a separate field: evidence says what was found
 // ("resolved to module Y's X"), do says what to do about it.
-export function formatText(result: CheckResult): string {
+function formatViolation(v: AnyViolation): string[] {
   const lines: string[] = [];
-  for (const v of result.violations) {
     lines.push(`[${v.rule}] ${v.path}:${v.line}:${v.column}`);
     lines.push(`  ${v.evidence}`);
     if (v.rule === "config-meaning") {
@@ -814,7 +905,211 @@ export function formatText(result: CheckResult): string {
       lines.push("  moves:");
       for (const move of v.moves) lines.push(`    ${move.kind}: ${move.do}`);
     }
+  return lines;
+}
+
+// Measured against a real 31-module project: 2,191 lines (61 KB) for 435
+// violations was long enough that a tool display cut the middle, forcing a
+// rerun with `--json` and a separate jq pass just to see what was omitted.
+// 60 lines of grouped detail stays inside one screen and one tool-display
+// page even before the fixed footer below is added.
+export const CHECK_DETAIL_LINE_CAP = 60;
+// Not a real module: rule 2 (cycle) and every rule reporting at
+// config.configPath have no module of their own to group under, and a
+// filter or a group naming a real module could never match one of these.
+const UNGROUPED_MODULE = "<project>";
+
+// 80%, not "any": a project with a real, chosen surface can still have a
+// handful of genuine bypasses into one module that hasn't gotten one yet -
+// that's the ordinary, one-violation-at-a-time case this note is not for.
+// This note is for the first-run shape instead: most bypasses sharing one
+// root cause (no module in the project chose a surface at all), which "add
+// a surface file" fixes project-wide, not one violation at a time.
+const SURFACE_LESS_NOTE_THRESHOLD = 0.8;
+
+function surfaceLessNote(result: CheckResult): string[] {
+  const missing = new Set(result.modulesWithoutSurfaceNames);
+  const bypasses = result.violations.filter((violation) => violation.rule === "public-surface-bypass");
+  const missingCount = bypasses.filter((violation) =>
+    "todoModule" in violation && violation.todoModule !== undefined && missing.has(violation.todoModule)).length;
+  if (bypasses.length === 0 || missingCount / bypasses.length < SURFACE_LESS_NOTE_THRESHOLD) return [];
+  return [
+    `note: ${missingCount} of ${bypasses.length} public-surface-bypass violations target modules without a public surface`,
+    "do: archstrict todo # freeze them for now",
+    // node_modules/archstrict/..., not a repo-relative path: this text ships
+    // to every adopting project, whose own cwd has no skills/ directory of
+    // its own (agents.ts's own doc pointer uses the same installed path).
+    // `archstrict recommend` doesn't propose a surface yet, so naming it
+    // alone here would send the reader to a command that can't help.
+    "do: read the 'surface' field in node_modules/archstrict/skills/archstrict/references/config.md, then name each module's real entry file (archstrict recommend will propose this directly, once it supports surfaces)",
+    "do: add index.ts files (or whatever archstrict.config.ts's surface names) that export what other modules use",
+  ];
+}
+
+export type ViolationGroup = { rule: string; moduleName: string; violations: AnyViolation[] };
+
+// Exported so a test can assert on the grouping itself: once the printed
+// text cuts a group's own line from view (CHECK_DETAIL_LINE_CAP), the count
+// "every violation lands in exactly one group" can no longer be read back
+// out of the text alone.
+export function groupViolations(violations: readonly AnyViolation[]): ViolationGroup[] {
+  const groups = new Map<string, ViolationGroup>();
+  for (const violation of violations) {
+    const moduleName = "todoModule" in violation ? violation.todoModule : UNGROUPED_MODULE;
+    const key = `${violation.rule}\0${moduleName}`;
+    const group = groups.get(key) ?? { rule: violation.rule, moduleName, violations: [] };
+    group.violations.push(violation);
+    groups.set(key, group);
   }
+  // Largest group first: the cap cuts groups, not violations within a
+  // group, so showing the smallest groups first (a plain alphabetical
+  // sort did exactly that) buried the modules with the most real work
+  // behind the cut - measured directly against nukadoko's own src (26
+  // groups), where a 2-violation group printed while a 49-violation one
+  // fell into "omitted". Ties break by rule id, then module name, so the
+  // same input always prints the same order.
+  return [...groups.values()].sort((left, right) =>
+    right.violations.length - left.violations.length
+    || left.rule.localeCompare(right.rule)
+    || left.moduleName.localeCompare(right.moduleName));
+}
+
+function filterArgsFor(group: ViolationGroup): string {
+  return group.moduleName === UNGROUPED_MODULE
+    ? `--rule ${group.rule}`
+    : `--rule ${group.rule} --module ${group.moduleName}`;
+}
+
+// A single group already carries exactly one rule and one module - either
+// because the whole project happens to have only one, or because `--rule`/
+// `--module` already narrowed to it. Its own drill-down `do:` would repeat
+// the same filter and print this same truncated text again, not new
+// information, so full violations are listed directly up to the cap
+// instead, and `--json` (never truncated) is offered for the remainder.
+function appendSingleGroupDetail(lines: string[], group: ViolationGroup): void {
+  const filterArgs = filterArgsFor(group);
+  let shown = 0;
+  for (const violation of group.violations) {
+    const block = formatViolation(violation);
+    const reserve = shown + 1 < group.violations.length ? 2 : 0;
+    if (lines.length + block.length + reserve > CHECK_DETAIL_LINE_CAP) break;
+    lines.push(...block);
+    shown++;
+  }
+  if (shown < group.violations.length) {
+    lines.push(`violations omitted: ${group.violations.length - shown}`);
+    lines.push(`do: archstrict check ${filterArgs} --json`);
+  }
+}
+
+// Keeps one rule's own module/count listing on one physical line even when
+// a project has dozens of surface-less modules sharing that rule. Other
+// `do:` lines in this file already run past a typical terminal width, but
+// a comma-joined list has no natural break of its own without a limit -
+// unbounded, it would defeat the reason this summary replaced a bare
+// "N omitted" count in the first place.
+const OMITTED_SUMMARY_LINE_WIDTH = 100;
+
+// The groups the cap above cut, condensed to one line per rule instead of
+// dropped silently: `<rule>: <module> <count>, <module> <count>, ...`,
+// each rule's own modules already in count-descending order (a subsequence
+// of `ordered`, itself sorted that way). A rule's own listing truncates
+// with "+N more" past OMITTED_SUMMARY_LINE_WIDTH, but always keeps at
+// least its first entry, so a lone very-long module name still prints
+// something rather than an empty line. The one `do:` drills into the
+// single largest omitted group project-wide (`omitted[0]`, the first
+// entry of a suffix of the already count-sorted `ordered`), not `--json`:
+// naming the biggest remaining group is the one next step worth taking,
+// not a request for the whole, unbounded report.
+function summarizeOmittedGroups(omitted: readonly ViolationGroup[]): string[] {
+  const byRule = new Map<string, ViolationGroup[]>();
+  for (const group of omitted) {
+    const groups = byRule.get(group.rule) ?? [];
+    groups.push(group);
+    byRule.set(group.rule, groups);
+  }
+  const lines: string[] = [];
+  for (const ruleId of [...byRule.keys()].sort()) {
+    const groups = byRule.get(ruleId)!;
+    const prefix = `${ruleId}: `;
+    const entries: string[] = [];
+    for (const group of groups) {
+      const entry = `${group.moduleName} ${group.violations.length}`;
+      const candidate = [...entries, entry].join(", ");
+      if (entries.length > 0 && prefix.length + candidate.length > OMITTED_SUMMARY_LINE_WIDTH) break;
+      entries.push(entry);
+    }
+    const remainder = groups.length - entries.length;
+    lines.push(`${prefix}${entries.join(", ")}${remainder > 0 ? `, +${remainder} more` : ""}`);
+  }
+  lines.push(`do: archstrict check ${filterArgsFor(omitted[0]!)}`);
+  return lines;
+}
+
+function groupedViolationLines(result: CheckResult): string[] {
+  const ordered = groupViolations(result.violations);
+  const lines = [
+    `violations: ${result.violations.length} in ${ordered.length} group${ordered.length === 1 ? "" : "s"}`,
+    ...surfaceLessNote(result),
+  ];
+  if (ordered.length === 1) {
+    appendSingleGroupDetail(lines, ordered[0]!);
+    return lines;
+  }
+
+  const blocks = ordered.map((group) => [
+    `[${group.rule}] module '${group.moduleName}': ${group.violations.length} violation(s)`,
+    "  example:",
+    ...formatViolation(group.violations[0]!),
+    `  do: archstrict check ${filterArgsFor(group)}`,
+  ]);
+
+  // First pass: a cheap 2-line placeholder for the footer (the common
+  // case - most cuts omit groups sharing one, or a handful of, rules).
+  let shown = 0;
+  let total = lines.length;
+  for (const block of blocks) {
+    const reserve = shown + 1 < ordered.length ? 2 : 0;
+    if (total + block.length + reserve > CHECK_DETAIL_LINE_CAP) break;
+    total += block.length;
+    shown++;
+  }
+
+  // Every group fit: no footer at all, so the placeholder's guess never
+  // gets checked against a real one (there is no omitted group to summarize).
+  if (shown === ordered.length) {
+    lines.push(...blocks.flat());
+    return lines;
+  }
+
+  // The real footer (one line per distinct omitted rule, plus one `do:`)
+  // can need more than the 2-line placeholder once omitted groups span
+  // several rules - shrink `shown` until the real total fits, rather than
+  // let the placeholder's own guess push past the cap.
+  while (shown > 0) {
+    const footer = summarizeOmittedGroups(ordered.slice(shown));
+    const shownLines = blocks.slice(0, shown).flat();
+    if (lines.length + shownLines.length + footer.length <= CHECK_DETAIL_LINE_CAP) {
+      lines.push(...shownLines, ...footer);
+      return lines;
+    }
+    shown--;
+  }
+  // Nothing at all fit alongside the header/note - the omitted summary
+  // still prints alone, rather than the header claiming groups exist with
+  // no detail about any of them.
+  lines.push(...summarizeOmittedGroups(ordered));
+  return lines;
+}
+
+// Up to 20 violations print in full, unchanged from before grouping
+// existed: a `check <file>` run rarely exceeds this, and a project's first
+// whole-project run past it is exactly the shape grouping exists for.
+export function formatText(result: CheckResult): string {
+  const lines: string[] = result.violations.length <= 20
+    ? result.violations.flatMap(formatViolation)
+    : groupedViolationLines(result);
+  if (result.violations.length <= 20) lines.push(...surfaceLessNote(result));
   for (const s of result.suggestions) {
     lines.push(`[${s.rule}] ${s.path}:${s.line}:${s.column}`);
     lines.push(`  ${s.evidence}`);

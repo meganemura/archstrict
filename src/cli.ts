@@ -12,6 +12,7 @@ import { check, formatText, hasBlockingViolations } from "./verbs/check.js";
 import { todo } from "./verbs/todo.js";
 import { rules, formatRulesText } from "./verbs/rules.js";
 import { ReportError } from "./report-error.js";
+import { parseCheckArgv } from "./check-options.js";
 
 // Text and JSON share one shape: the message, then the one command to run.
 // A violation already carries `do`; a thrown config or missing-file
@@ -86,10 +87,13 @@ async function runInit(args: string[]): Promise<number> {
 }
 
 async function runCheck(args: string[]): Promise<number> {
-  const asJson = args.includes("--json");
-  const [focusFile] = args.filter((a) => a !== "--json" && a !== "--prove");
-  const result = await check(process.cwd(), focusFile, { prove: args.includes("--prove") });
-  if (asJson) {
+  const parsed = parseCheckArgv(args);
+  const result = await check(process.cwd(), parsed.focusFile, {
+    prove: parsed.prove,
+    rules: parsed.rules,
+    modules: parsed.modules,
+  });
+  if (parsed.asJson) {
     process.stdout.write(JSON.stringify(result, null, 2) + "\n");
   } else {
     process.stdout.write(formatText(result));

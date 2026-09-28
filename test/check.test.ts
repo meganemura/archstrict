@@ -579,6 +579,7 @@ describe("check", () => {
       expect(JSON.parse(JSON.stringify(result))).toEqual({
         modules: 2,
         modulesWithoutSurface: 2,
+        modulesWithoutSurfaceNames: ["app", "shared"],
         edges: 1,
         outsideFiles: 0,
         nonTsSourceFiles: 0,
