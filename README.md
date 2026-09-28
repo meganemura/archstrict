@@ -1,4 +1,4 @@
-# archstrict
+# 🧱 archstrict
 
 [![npm version](https://img.shields.io/npm/v/archstrict?logo=npm)](https://www.npmjs.com/package/archstrict)
 
@@ -11,9 +11,15 @@ See [AGENTS.md](AGENTS.md) for the shape, the rules, and the commands, and [skil
 
 ## Install
 
-This package is not published yet. The npm registry name `archstrict` holds a `0.0.0` placeholder (`"description": "Reserved."`) with no code in it - `npm install archstrict` gets that placeholder, not the tool. Do not use it.
+```sh
+npm install --save-dev archstrict
+```
 
-Every mode below puts a real `archstrict` binary at `node_modules/.bin/archstrict` in the target project - the exact path the PostToolUse hook (see [hook.md](skills/archstrict/references/hook.md)) checks for before running `check` on your behalf after an edit. Each mode also carries the agent skill (`skills/archstrict/SKILL.md` and `skills/archstrict/references/`), `llms.txt`, and `.agents/` (the plugin manifest, PostToolUse hook, and MCP server) into `node_modules/archstrict/`. npm omits the checkout's symlinks (`.claude-plugin/plugin.json`, `hooks/`, `mcp/`), so the installed hook is `node_modules/archstrict/.agents/hooks/post-tool-use.mjs` and the installed MCP server is `node_modules/archstrict/.agents/mcp/server.mjs`. A git checkout still loads as a Claude Code plugin through those symlinks.
+This puts a real `archstrict` binary at `node_modules/.bin/archstrict` in your project - the exact path the PreToolUse and PostToolUse hooks (see [hook.md](skills/archstrict/references/hook.md)) check for before previewing and confirming a change on your behalf around an edit. The install also carries the agent skill (`skills/archstrict/SKILL.md` and `skills/archstrict/references/`), `llms.txt`, and `.agents/` (the plugin manifest, the two hooks, and the MCP server) into `node_modules/archstrict/`. npm omits the checkout's symlinks (`.claude-plugin/plugin.json`, `hooks/`, `mcp/`), so the installed hooks are `node_modules/archstrict/.agents/hooks/pre-tool-use.mjs` and `post-tool-use.mjs`, and the installed MCP server is `node_modules/archstrict/.agents/mcp/server.mjs`. A git checkout still loads as a Claude Code plugin through those symlinks.
+
+### Installing from a local checkout
+
+Use one of these instead when working against an unpublished checkout of this repository.
 
 1. **`npm link`, from a local checkout on the same machine.**
 
@@ -51,4 +57,8 @@ Every mode below puts a real `archstrict` binary at `node_modules/.bin/archstric
    npm install ./archstrict-<version>.tgz
    ```
 
-   `npm pack` packs the checkout's working tree, not its git history, so it needs `dist/` already built. Confirmed by running it: the tarball contains `dist/`, `skills/`, `llms.txt`, `.agents/`, `README.md`, `LICENSE`, and `package.json` - the same set `npm link` and the `file:` mode expose, plus the packaging itself.
+   `npm pack` packs the checkout's working tree, not its git history, so it needs `dist/` already built. Confirmed by running it: the tarball contains `dist/`, `skills/`, `llms.txt`, `.agents/`, `README.md`, `README.ja.md`, `CHANGELOG.md`, `docs/`, `AGENTS.md`, `LICENSE`, and `package.json` - the same set `npm link` and the `file:` mode expose, plus the packaging itself.
+
+---
+
+[Japanese](README.ja.md)

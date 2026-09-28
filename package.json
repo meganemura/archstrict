@@ -1,17 +1,38 @@
 {
   "name": "archstrict",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "TypeScript module boundary checker: default-private module surfaces, layers, cycles, and a todo freeze that can only shrink.",
+  "keywords": [
+    "architecture",
+    "boundaries",
+    "typescript",
+    "lint",
+    "module",
+    "agent",
+    "claude-code"
+  ],
   "license": "MIT",
   "author": "meganemura",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/meganemura/archstrict.git"
+  },
+  "homepage": "https://github.com/meganemura/archstrict#readme",
+  "bugs": {
+    "url": "https://github.com/meganemura/archstrict/issues"
+  },
   "type": "module",
   "bin": {
     "archstrict": "./dist/cli.js"
   },
   "files": [
     "README.md",
+    "README.ja.md",
+    "CHANGELOG.md",
+    "AGENTS.md",
     "LICENSE",
     "dist",
+    "docs",
     "skills",
     "llms.txt",
     ".agents"
@@ -23,7 +44,8 @@
     "build": "tsc -p tsconfig.build.json",
     "dogfood:nukadoko": "npm run build && nuka run features",
     "ci:ts7-probe": "node scripts/probe-typescript7.mjs",
-    "prepare": "npm run build"
+    "prepare": "npm run build",
+    "prepublishOnly": "npm run build && npm run typecheck && npm test"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",
