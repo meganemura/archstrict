@@ -89,7 +89,7 @@ function uncoveredViolationForQuery(
   if (excluded) return undefined;
   const isUncovered = exists ? graph.outsideFiles.includes(resolvedPath) : module === undefined;
   if (!isUncovered) return undefined;
-  const outsideRelFiles = graph.outsideFiles.map((f) => toProjectRelativePosix(f, graph.rootDir));
+  const outsideRelFiles = graph.outsideFiles.map(graph.relativePath);
   const relFiles = exists ? outsideRelFiles : [...outsideRelFiles, rel];
   const groups = suggestUncovered(relFiles, config.declaredModules ?? []);
   return uncoveredViolationFor(resolvedPath, graph.rootDir, groupForRelFile(rel, groups)!);

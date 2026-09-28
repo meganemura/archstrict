@@ -1,9 +1,9 @@
 // Property: an edge within the same allow-list entry (source and target
 // share the rule's own tag) never violates - the "same group as source is
-// unconstrained" rule constraints.ts's own header documents. checkAllowDeny
-// only reads `edges` and `rootDir` off a ModuleGraph, and classifyFile
-// needs only project-relative path strings, not real files on disk - a
-// fabricated graph is enough, no fixture tree to write per case.
+// unconstrained" rule constraints.ts's own header documents.
+// checkAllowDeny reads `edges` and the relative-path converter.
+// classifyFile reads project-relative paths. A fabricated graph is enough,
+// with no fixture tree to write per case.
 import { describe, test } from "vitest";
 import assert from "node:assert/strict";
 import * as hegel from "@hegeldev/hegel";
@@ -11,12 +11,13 @@ import * as gs from "@hegeldev/hegel/generators";
 import { checkAllowDeny } from "../src/rules/constraints.js";
 import type { Config } from "../src/config.js";
 import type { Edge, ModuleGraph } from "../src/module-graph.js";
+import { makeProjectRelativePosix } from "../src/project-path.js";
 
 const DOMAINS = ["framework", "sql", "targets"] as const;
 const LAYERS = ["core", "runtime"] as const;
 
-function fakeGraph(edges: Edge[]): Pick<ModuleGraph, "edges" | "rootDir"> {
-  return { edges, rootDir: "/project" };
+function fakeGraph(edges: Edge[]): Pick<ModuleGraph, "edges" | "rootDir" | "relativePath"> {
+  return { edges, rootDir: "/project", relativePath: makeProjectRelativePosix("/project") };
 }
 
 describe("checkAllowDeny (property)", () => {

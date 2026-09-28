@@ -19,9 +19,9 @@
 //
 // Each shard's own JSON is a compact encoding, not one object per file:
 // a `paths` string table (each path stored relative to the project root,
-// via node:path's own relative/resolve - reversible for a resolved file
-// outside the root too, since path.relative can and does return a leading
-// `..` segment for that case), a `specifiers` string table, a
+// via node:path's own relative result - reversible for a resolved file
+// outside the root too, since the result can carry leading `..` segments),
+// a `specifiers` string table, a
 // `packageNames` string table, and one array-of-indexes tuple per file
 // (never an object keyed by that file's own path). Each file's own
 // `resolutions` are encoded inline, aligned by position with that file's
@@ -118,15 +118,16 @@
 // already has in hand for free, and storing them would mean invalidating
 // this whole cache on every config edit instead of none.
 import { readFileSync, mkdirSync, writeFileSync, renameSync, rmSync } from "node:fs";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { dirname, join } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import type ts from "typescript";
 import type { ImportRecord, ModuleAugmentationSpecifier } from "./module-graph.js";
+import { makeAbsolutePosix, makeProjectRelativePosix, type ProjectRelativePath } from "./project-path.js";
 
 // Bumped whenever the on-disk shape (header or shard encoding) changes -
 // an old cache is then a silent miss (parseHeader rejects the unknown
 // schema number), never a crash on a shape this code no longer produces.
-export const CACHE_SCHEMA = 10;
+export const CACHE_SCHEMA = 11;
 
 // Fixed, not derived from project size - see this module's own header.
 // module-graph.ts's own per-file loop marks a shard dirty by this same
@@ -141,16 +142,8 @@ export function shardIndexForRelativePath(relativePath: string): number {
 // Rebuilds an absolute path from a shard's own stored relative path, spelled
 // the way TypeScript itself spells an absolute path (forward slashes, on
 // every platform - ts.resolveModuleName's own resolvedFileName is never
-// backslash-separated, even on Windows). node:path's own `resolve` restores
-// the right path but, on Windows, with backslashes - left alone, a warm
-// build's own `resolvedFile` would then spell the same file differently
-// from a cold build's, breaking every downstream string comparison
-// (`resolutions` keys, edge targets) that assumes one spelling. A no-op on
-// POSIX, where `sep` is already "/".
-function restoreAbsolutePath(projectRoot: string, relativePath: string): string {
-  return resolve(projectRoot, relativePath).split(sep).join("/");
-}
-
+// backslash-separated, even on Windows). project-path.ts restores that
+// spelling from one precomputed root prefix for the whole cache read.
 // The raw fact a resolved specifier needs preserved across builds - never
 // `fromModule`/`toModule`/`externalPackage` (see this module's own header).
 // `"unresolved"` mirrors a fresh walk's own outcome for the same specifier
@@ -317,13 +310,13 @@ function makeStringTable() {
 // for the same content, so a rewrite that changes nothing produces the
 // same hash (and so `writeEdgeCache` can tell "unchanged" from "changed"
 // without a byte compare).
-function encodeShard(entries: ReadonlyMap<string, CachedFileEntry>, projectRoot: string): EncodedShard {
+function encodeShard(entries: ReadonlyMap<string, CachedFileEntry>, relativePath: ProjectRelativePath): EncodedShard {
   const paths = makeStringTable();
   const specifiers = makeStringTable();
   const packageNames = makeStringTable();
   const encodeResolution = (res: CachedResolution): EncodedResolution => {
     if (res === "unresolved") return 0;
-    return [paths.index(relative(projectRoot, res.resolvedFile)), res.isExternalLibraryImport ? 1 : 0,
+    return [paths.index(relativePath(res.resolvedFile)), res.isExternalLibraryImport ? 1 : 0,
       res.packageName === undefined ? null : packageNames.index(res.packageName)];
   };
   const files: EncodedFileEntry[] = [];
@@ -356,7 +349,11 @@ function encodeShard(entries: ReadonlyMap<string, CachedFileEntry>, projectRoot:
 // slipped past the header's schema check, or a hand-edited file); the
 // caller then drops the whole shard, never a single bad file inside it,
 // matching the header's own hash check (also whole-shard).
-function decodeShard(raw: unknown, projectRoot: string, optionsCount: number): Map<string, CachedFileEntry> | undefined {
+function decodeShard(
+  raw: unknown,
+  restoreAbsolutePath: (relativePath: string) => string,
+  optionsCount: number,
+): Map<string, CachedFileEntry> | undefined {
   if (!record(raw)) return undefined;
   const { paths, specifiers, packageNames, files } = raw;
   if (!strings(paths) || !strings(specifiers) || !strings(packageNames) || !Array.isArray(files)) return undefined;
@@ -394,7 +391,7 @@ function decodeShard(raw: unknown, projectRoot: string, optionsCount: number): M
         if (!Number.isInteger(resPathIdx) || (resPathIdx as number) < 0 || (resPathIdx as number) >= paths.length) { ok = false; break; }
         if (packageNameIdx !== null && (!Number.isInteger(packageNameIdx) || (packageNameIdx as number) < 0 || (packageNameIdx as number) >= packageNames.length)) { ok = false; break; }
         resolution = {
-          resolvedFile: restoreAbsolutePath(projectRoot, paths[resPathIdx as number]!),
+          resolvedFile: restoreAbsolutePath(paths[resPathIdx as number]!),
           ...(isExternal === 1 ? { isExternalLibraryImport: true as const } : {}),
           ...(packageNameIdx !== null ? { packageName: packageNames[packageNameIdx as number]! } : {}),
         };
@@ -426,7 +423,7 @@ function decodeShard(raw: unknown, projectRoot: string, optionsCount: number): M
       resolutions,
     };
     if (!isFileEntry(entry)) return undefined;
-    result.set(restoreAbsolutePath(projectRoot, paths[pathIdx as number]!), entry);
+    result.set(restoreAbsolutePath(paths[pathIdx as number]!), entry);
   }
   return result;
 }
@@ -444,6 +441,7 @@ export function readEdgeCache(path: string, projectRoot: string): EdgeCache | un
   if (header === undefined) return undefined;
   const dir = dirname(path);
   const files: Record<string, CachedFileEntry> = {};
+  const restoreAbsolutePath = makeAbsolutePosix(projectRoot);
   for (const shardEntry of header.shards) {
     if (shardEntry === null) continue;
     let buf: Buffer;
@@ -451,7 +449,7 @@ export function readEdgeCache(path: string, projectRoot: string): EdgeCache | un
     if (createHash("sha256").update(buf).digest("hex") !== shardEntry.hash) continue;
     let raw: unknown;
     try { raw = JSON.parse(buf.toString("utf8")); } catch { continue; }
-    const decoded = decodeShard(raw, projectRoot, header.optionsTable.length);
+    const decoded = decodeShard(raw, restoreAbsolutePath, header.optionsTable.length);
     if (decoded === undefined) continue;
     for (const [absPath, entry] of decoded) files[absPath] = entry;
   }
@@ -490,17 +488,18 @@ export function writeEdgeCache(
 ): void {
   const dir = dirname(path);
   const shardsDir = join(dir, "edges");
+  const relativePath = makeProjectRelativePosix(projectRoot);
   const groups = new Map<number, Map<string, CachedFileEntry>>();
   for (const [absPath, entry] of Object.entries(cache.files)) {
-    const relPath = relative(projectRoot, absPath);
+    const relPath = relativePath(absPath);
     const idx = shardIndexForRelativePath(relPath);
     let group = groups.get(idx);
     if (group === undefined) { group = new Map(); groups.set(idx, group); }
     group.set(relPath, entry);
   }
   const dirtyShards = new Set<number>();
-  for (const absPath of dirtyPaths) dirtyShards.add(shardIndexForRelativePath(relative(projectRoot, absPath)));
-  for (const absPath of deletedPaths) dirtyShards.add(shardIndexForRelativePath(relative(projectRoot, absPath)));
+  for (const absPath of dirtyPaths) dirtyShards.add(shardIndexForRelativePath(relativePath(absPath)));
+  for (const absPath of deletedPaths) dirtyShards.add(shardIndexForRelativePath(relativePath(absPath)));
 
   try { mkdirSync(shardsDir, { recursive: true }); } catch { /* best-effort; each shard write below no-ops on failure too */ }
 
@@ -516,7 +515,7 @@ export function writeEdgeCache(
     const mustRewrite = forceAll || dirtyShards.has(i) || oldEntry === null;
     if (!mustRewrite) { shards.push(oldEntry); continue; }
     const file = `edges/${i}.json`;
-    const json = JSON.stringify(encodeShard(group, projectRoot));
+    const json = JSON.stringify(encodeShard(group, relativePath));
     const hash = createHash("sha256").update(json).digest("hex");
     const fullPath = join(dir, file);
     const temporary = `${fullPath}.${randomUUID()}.tmp`;

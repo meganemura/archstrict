@@ -56,6 +56,7 @@ import { builtinModules } from "node:module";
 import { compileGlob, mostSpecificMatch } from "./classify.js";
 import { buildTypeClosure, computeSyntacticNamedDeclarations, type TypeClosureInputs } from "./type-closure.js";
 import { checkTypeLeaks, type Violation as TypeLeakViolation } from "./rules/type-leak.js";
+import { makeProjectRelativePosix, type ProjectRelativePath } from "./project-path.js";
 
 // A node builtin (`fs`, `node:fs`, ...) never has a real resolvedModule:
 // ts.resolveModuleName looks for an actual file, but @types/node's ambient
@@ -196,6 +197,9 @@ export type ModuleGraph = {
   // dependency's own types, under node_modules, are not this project's
   // boundary to keep).
   rootDir: string;
+  // One canonical configuration-facing spelling per absolute path. Rules
+  // share this converter because the same edge participates in many checks.
+  relativePath: ProjectRelativePath;
   // The program and checker built over the type-reachable closure from
   // every module's public surface (type-closure.ts), not every analyzed
   // file - shared here so a rule needing type information (rule 6) does
@@ -706,6 +710,7 @@ function walkProjectTree(
   excludeGlobs: readonly string[],
   dtsSurfaceGlobs: readonly string[],
   analysisOnly = false,
+  relativePath: ProjectRelativePath = makeProjectRelativePosix(projectRoot),
 ): ProjectTreeWalk {
   const analyzedFiles: string[] = [];
   let nonTsSourceFileCount = 0;
@@ -722,7 +727,7 @@ function walkProjectTree(
       const full = join(dir, entry.name);
       if (entry.name === "package.json" && !analysisOnly) packageJsonFiles.push(full);
       if (!analysisOnly && RESOLVABLE_EXTENSIONS.some((ext) => entry.name.endsWith(ext))) resolvableFiles.push(full);
-      const rel = toProjectRelativePosix(full, projectRoot);
+      const rel = relativePath(full);
       if (excludeGlobs.some((glob) => compileGlob(glob).test(rel))) continue;
       if (NON_TS_SOURCE_EXTENSIONS.some((ext) => entry.name.endsWith(ext))) {
         nonTsSourceFileCount++;
@@ -868,6 +873,7 @@ function buildDeclaredModules(
   declaredModules: readonly DeclaredModule[],
   allFiles: readonly string[],
   globalDefaultSurface: string | readonly string[] = DEFAULT_SURFACE,
+  relativePath: ProjectRelativePath = makeProjectRelativePosix(projectRoot),
 ): Map<string, Module> {
   const membership = declaredModules.map((dm) => ({ glob: dm.glob, value: dm.name }));
   const modules = new Map<string, Module>(
@@ -897,7 +903,7 @@ function buildDeclaredModules(
   );
 
   for (const file of allFiles) {
-    const rel = toProjectRelativePosix(file, projectRoot);
+    const rel = relativePath(file);
     const name = mostSpecificMatch(rel, membership, (a, b) => a === b);
     if (name === undefined) continue;
     // Only surfaceFiles is populated here - `files` (every file, not just
@@ -1051,6 +1057,7 @@ export function prepareGraph(options: BuildOptions) {
   // disagree with the paths TypeScript itself already resolved to.
   const { declaredModules, surface = DEFAULT_SURFACE, exclude = [] } = options;
   const projectRoot = realpathSync(options.projectRoot);
+  const relativePath = makeProjectRelativePosix(projectRoot);
   const { configPath: rootConfigPath, options: compilerOptions } = loadCompilerOptions(projectRoot);
   const compilerOptionsForFile = makeCompilerOptionsForFile(compilerOptions, rootConfigPath);
 
@@ -1062,10 +1069,10 @@ export function prepareGraph(options: BuildOptions) {
   // at no extra walk cost to a caller (simulate, fix, search) that never
   // touches them.
   const dtsSurfaceGlobs = surfaceGlobsAllowingDts(declaredModules, projectRoot, surface);
-  const tree = walkProjectTree(projectRoot, exclude, dtsSurfaceGlobs);
+  const tree = walkProjectTree(projectRoot, exclude, dtsSurfaceGlobs, false, relativePath);
   let rootNames = tree.analyzedFiles;
   if (options.fileListOverride) rootNames = options.fileListOverride(rootNames);
-  const modules = buildDeclaredModules(projectRoot, declaredModules, rootNames, surface);
+  const modules = buildDeclaredModules(projectRoot, declaredModules, rootNames, surface, relativePath);
   // Cached by absolute file path: buildPreparedGraph calls this once per
   // source file AND once per edge's resolvedFile, and a widely-imported
   // file (a shared utils module, a design-system entry point) is a common
@@ -1074,14 +1081,19 @@ export function prepareGraph(options: BuildOptions) {
   // answer. Safe for the lifetime of one prepareGraph call: projectRoot
   // and declaredModules are both fixed for that call.
   const moduleForFileCache = new Map<string, string | undefined>();
+  const membership = declaredModules.map((dm) => ({ glob: dm.glob, value: dm.name }));
   const resolveModuleForFile = (filePath: string) => {
     if (moduleForFileCache.has(filePath)) return moduleForFileCache.get(filePath);
-    const result = moduleForDeclaredFile(filePath, projectRoot, declaredModules);
+    const result = mostSpecificMatch(
+      relativePath(filePath),
+      membership,
+      (a, b) => a === b,
+    );
     moduleForFileCache.set(filePath, result);
     return result;
   };
 
-  return { projectRoot, surface, rootDir, rootNames, modules, resolveModuleForFile, compilerOptions, compilerOptionsForFile,
+  return { projectRoot, surface, rootDir, rootNames, modules, relativePath, resolveModuleForFile, compilerOptions, compilerOptionsForFile,
     nonTsSourceFileCount: tree.nonTsSourceFileCount, resolvableFiles: tree.resolvableFiles,
     packageJsonFiles: tree.packageJsonFiles, nodeModulesDirs: tree.nodeModulesDirs };
 }
@@ -1688,7 +1700,7 @@ function walkAllFiles(prepared: ReturnType<typeof prepareGraph>, commons: GraphC
 // cache hit. Separate assemblers are refused because they can give rule 6
 // different closure facts for cached and uncached graphs.
 function assembleGraph(prepared: ReturnType<typeof prepareGraph>, commons: GraphCommons, walked: WalkResult, overrides: GraphBuildOverrides): PreparedModuleGraph {
-  const { modules, surface, rootDir, rootNames, compilerOptions } = prepared;
+  const { modules, surface, rootDir, rootNames, compilerOptions, relativePath } = prepared;
   const { edges, outsideFiles, fileFlags, unsupportedSyntaxCount, unresolvedSpecifierCount, unresolvedSpecifiers } = walked;
   const { host, analyzedSet, optionsForContainingFile, sourceFileOptionsFor, resolveModule, resolutionCacheFor } = commons;
 
@@ -1928,6 +1940,7 @@ function assembleGraph(prepared: ReturnType<typeof prepareGraph>, commons: Graph
     unresolvedSpecifiers,
     surface,
     rootDir,
+    relativePath,
     get program() {
       return ensureProgram();
     },

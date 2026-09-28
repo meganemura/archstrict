@@ -24,7 +24,8 @@
 import { computeMoves, type Move } from "./moves.js";
 import { compileGlob } from "../classify.js";
 import { classifyFile } from "../classify.js";
-import { toProjectRelativePosix, type Edge, type ModuleGraph } from "../module-graph.js";
+import { type Edge, type ModuleGraph } from "../module-graph.js";
+import type { ProjectRelativePath } from "../project-path.js";
 import type { Config } from "../config.js";
 import { ReportError } from "../report-error.js";
 
@@ -82,7 +83,7 @@ export function formatPredicate(predicate: FromToPredicate): string {
 // just against the wrong identity), so rule 4's own empty-rule-set check
 // could never have caught it. Both identities are tagged so a rule
 // written against either one matches the same real edge.
-function tagsForTarget(edge: Edge, config: Config, rootDir: string): Set<string> {
+function tagsForTarget(edge: Edge, config: Config, relativePath: ProjectRelativePath): Set<string> {
   if (edge.externalPackage !== undefined) {
     const tags = new Set([`pkg:${edge.externalPackage}`]);
     const barePackage = bareNameFromTypesPackage(edge.externalPackage);
@@ -102,7 +103,7 @@ function tagsForTarget(edge: Edge, config: Config, rootDir: string): Set<string>
     if (edge.resolvedFile.startsWith("node:")) tags.add("pkg:node");
     return tags;
   }
-  return classifyFile(toProjectRelativePosix(edge.resolvedFile, rootDir), config);
+  return classifyFile(relativePath(edge.resolvedFile), config);
 }
 
 // DefinitelyTyped's own naming convention: an unscoped package "foo" ships
@@ -122,8 +123,8 @@ function bareNameFromTypesPackage(packageName: string): string | undefined {
 // builtin) has no such path, so a string `to`/`from` predicate simply
 // never matches an external edge; only a tag predicate (matching the
 // synthesized `pkg:` tag) can.
-function targetRelPathForGlob(edge: Edge, rootDir: string): string | undefined {
-  return edge.externalPackage !== undefined ? undefined : toProjectRelativePosix(edge.resolvedFile, rootDir);
+function targetRelPathForGlob(edge: Edge, relativePath: ProjectRelativePath): string | undefined {
+  return edge.externalPackage !== undefined ? undefined : relativePath(edge.resolvedFile);
 }
 
 function matchesEdgeFilters(
@@ -150,11 +151,11 @@ export function matchesPredicate(predicate: FromToPredicate, relPath: string | u
 export function isExemptedByGlobPair(
   edge: Edge,
   exceptions: readonly { from: string; to: string; because: string }[] | undefined,
-  rootDir: string,
+  relativePath: ProjectRelativePath,
 ): boolean {
   if (exceptions === undefined || exceptions.length === 0) return false;
-  const fromRel = toProjectRelativePosix(edge.fromFile, rootDir);
-  const toRel = targetRelPathForGlob(edge, rootDir);
+  const fromRel = relativePath(edge.fromFile);
+  const toRel = targetRelPathForGlob(edge, relativePath);
   return exceptions.some(
     (ex) => compileGlob(ex.from).test(fromRel) && toRel !== undefined && compileGlob(ex.to).test(toRel),
   );
@@ -194,23 +195,23 @@ export function computeAllowDeny(
   focus?: string,
 ): { violations: ConstraintViolation[]; coverage: EdgeRuleCoverage[]; matches: AllowDenyMatch[] } {
   const rules: readonly AllowDenyRule[] = config.edges?.allowDeny ?? [];
-  const rootDir = graph.rootDir;
+  const relativePath = graph.relativePath;
   const violations: ConstraintViolation[] = [];
   const matches: AllowDenyMatch[] = [];
   const evaluatedCounts = rules.map(() => 0);
   if (rules.length === 0) return { violations, coverage: [], matches };
 
   for (const edge of graph.edges) {
-    const sourceTags = classifyFile(toProjectRelativePosix(edge.fromFile, rootDir), config);
+    const sourceTags = classifyFile(relativePath(edge.fromFile), config);
     if (sourceTags.size === 0) continue;
-    const targetTags = tagsForTarget(edge, config, rootDir);
+    const targetTags = tagsForTarget(edge, config, relativePath);
     if (targetTags.size === 0) continue;
 
     rules.forEach((rule, i) => {
       if (!matchesEdgeFilters(edge, rule.edgeType, rule.importForm)) return;
       if (!sourceTags.has(rule.source)) return;
       if (targetTags.has(rule.source)) return; // same group as source: unconstrained by this rule
-      if (isExemptedByGlobPair(edge, rule.exceptions, rootDir)) return;
+      if (isExemptedByGlobPair(edge, rule.exceptions, relativePath)) return;
 
       const namespacePrefix = `${rule.targetNamespace}:`;
       const targetValues = [...targetTags].filter((t) => t.startsWith(namespacePrefix));
@@ -255,7 +256,7 @@ export function computeAllowDeny(
 export function targetTagsInGraph(graph: ModuleGraph, config: Config): Set<string> {
   const tags = new Set<string>();
   for (const edge of graph.edges) {
-    for (const tag of tagsForTarget(edge, config, graph.rootDir)) tags.add(tag);
+    for (const tag of tagsForTarget(edge, config, graph.relativePath)) tags.add(tag);
   }
   return tags;
 }
@@ -329,14 +330,14 @@ function computeOrder(
   focus?: string,
 ): { violations: ConstraintViolation[]; coverage: EdgeRuleCoverage[] } {
   const rules: readonly OrderRule[] = config.edges?.order ?? [];
-  const rootDir = graph.rootDir;
+  const relativePath = graph.relativePath;
   const violations: ConstraintViolation[] = [];
   const evaluatedCounts = rules.map(() => 0);
   if (rules.length === 0) return { violations, coverage: [] };
 
   for (const edge of graph.edges) {
-    const sourceTags = classifyFile(toProjectRelativePosix(edge.fromFile, rootDir), config);
-    const targetTags = tagsForTarget(edge, config, rootDir);
+    const sourceTags = classifyFile(relativePath(edge.fromFile), config);
+    const targetTags = tagsForTarget(edge, config, relativePath);
 
     rules.forEach((rule, i) => {
       if (!matchesEdgeFilters(edge, rule.edgeType, rule.importForm)) return;
@@ -421,16 +422,16 @@ function computePoint(
   const identifiers = rules.map(
     (rule) => `${formatPredicate(rule.from)} -> ${formatPredicate(rule.to)}`,
   );
-  const rootDir = graph.rootDir;
+  const relativePath = graph.relativePath;
   const violations: ConstraintViolation[] = [];
   const evaluatedCounts = rules.map(() => 0);
   if (rules.length === 0) return { violations, coverage: [] };
 
   for (const edge of graph.edges) {
-    const sourceRel = toProjectRelativePosix(edge.fromFile, rootDir);
+    const sourceRel = relativePath(edge.fromFile);
     const sourceTags = classifyFile(sourceRel, config);
-    const targetTags = tagsForTarget(edge, config, rootDir);
-    const targetRel = targetRelPathForGlob(edge, rootDir);
+    const targetTags = tagsForTarget(edge, config, relativePath);
+    const targetRel = targetRelPathForGlob(edge, relativePath);
 
     rules.forEach((rule, i) => {
       if (!matchesEdgeFilters(edge, rule.edgeType, rule.importForm)) return;

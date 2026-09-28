@@ -12,7 +12,7 @@
 // the same identity for the same violation without depending on each other.
 import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { buildModuleGraphForRules, toProjectRelativePosix, type ModuleGraph } from "../module-graph.js";
+import { buildModuleGraphForRules, type ModuleGraph } from "../module-graph.js";
 import type { Config } from "../config.js";
 import { ReportError } from "../report-error.js";
 import { fingerprintOf, readTodo, writeTodo } from "../todo-store.js";
@@ -122,7 +122,7 @@ export function freezeOrPrune(
       const entries = toFreeze.map((v) => ({
         fingerprint: fingerprintOf(v),
         rule: v.rule,
-        path: toProjectRelativePosix(v.path, graph.rootDir),
+        path: graph.relativePath(v.path),
         evidence: v.evidence,
       }));
       if (entries.length > 0) {

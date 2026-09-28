@@ -8,13 +8,14 @@ import ts from "typescript";
 import * as hegel from "@hegeldev/hegel";
 import * as gen from "@hegeldev/hegel/generators";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, renameSync, realpathSync, statSync, utimesSync, chmodSync, existsSync, symlinkSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { join, dirname, relative, resolve, sep, win32 } from "node:path";
 import { tmpdir } from "node:os";
 import { buildModuleGraph, buildModuleGraphForRules, buildPreparedGraph, prepareGraph, type ModuleGraph, type BuildOptions } from "../src/module-graph.js";
 import { readEdgeCache, writeEdgeCache, shardIndexForRelativePath, SHARD_COUNT, type EdgeCache, type CachedFileEntry, type CachedResolution } from "../src/edge-cache.js";
 import { rules } from "../src/verbs/rules.js";
 import { check, filterToFile } from "../src/verbs/check.js";
 import { checkTypeLeaks } from "../src/rules/type-leak.js";
+import { makeAbsolutePosix, makeProjectRelativePosix } from "../src/project-path.js";
 
 // `failRenameTo`: set to an absolute path to make exactly the next
 // `renameSync` call whose own destination is that path throw, then reset
@@ -93,6 +94,26 @@ function parsedFiles(): string[] {
   return vi.mocked(ts.createSourceFile).mock.calls.map((args) => args[0] as string);
 }
 
+test("cached path conversion agrees with node:path for normalized paths", () => {
+  hegel.test((tc) => {
+    const rootParts = tc.draw(gen.arrays(gen.sampledFrom(["a", "b", "nested", "with space"]), { minSize: 1 }));
+    const pathParts = tc.draw(gen.arrays(gen.sampledFrom(["a", "b", "nested", "with space", ".", "..", "file.ts"])));
+    const root = resolve(tmpdir(), "archstrict-path-property", ...rootParts);
+    const file = resolve(root, ...pathParts);
+    const relativePath = makeProjectRelativePosix(root);
+    const restoreAbsolutePath = makeAbsolutePosix(root);
+    const stored = pathParts.join("/");
+    const windowsRoot = tc.draw(gen.booleans())
+      ? win32.join("C:\\", "archstrict-path-property", ...rootParts)
+      : win32.join("\\\\server\\share", "archstrict-path-property", ...rootParts);
+    const windowsStored = pathParts.join(tc.draw(gen.booleans()) ? "\\" : "/");
+
+    expect(relativePath(file)).toBe(relative(root, file).split(sep).join("/"));
+    expect(restoreAbsolutePath(stored)).toBe(resolve(root, stored).split(sep).join("/"));
+    expect(makeAbsolutePosix(windowsRoot)(windowsStored)).toBe(win32.resolve(windowsRoot, windowsStored).replace(/\\/g, "/"));
+  });
+});
+
 test("checker is lazy, including on a cache hit", async () => project((_root, options) => {
   const graph = buildModuleGraph(options);
   expect(calls.checker).not.toHaveBeenCalled();
@@ -114,7 +135,7 @@ test("rules writes a per-file cache entry and reuses it without a per-file walk 
   expect(ts.createProgram).not.toHaveBeenCalled();
   expect(calls.checker).not.toHaveBeenCalled();
   const cache = readCache(root);
-  expect(cache.schema).toBe(10);
+  expect(cache.schema).toBe(11);
   expect(cache.files[path]!.mtimeMs).toBe(statSync(path).mtimeMs);
   expect(cache.files[path]!.imports[0]!.specifier).toBe("../b/index.js");
   const resolution = cache.files[path]!.resolutions["../b/index.js\u000099"];
@@ -493,16 +514,16 @@ test("version mismatches, malformed caches and declaration changes rebuild", asy
   expect(facts(buildModuleGraphForRules(changed))).toEqual(facts(buildModuleGraph(changed)));
 }));
 
-test("a schema 9 edge cache is a miss under schema 10", async () => project((root, options) => {
+test("a schema 10 edge cache is a miss under schema 11", async () => project((root, options) => {
   buildModuleGraphForRules(options);
   const path = cachePath(root);
   const cache = JSON.parse(readFileSync(path, "utf8"));
-  cache.schema = 9;
+  cache.schema = 10;
   writeFileSync(path, JSON.stringify(cache));
   vi.clearAllMocks();
   buildModuleGraphForRules(options);
   expect(ts.createSourceFile).toHaveBeenCalled();
-  expect(JSON.parse(readFileSync(path, "utf8")).schema).toBe(10);
+  expect(JSON.parse(readFileSync(path, "utf8")).schema).toBe(11);
 }));
 
 // A corrupt cache file is a silent miss, never an error - the run behaves
@@ -514,7 +535,7 @@ test("a corrupt cache file is ignored, not an error", async () => project((root,
   writeFileSync(path, "{not json");
   const graph = buildModuleGraphForRules(options);
   expect(graph.edges.some((edge) => edge.toModule === "b")).toBe(true);
-  expect(JSON.parse(readFileSync(path, "utf8")).schema).toBe(10);
+  expect(JSON.parse(readFileSync(path, "utf8")).schema).toBe(11);
 }));
 
 test("package exports changes refresh both target edges and derived surfaces, re-resolving without re-parsing the unedited importer", async () => project((root, options) => {

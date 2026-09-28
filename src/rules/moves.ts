@@ -4,7 +4,7 @@
 // Such moves need a broader verification pass than these local proposals.
 import { classifyFile, classifyByDirectoryName } from "../classify.js";
 import type { Config } from "../config.js";
-import { toProjectRelativePosix, type ModuleGraph } from "../module-graph.js";
+import { type ModuleGraph } from "../module-graph.js";
 import { computeAllowDeny, checkExhaustiveAllow, isExemptedByGlobPair, targetTagsInGraph,
   type AllowDenyMatch, type ConstraintViolation } from "./constraints.js";
 
@@ -30,26 +30,26 @@ export function computeMoves(violation: ConstraintViolation, graph: ModuleGraph,
   // Proposing those files could trade a tag-boundary violation for the public-surface-bypass violation that rule 1 detects.
   const surfaces = new Set<string>();
   for (const module of graph.modules?.values() ?? []) {
-    const tags = new Set(classifyByDirectoryName(toProjectRelativePosix(module.dir, graph.rootDir), config.classifyByDirectoryName));
+    const tags = new Set(classifyByDirectoryName(graph.relativePath(module.dir), config.classifyByDirectoryName));
     for (const surface of module.surfaceFiles) {
-      for (const tag of classifyFile(toProjectRelativePosix(surface, graph.rootDir), config)) tags.add(tag);
+      for (const tag of classifyFile(graph.relativePath(surface), config)) tags.add(tag);
     }
     if ([...tags].some(tag => legal.has(tag))) {
-      for (const surface of module.surfaceFiles) surfaces.add(toProjectRelativePosix(surface, graph.rootDir));
+      for (const surface of module.surfaceFiles) surfaces.add(graph.relativePath(surface));
     }
   }
   const moves: Move[] = [];
   if (surfaces.size > 0) moves.push({ kind: "reroute", verified: false,
     do: `consider importing from these public surfaces: ${JSON.stringify([...surfaces].sort())}; confirm the needed symbol is available` });
 
-  const from = toProjectRelativePosix(edge.fromFile, graph.rootDir);
-  const to = edge.externalPackage === undefined ? toProjectRelativePosix(edge.resolvedFile, graph.rootDir) : undefined;
+  const from = graph.relativePath(edge.fromFile);
+  const to = edge.externalPackage === undefined ? graph.relativePath(edge.resolvedFile) : undefined;
   // compileGlob treats a literal star as a wildcard and provides no escape mechanism.
   // Such a path could silently exempt other pairs; omit the move rather than promise an exact exception we cannot guarantee.
   if (to !== undefined && !from.includes("*") && !to.includes("*")) {
     const entry = { from, to, because: "<author must state a real reason>" };
     moves.push({ kind: "exception", widens: true,
-      verified: isExemptedByGlobPair(edge, [...rule.exceptions ?? [], entry], graph.rootDir),
+      verified: isExemptedByGlobPair(edge, [...rule.exceptions ?? [], entry], graph.relativePath),
       do: `add ${JSON.stringify(entry)} to exceptions for allowDeny entry ${ruleIndex}; this exempts only this one edge pair` });
   }
 

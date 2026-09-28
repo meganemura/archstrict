@@ -15,6 +15,7 @@ import { checkEdgesCoverage, checkOrder, checkPoint, formatPredicate } from "../
 import { buildModuleGraph } from "../src/module-graph.js";
 import type { Config } from "../src/config.js";
 import type { ModuleGraph } from "../src/module-graph.js";
+import { makeProjectRelativePosix } from "../src/project-path.js";
 
 const cli = resolve(dirname(fileURLToPath(import.meta.url)), "../dist/cli.js");
 const config = {
@@ -200,7 +201,7 @@ describe("rules", () => {
 
 test("uncovered extraction preserves the original serialized report", () => {
   const file = "/project/loose.ts";
-  const graph = { rootDir: "/project", outsideFiles: [file] } as ModuleGraph;
+  const graph = { rootDir: "/project", outsideFiles: [file], relativePath: makeProjectRelativePosix("/project") } as ModuleGraph;
   const expected = [{ rule: "uncovered-module", path: file, line: 1, column: 1,
     evidence: "'/project/loose.ts' is in scope but matches no declared module",
     because: "a file matching no declared module is unchecked, not passing",

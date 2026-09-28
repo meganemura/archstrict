@@ -24,6 +24,7 @@ import {
 } from "../src/module-graph.js";
 import { compileGlob } from "../src/classify.js";
 import { checkUncoveredModules } from "../src/rules/uncovered.js";
+import { makeProjectRelativePosix } from "../src/project-path.js";
 
 // "widgets" is deliberately in both SRC_DIR_NAMES and TOP_DIR_NAMES, and
 // "cli.ts" / "context.ts" are deliberately in both the src and top file
@@ -341,7 +342,7 @@ describe("init (property)", () => {
         const files = listAnalyzedFiles(root, rerunConfig.exclude ?? [], rerunConfig.declaredModules, rerunConfig.surface ?? "index.ts");
         const outsideFiles = files.filter((f) => moduleForDeclaredFile(f, root, rerunConfig.declaredModules ?? []) === undefined);
         assert.ok(outsideFiles.length > 0);
-        const fakeGraph = { rootDir: root, outsideFiles } as ModuleGraph;
+        const fakeGraph = { rootDir: root, outsideFiles, relativePath: makeProjectRelativePosix(root) } as ModuleGraph;
         const rule3Texts = [
           ...new Set(checkUncoveredModules(fakeGraph, rerunConfig).map((v) => v.do.match(/^add (.+) to declaredModules/)![1])),
         ].sort();

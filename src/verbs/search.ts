@@ -2,7 +2,7 @@
 // Boundary: reads declared modules; does not search private declarations or change project files.
 import { resolve } from "node:path";
 import ts from "typescript";
-import { buildModuleGraphForRules, toProjectRelativePosix } from "../module-graph.js";
+import { buildModuleGraphForRules } from "../module-graph.js";
 import { loadConfig } from "./check.js";
 
 export type SearchMatch = {
@@ -98,7 +98,7 @@ export async function search(projectRoot: string, query: string): Promise<Search
           .replace(/import\("[^"]*"(?:\s*,\s*\{[^)]*\})?\)/g, 'import("<module>")');
         // The surface path gives an agent a legal import destination. The internal
         // declaring path would invite the public-surface bypass that rule 1 rejects.
-        matches.push({ module: module.name, surface: toProjectRelativePosix(surfacePath, graph.rootDir),
+        matches.push({ module: module.name, surface: graph.relativePath(surfacePath),
           name, kind, signature, score });
       }
     }

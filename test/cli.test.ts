@@ -114,6 +114,28 @@ describe("cli", () => {
     }
   });
 
+  test("check --json is byte-identical before and after the edge cache warms", () => {
+    const root = mkdtempSync(join(tmpdir(), "archstrict-cli-json-stability-"));
+    try {
+      mkdirSync(join(root, "src", "app"), { recursive: true });
+      mkdirSync(join(root, "src", "shared"), { recursive: true });
+      writeFileSync(join(root, "src", "app", "index.ts"), 'import { value } from "../shared/internal.js"; export { value };\n');
+      writeFileSync(join(root, "src", "shared", "internal.ts"), "export const value = 1;\n");
+      execFileSync("node", [CLI_PATH, "init"], { cwd: root });
+
+      const run = () => {
+        try {
+          return execFileSync("node", [CLI_PATH, "check", "src/app/index.ts", "--json"], { cwd: root, encoding: "utf8" });
+        } catch (error) {
+          return (error as { stdout: string }).stdout;
+        }
+      };
+      expect(run()).toBe(run());
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("a config error prints a clean message, not a raw stack trace", () => {
     const root = mkdtempSync(join(tmpdir(), "archstrict-cli-config-error-"));
     try {

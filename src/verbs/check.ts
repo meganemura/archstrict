@@ -7,7 +7,7 @@
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import ts from "typescript";
-import { buildModuleGraphForRules, toProjectRelativePosix, type ModuleGraph, type BuildOptions } from "../module-graph.js";
+import { buildModuleGraphForRules, type ModuleGraph, type BuildOptions } from "../module-graph.js";
 import { assertEdgesShapeValid, assertGlobsSupported, assertSchemaVersion, describeShape, type Config } from "../config.js";
 import { ReportError } from "../report-error.js";
 import { checkPublicSurfaceBypass, type Violation as PublicSurfaceViolation } from "../rules/public-surface.js";
@@ -283,7 +283,7 @@ function assertDeclaredModulesShapeValid(configPath: string, raw: object, verb: 
 
 function allProjectRelativeFiles(graph: ModuleGraph): string[] {
   const files = [...graph.modules.values()].flatMap((m) => m.files).concat(graph.outsideFiles);
-  return files.map((f) => toProjectRelativePosix(f, graph.rootDir));
+  return files.map(graph.relativePath);
 }
 
 // A scoped specifier's own two segments ("@scope/name") are the meaningful

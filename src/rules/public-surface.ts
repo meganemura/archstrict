@@ -11,7 +11,8 @@
 // no output formatting (that is the `check` verb's job), no todo handling
 // (that is `todo`'s job).
 import { compileGlob } from "../classify.js";
-import { toProjectRelativePosix, type Edge, type Module, type ModuleGraph } from "../module-graph.js";
+import { type Edge, type Module, type ModuleGraph } from "../module-graph.js";
+import type { ProjectRelativePath } from "../project-path.js";
 
 export type Violation = {
   rule: "public-surface-bypass";
@@ -43,9 +44,9 @@ const BECAUSE = "a module's public surface is its only public surface; everythin
 // `surface`, which is public to every importer equally. Checked only once
 // a bypass candidate is already known (surface itself didn't match), the
 // same order rule 1's own violation-vs-suppression logic already follows.
-function isExemptedByFriend(edge: Edge, targetModule: Module, rootDir: string): boolean {
-  const targetRel = toProjectRelativePosix(edge.resolvedFile, rootDir);
-  const fromRel = toProjectRelativePosix(edge.fromFile, rootDir);
+function isExemptedByFriend(edge: Edge, targetModule: Module, relativePath: ProjectRelativePath): boolean {
+  const targetRel = relativePath(edge.resolvedFile);
+  const fromRel = relativePath(edge.fromFile);
   return targetModule.friends.some(
     (friend) => compileGlob(friend.fileGlob).test(targetRel) && compileGlob(friend.from).test(fromRel),
   );
@@ -71,7 +72,7 @@ export function checkPublicSurfaceBypass(graph: ModuleGraph, focus?: string): Vi
     const targetModule = graph.modules.get(edge.toModule!);
     if (targetModule === undefined) continue; // resolved outside any module; not this rule's concern
     if (targetModule.surfaceFiles.includes(edge.resolvedFile)) continue; // reached the public surface itself
-    if (isExemptedByFriend(edge, targetModule, graph.rootDir)) continue;
+    if (isExemptedByFriend(edge, targetModule, graph.relativePath)) continue;
 
     violations.push(
       violationFor(
@@ -81,7 +82,7 @@ export function checkPublicSurfaceBypass(graph: ModuleGraph, focus?: string): Vi
         targetModule.surfaceName,
         // A file module has nowhere to "add a index.ts". The relative path
         // is the file the glob already names, so the fix can point at it.
-        targetModule.rootIsFile ? toProjectRelativePosix(targetModule.dir, graph.rootDir) : undefined,
+        targetModule.rootIsFile ? graph.relativePath(targetModule.dir) : undefined,
       ),
     );
   }

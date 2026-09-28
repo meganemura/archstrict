@@ -9,7 +9,7 @@
 // I/O, no output formatting.
 import { assertDeprecatedModulesExist, type Config } from "../config.js";
 import { compileGlob } from "../classify.js";
-import { toProjectRelativePosix, type ModuleGraph } from "../module-graph.js";
+import { type ModuleGraph } from "../module-graph.js";
 import { checkEdgesCoverage, checkExhaustiveAllow } from "./constraints.js";
 
 export type Violation = {
@@ -75,7 +75,7 @@ export function checkEmptyRuleSet(graph: ModuleGraph, config: Config): Violation
   const allFiles = [...graph.modules.values()].flatMap((m) => m.files).concat(graph.outsideFiles);
   for (const entry of config.classify ?? []) {
     const glob = compileGlob(entry.glob);
-    const matchesAny = allFiles.some((file) => glob.test(toProjectRelativePosix(file, graph.rootDir)));
+    const matchesAny = allFiles.some((file) => glob.test(graph.relativePath(file)));
     if (!matchesAny) {
       violations.push(
         violation(

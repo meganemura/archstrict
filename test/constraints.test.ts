@@ -8,13 +8,12 @@
 //
 // This file's own dedicated fixture covers the shapes' common case (a
 // domain allow-matrix, a per-domain layer order, a glob point rule) on
-// files small enough to reason about by hand. The feature surface those
-// two named fixtures were built to demonstrate but this fixture's files
-// don't reach - a deny list, exceptions, a tag-predicate point rule with
-// exclude, an external pkg: target, and the order rule's own config-error
-// throw - is covered separately below with a fabricated graph instead
-// (checkAllowDeny/checkOrder/checkPoint only ever read `edges` and
-// `rootDir`, and classifyFile needs only path strings, not real files).
+// files small enough to reason about by hand.
+// The fixture does not reach a deny list, exceptions, a tag-predicate
+// point rule with exclude, an external target, or the order config error.
+// A fabricated graph covers those shapes below. The checks read `edges`
+// and the project-relative converter. Classification reads path strings,
+// not real files.
 import { describe, expect, test } from "vitest";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -22,16 +21,14 @@ import { buildModuleGraph } from "../src/module-graph.js";
 import { checkAllowDeny, checkOrder, checkPoint } from "../src/rules/constraints.js";
 import type { Config } from "../src/config.js";
 import type { Edge, ModuleGraph } from "../src/module-graph.js";
+import { makeProjectRelativePosix } from "../src/project-path.js";
 
-// A fabricated graph, not a real fixture tree: checkAllowDeny/checkOrder/
-// checkPoint only ever read `edges` and `rootDir` off a ModuleGraph, and
-// classifyFile needs only project-relative path strings, never a real
-// file on disk. Used below for shapes the dedicated fixture doesn't reach
-// on its own: deny lists, a tag-predicate point rule with `exclude`,
-// `exceptions` on allowDeny, an external `pkg:` target, and the order
-// rule's own config-error throw.
+// A fabricated graph needs no fixture tree. These checks read `edges` and
+// the relative-path converter. Classification reads project-relative paths.
+// The graph covers deny lists, point-rule exclusions, allowDeny exceptions,
+// external package targets, and order-rule config errors.
 function fakeGraph(edges: Edge[]): ModuleGraph {
-  return { edges, rootDir: "/project" } as ModuleGraph;
+  return { edges, rootDir: "/project", relativePath: makeProjectRelativePosix("/project") } as ModuleGraph;
 }
 
 function edge(overrides: Partial<Edge>): Edge {

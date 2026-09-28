@@ -38,7 +38,7 @@
 // lopsided, today's do: is unchanged.
 import type { Config } from "../config.ts";
 import type { Edge, ModuleGraph } from "../module-graph.ts";
-import { toProjectRelativePosix } from "../module-graph.js";
+import type { ProjectRelativePath } from "../project-path.js";
 
 export type Violation = {
   rule: "cycle";
@@ -141,9 +141,9 @@ function findMostLopsidedPair(component: string[], edgesByPair: Map<string, Edge
   return best;
 }
 
-function lopsidedDo(pair: LopsidedPair, rootDir: string): string {
+function lopsidedDo(pair: LopsidedPair, relativePath: ProjectRelativePath): string {
   const fileEdges = [...new Set(
-    pair.minorityEdges.map((e) => `${toProjectRelativePosix(e.fromFile, rootDir)} -> ${toProjectRelativePosix(e.resolvedFile, rootDir)}`),
+    pair.minorityEdges.map((e) => `${relativePath(e.fromFile)} -> ${relativePath(e.resolvedFile)}`),
   )].sort().slice(0, MINORITY_FILE_EDGES_SHOWN).join(", ");
   return `remove the ${pair.minorityEdges.length} import(s) from ${pair.minorityFrom} to ${pair.minorityTo} (${pair.minorityTo} imports ${pair.minorityFrom} ${pair.majorityCount} times, so ${pair.minorityFrom} -> ${pair.minorityTo} is likely the unintended direction): ${fileEdges}`;
 }
@@ -293,9 +293,9 @@ export function checkCycles(
     const { modules, edges } = shortestCycleFrom(anchor, new Set(component), adjacency);
     const firstEdge = edges[0]!;
     const fileChain = edges
-      .map((e) => `${toProjectRelativePosix(e.fromFile, graph.rootDir)} -> ${toProjectRelativePosix(e.resolvedFile, graph.rootDir)}`)
+      .map((e) => `${graph.relativePath(e.fromFile)} -> ${graph.relativePath(e.resolvedFile)}`)
       .join(", ");
-    const breakCycleDo = `break the cycle at ${toProjectRelativePosix(firstEdge.fromFile, graph.rootDir)} -> ${toProjectRelativePosix(firstEdge.resolvedFile, graph.rootDir)} (module ${modules[0]} -> ${modules[1]}), or merge the modules involved - real import chain: ${fileChain}`;
+    const breakCycleDo = `break the cycle at ${graph.relativePath(firstEdge.fromFile)} -> ${graph.relativePath(firstEdge.resolvedFile)} (module ${modules[0]} -> ${modules[1]}), or merge the modules involved - real import chain: ${fileChain}`;
 
     // A lopsided pair's minority edges are the likely accident and the
     // cheap fix, so they lead the do:; the general break-the-cycle advice
@@ -303,7 +303,7 @@ export function checkCycles(
     const lopsided = findMostLopsidedPair(component, valueEdgesByPair);
     const doText = lopsided === undefined
       ? breakCycleDo
-      : `${lopsidedDo(lopsided, graph.rootDir)}; alternatively, ${breakCycleDo}`;
+      : `${lopsidedDo(lopsided, graph.relativePath)}; alternatively, ${breakCycleDo}`;
 
     violations.push({
       rule: "cycle",

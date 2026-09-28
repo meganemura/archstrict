@@ -14,7 +14,7 @@
 // suggestion per directory (or per loose file) is module-candidates.ts's
 // job, shared with init's re-run and `archstrict rules <path>` so all three
 // print the identical entry text for the same file.
-import { toProjectRelativePosix, type ModuleGraph } from "../module-graph.js";
+import { type ModuleGraph } from "../module-graph.js";
 import { groupForRelFile, suggestUncovered, suggestionDoText, type NamedCandidateGroup } from "../module-candidates.js";
 
 export type Violation = {
@@ -73,7 +73,7 @@ export function checkUncoveredModules(
   config: { declaredModules?: readonly { name: string; glob: string }[] },
   focus?: string,
 ): Violation[] {
-  const relFiles = graph.outsideFiles.map((file) => toProjectRelativePosix(file, graph.rootDir));
+  const relFiles = graph.outsideFiles.map(graph.relativePath);
   const groups = suggestUncovered(relFiles, config.declaredModules ?? []);
   // `graph.outsideFiles` follows the edge build's own walk order (rootNames
   // order - a directory scan, not a promise about reading order across
