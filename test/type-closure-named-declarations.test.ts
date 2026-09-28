@@ -80,6 +80,7 @@ function inputsFor(graph: ModuleGraph, root: string, modules: readonly DeclaredM
     ambientFiles: [],
     surfaceFiles: [],
     resolvedSpecifiers,
+    analyzedFiles: new Set(prepared.rootNames),
   };
 }
 

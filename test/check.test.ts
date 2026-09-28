@@ -3,7 +3,7 @@ import * as hegel from "@hegeldev/hegel";
 import * as gen from "@hegeldev/hegel/generators";
 import ts from "typescript";
 import { assertEdgesShapeValid } from "../src/config.js";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { init } from "../src/verbs/init.js";
@@ -796,6 +796,109 @@ describe("check", () => {
     });
   });
 
+  test("check <surface file> falls back when another surface re-exports a public name through an excluded file", async () => {
+    await withTempProject(async (root) => {
+      mkdirSync(join(root, "src", "a"), { recursive: true });
+      mkdirSync(join(root, "src", "b"), { recursive: true });
+      mkdirSync(join(root, "src", "excluded"), { recursive: true });
+      writeFileSync(join(root, "tsconfig.json"), '{"compilerOptions":{"module":"nodenext","moduleResolution":"nodenext","strict":true,"skipLibCheck":true}}');
+      writeFileSync(join(root, "package.json"), '{"type":"module"}');
+      writeFileSync(join(root, "src", "a", "secret.ts"), "export interface Secret { value: number }\n");
+      writeFileSync(join(root, "src", "a", "index.ts"), 'import type { Secret } from "./secret.js";\nexport interface A { value: Secret }\n');
+      writeFileSync(join(root, "src", "excluded", "barrel.ts"), 'export { Secret } from "../a/secret.js";\n');
+      writeFileSync(join(root, "src", "b", "index.ts"), 'export { Secret } from "../excluded/barrel.js";\n');
+      writeFileSync(join(root, "archstrict.config.ts"), `export default ${JSON.stringify({
+        declaredModules: [
+          { name: "a", glob: "src/a/**", surface: "index.ts" },
+          { name: "b", glob: "src/b/**", surface: "index.ts" },
+        ],
+        exclude: ["archstrict.config.ts", "tsconfig.json", "src/excluded/**"],
+        because: "test architecture",
+      })};`);
+
+      const focus = realpathSync(join(root, "src", "a", "index.ts"));
+      const full = await check(root);
+      const result = await check(root, focus);
+      expect(result.notes).toHaveLength(1);
+      expect(result.notes![0]).toContain("fell back");
+      expect(result.violations.filter((violation) => violation.rule === "type-leak"))
+        .toEqual(full.violations.filter((violation) => violation.rule === "type-leak" && violation.path === focus));
+    });
+  });
+
+  test("check <surface file> stays scoped for unresolved and non-program re-exports from an analyzed surface", async () => {
+    await withTempProject(async (root) => {
+      mkdirSync(join(root, "src", "a"), { recursive: true });
+      mkdirSync(join(root, "src", "b"), { recursive: true });
+      writeFileSync(join(root, "tsconfig.json"), '{"compilerOptions":{"module":"nodenext","moduleResolution":"nodenext","resolveJsonModule":true,"strict":true,"skipLibCheck":true}}');
+      writeFileSync(join(root, "package.json"), '{"type":"module"}');
+      writeFileSync(join(root, "src", "a", "hidden.ts"), "export interface Hidden { value: number }\n");
+      writeFileSync(join(root, "src", "a", "index.ts"), 'import type { Hidden } from "./hidden.js";\nexport interface A { value: Hidden }\n');
+      writeFileSync(join(root, "src", "b", "data.json"), '{"value":1}\n');
+      writeFileSync(join(root, "src", "b", "index.ts"), [
+        'export { X } from "not-installed-package";',
+        'export * from "./data.json";',
+      ].join("\n") + "\n");
+      writeFileSync(join(root, "archstrict.config.ts"), `export default ${JSON.stringify({
+        declaredModules: [
+          { name: "a", glob: "src/a/**", surface: "index.ts" },
+          { name: "b", glob: "src/b/**", surface: "index.ts" },
+        ],
+        exclude: ["archstrict.config.ts", "tsconfig.json"],
+        because: "test architecture",
+      })};`);
+
+      const focus = realpathSync(join(root, "src", "a", "index.ts"));
+      const full = await check(root);
+      const result = await check(root, focus);
+      expect(result.notes ?? []).toEqual([]);
+      expect(result.violations.filter((violation) => violation.rule === "type-leak"))
+        .toEqual(full.violations.filter((violation) => violation.rule === "type-leak" && violation.path === focus));
+    });
+  });
+
+  test("generated excluded re-export chains keep focused rule-6 findings equal to the full check", async () => {
+    await hegel.testAsync(async (tc) => {
+      await withTempProject(async (root) => {
+        mkdirSync(join(root, "src", "a"), { recursive: true });
+        mkdirSync(join(root, "src", "b"), { recursive: true });
+        mkdirSync(join(root, "src", "excluded"), { recursive: true });
+        writeFileSync(join(root, "tsconfig.json"), '{"compilerOptions":{"module":"nodenext","moduleResolution":"nodenext","strict":true,"skipLibCheck":true}}');
+        writeFileSync(join(root, "package.json"), '{"type":"module"}');
+        writeFileSync(join(root, "src", "a", "secret.ts"), "export interface Secret { value: number }\n");
+        writeFileSync(join(root, "src", "a", "index.ts"), 'import type { Secret } from "./secret.js";\nexport interface A { value: Secret }\n');
+
+        const chainLength = tc.draw(gen.integers({ minValue: 1, maxValue: 4 }));
+        const aliases = tc.draw(gen.arrays(gen.booleans(), { minSize: chainLength, maxSize: chainLength }));
+        let name = "Secret";
+        let specifier = "../a/secret.js";
+        for (let hop = 0; hop < chainLength; hop++) {
+          const nextName = aliases[hop] ? `Alias${hop}` : name;
+          writeFileSync(join(root, "src", "excluded", `hop${hop}.ts`),
+            `export { ${name}${nextName === name ? "" : ` as ${nextName}`} } from "${specifier}";\n`);
+          name = nextName;
+          specifier = `./hop${hop}.js`;
+        }
+        writeFileSync(join(root, "src", "b", "index.ts"), `export { ${name} } from "../excluded/hop${chainLength - 1}.js";\n`);
+        writeFileSync(join(root, "archstrict.config.ts"), `export default ${JSON.stringify({
+          declaredModules: [
+            { name: "a", glob: "src/a/**", surface: "index.ts" },
+            { name: "b", glob: "src/b/**", surface: "index.ts" },
+          ],
+          exclude: ["archstrict.config.ts", "tsconfig.json", "src/excluded/**"],
+          because: "test architecture",
+        })};`);
+
+        const focus = realpathSync(join(root, "src", "a", "index.ts"));
+        const full = await check(root);
+        const result = await check(root, focus);
+        expect(result.notes?.[0]).toContain("fell back");
+        expect(result.violations.filter((violation) => violation.rule === "type-leak"))
+          .toEqual(full.violations.filter((violation) => violation.rule === "type-leak" && violation.path === focus));
+      });
+    }, { testCases: 10 });
+  }, 30_000);
+
   test("check <surface file> stays scoped when an augmentation target is outside every other surface export chain", async () => {
     await withTempProject(async (root) => {
       mkdirSync(join(root, "src", "a"), { recursive: true });
@@ -963,6 +1066,38 @@ describe("check", () => {
     });
   });
 
+  test("check <surface file> falls back when a non-analyzed file augments a non-analyzed export-star target", async () => {
+    await withTempProject(async (root) => {
+      for (const name of ["a", "b", "o", "vendor"]) mkdirSync(join(root, "src", name), { recursive: true });
+      writeFileSync(join(root, "tsconfig.json"), '{"compilerOptions":{"module":"nodenext","moduleResolution":"nodenext","strict":true,"skipLibCheck":true}}');
+      writeFileSync(join(root, "package.json"), '{"type":"module"}');
+      writeFileSync(join(root, "src", "a", "hidden.ts"), "export interface Hidden { value: number }\n");
+      writeFileSync(join(root, "src", "a", "index.ts"), 'import type { Hidden } from "./hidden.js";\nexport interface A { value: Hidden }\n');
+      writeFileSync(join(root, "src", "vendor", "lib.ts"), "export interface Existing { value: number }\n");
+      writeFileSync(join(root, "src", "vendor", "augment.ts"), 'export {};\ndeclare module "./lib.js" { export interface Added { value: number } }\n');
+      writeFileSync(join(root, "src", "b", "index.ts"), 'export * from "../vendor/lib.js";\n');
+      writeFileSync(join(root, "src", "o", "index.ts"), 'import "../vendor/augment.js";\nexport interface O {}\n');
+      writeFileSync(join(root, "archstrict.config.ts"), `export default ${JSON.stringify({
+        declaredModules: [
+          { name: "a", glob: "src/a/**", surface: "index.ts" },
+          { name: "b", glob: "src/b/**", surface: "index.ts" },
+          { name: "o", glob: "src/o/**", surface: "index.ts" },
+        ],
+        exclude: ["archstrict.config.ts", "tsconfig.json", "src/vendor/**"],
+        because: "test architecture",
+      })};`);
+
+      const focus = realpathSync(join(root, "src", "a", "index.ts"));
+      const full = await check(root);
+      const result = await check(root, focus);
+      expect(result.notes).toHaveLength(1);
+      expect(result.notes![0]).toContain("module augmentation");
+      expect(result.notes![0]).toContain("fell back");
+      expect(result.violations.filter((violation) => violation.rule === "type-leak"))
+        .toEqual(full.violations.filter((violation) => violation.rule === "type-leak" && violation.path === focus));
+    });
+  });
+
   test("only a surface check creates and reuses the lazy augmentation cache", async () => {
     await withTempProject(async (root) => {
       mkdirSync(join(root, "src", "m"), { recursive: true });
@@ -1014,6 +1149,49 @@ describe("check", () => {
         .toEqual(["external-package-with-a-longer-name"]);
     });
   });
+
+  test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "the augmentation scan retries an unreadable file after a permission-only change",
+    async () => withTempProject(async (root) => {
+      mkdirSync(join(root, "src", "m"), { recursive: true });
+      mkdirSync(join(root, "src", "o"), { recursive: true });
+      writeFileSync(join(root, "tsconfig.json"), '{"compilerOptions":{"module":"nodenext","moduleResolution":"nodenext","strict":true,"skipLibCheck":true}}');
+      writeFileSync(join(root, "package.json"), '{"type":"module"}');
+      writeFileSync(join(root, "src", "m", "index.ts"), "export interface M {}\n");
+      const augmentation = join(root, "src", "o", "augment.ts");
+      writeFileSync(augmentation, 'export {};\ndeclare module "../m/index.js" { interface M { added: string } }\n');
+      writeFileSync(join(root, "src", "o", "index.ts"), 'import "./augment.js";\nexport interface O {}\n');
+      const declaredModules = [
+        { name: "m", glob: "src/m/**", surface: "index.ts" },
+        { name: "o", glob: "src/o/**", surface: "index.ts" },
+      ];
+      writeFileSync(join(root, "archstrict.config.ts"), `export default ${JSON.stringify({
+        declaredModules,
+        exclude: ["archstrict.config.ts", "tsconfig.json", "src/o/augment.ts"],
+        because: "test architecture",
+      })};`);
+      chmodSync(augmentation, 0o000);
+      try {
+        let reads: string[] = [];
+        const buildGraph = (options: Parameters<typeof prepareGraph>[0]) => buildPreparedGraph(prepareGraph(options), {
+          onAugmentationCandidateReadForTests: (file) => reads.push(file),
+        });
+        const focus = join(root, "src", "m", "index.ts");
+        await check(root, focus, { buildGraph });
+        const cachePath = join(root, "node_modules/.cache/archstrict/augmentations.json");
+        const cached = JSON.parse(readFileSync(cachePath, "utf8"));
+        expect(cached.files[realpathSync(augmentation)]).toBeUndefined();
+
+        chmodSync(augmentation, 0o644);
+        reads = [];
+        const retried = await check(root, focus, { buildGraph });
+        expect(reads).toContain(realpathSync(augmentation));
+        expect(retried.notes?.[0]).toContain("module augmentation");
+      } finally {
+        chmodSync(augmentation, 0o644);
+      }
+    }),
+  );
 
   test.each([
     ["declaration file", "src/o/aug.d.ts", '/// <reference path="./aug.d.ts" />\nexport interface O {}\n', [], "declare module"],

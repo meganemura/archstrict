@@ -325,9 +325,9 @@ test("a header naming a shard by another writer's stale hash still only re-walks
 // node_modules, past the project root), a builtin's own null resolution
 // slot, `"unresolved"`, a real resolution with and without
 // isExternalLibraryImport/packageName, every mode this project's own
-// walker produces (undefined/CommonJS/ESNext-shaped), and an unreadable
-// file's own empty imports/resolutions, and every cached module-augmentation
-// specifier with its resolution mode.
+// walker produces (undefined/CommonJS/ESNext-shaped), a legacy unreadable
+// entry that the graph's reparse gate must reject, and every cached
+// module-augmentation specifier with its resolution mode.
 test("a shard's own encoding round-trips its entries exactly", async () => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "archstrict-edge-cache-roundtrip-")));
   try {
@@ -551,7 +551,7 @@ test("a cache path that cannot be written still returns a fresh graph", async ()
 // root bypasses every permission bit, so chmod 000 would still read; this
 // suite's own CI never runs as root, but a local run might.
 test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
-  "an unreadable root file is invisible on both a cold build and a cache hit",
+  "an unreadable root file is invisible on repeated cached builds",
   async () => project(async (root, options) => {
     const unreadable = join(root, "src/a/secret.ts");
     writeFileSync(unreadable, "export const secret = 1;\n");
@@ -565,8 +565,34 @@ test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
       expect(cold.outsideFiles).not.toContain(unreadable);
       vi.clearAllMocks();
       const warm = buildModuleGraphForRules(options);
-      expect(ts.createSourceFile).not.toHaveBeenCalled(); // a real cache hit, not a second cold build
+      // Reading fails before parsing, but the missing cache entry makes the
+      // second build retry the file rather than reuse an empty answer.
+      expect(ts.createSourceFile).not.toHaveBeenCalled();
       expect(facts(warm)).toEqual(facts(cold));
+    } finally {
+      chmodSync(unreadable, 0o644);
+    }
+  }),
+);
+
+test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "an unreadable file is retried after chmod changes only its permissions",
+  async () => project(async (root, options) => {
+    const unreadable = join(root, "src/a/secret.ts");
+    writeFileSync(unreadable, 'import { b } from "../b/index.js"; export const secret = b;\n');
+    chmodSync(unreadable, 0o000);
+    try {
+      const first = buildModuleGraphForRules(options);
+      expect(first.modules.get("a")?.files).not.toContain(unreadable);
+      expect(readCache(root).files[unreadable]).toBeUndefined();
+
+      chmodSync(unreadable, 0o644);
+      vi.clearAllMocks();
+      const retried = buildModuleGraphForRules(options);
+      expect(parsedFiles()).toContain(unreadable);
+      expect(retried.modules.get("a")?.files).toContain(unreadable);
+      expect(retried.edges.some((edge) => edge.fromFile === unreadable)).toBe(true);
+      expect(facts(retried)).toEqual(facts(buildModuleGraph(options)));
     } finally {
       chmodSync(unreadable, 0o644);
     }

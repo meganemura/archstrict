@@ -1716,7 +1716,7 @@ function assembleGraph(prepared: ReturnType<typeof prepareGraph>, commons: Graph
   // assembly is refused because ambient roots and resolutions must stay equal.
   const closureInputs = (surfaceFiles: readonly string[], extraRoots: readonly string[] = []): TypeClosureInputs => ({
     readFile, languageVersion, scriptKindFor: scriptKindForFile, ambientFiles,
-    surfaceFiles, resolvedSpecifiers, extraRoots,
+    surfaceFiles, resolvedSpecifiers, analyzedFiles: analyzedSet, extraRoots,
   });
 
   // Both Program paths need the same bounded safety loop. Separate loops are
@@ -1864,10 +1864,11 @@ function assembleGraph(prepared: ReturnType<typeof prepareGraph>, commons: Graph
     return false;
   }
 
-  // A non-analyzed augmentation matters only when its target contributes to
-  // this answer and the focused Program omits the augmenting file. Falling
-  // back for every analyzed target is refused because unrelated targets and
-  // augmentations already loaded by this Program cannot change the answer.
+  // A non-analyzed augmentation matters only when its project-file target
+  // contributes to this answer and the focused Program omits the augmenting
+  // file. Falling back for every project target is refused because unrelated
+  // targets and augmentations already loaded by this Program cannot change
+  // the answer.
   function hasNonAnalyzedProjectAugmentation(
     focusedProgram: ts.Program,
     closureFiles: ReadonlySet<string>,
@@ -1877,7 +1878,7 @@ function assembleGraph(prepared: ReturnType<typeof prepareGraph>, commons: Graph
       if (focusedProgram.getSourceFile(file) !== undefined) continue;
       for (const augmentation of augmentations) {
         const target = resolveModule(augmentation.specifier, file, augmentation.mode).resolvedModule?.resolvedFileName;
-        if (target !== undefined && analyzedSet.has(target) &&
+        if (target !== undefined && isWorkspaceSiblingResolution(target, rootDir) &&
             (visitedFiles.has(target) || closureFiles.has(target))) return true;
       }
     }
@@ -1957,7 +1958,7 @@ function assembleGraph(prepared: ReturnType<typeof prepareGraph>, commons: Graph
         // The unscoped checker supplies augmentation effects that this focused
         // Program omits. Keeping its partial result is refused because it can
         // miss a leak from an added member.
-        const focusedNote = "rule 6 could not safely scope this surface because a non-analyzed project file can apply a module augmentation to an analyzed file; fell back to the whole-project type closure for this check";
+        const focusedNote = "rule 6 could not safely scope this surface because a non-analyzed project file can apply a module augmentation to a project file on another surface's export chain; fell back to the whole-project type closure for this check";
         const violations = checkTypeLeaks(graph).filter((violation) => violation.todoModule === moduleName);
         scopedNotes = [focusedNote, ...notes];
         return violations;
@@ -2224,7 +2225,7 @@ function fileParseValid(
   oldOptionsTable: readonly string[],
   impliedNodeFormat: ts.ResolutionMode,
 ): oldEntry is CachedFileEntry {
-  return oldEntry !== undefined && stat !== undefined &&
+  return oldEntry !== undefined && oldEntry.unreadable !== true && stat !== undefined &&
     oldEntry.mtimeMs === stat.mtimeMs && oldEntry.size === stat.size &&
     oldEntry.optionsIndex < oldOptionsTable.length && oldOptionsTable[oldEntry.optionsIndex] === optionsJson &&
     oldEntry.impliedNodeFormat === impliedNodeFormat;
@@ -2352,15 +2353,9 @@ export function buildModuleGraphForRules(options: BuildOptions): ModuleGraph {
     }
 
     if (unreadable) {
-      // Invisible exactly like a cold walk treats it (module-graph.ts's
-      // own header): joins neither a module's own `files` nor
-      // `outsideFiles`, and carries no resolutions - there is nothing to
-      // resolve for a file that was never really read.
-      newFiles[file] = { mtimeMs: stat!.mtimeMs, size: stat!.size, optionsIndex,
-        ...(impliedNodeFormat !== undefined ? { impliedNodeFormat } : {}),
-        imports: [], unsupportedSyntaxCount: 0, isScript: false, hasAmbientDeclarations: false,
-        hasModuleAugmentation: false, moduleAugmentationSpecifiers: [],
-        unreadable: true, resolutions: {} };
+      // Permission changes do not alter mtime or size. Omitting this entry
+      // makes the next build retry the read instead of preserving an empty
+      // answer after the file becomes readable.
       continue;
     }
 

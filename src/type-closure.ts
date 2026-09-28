@@ -127,6 +127,11 @@ export type TypeClosureInputs = {
   // module-graph.ts's own already-resolved edges, keyed by the importing
   // file and then by the specifier text as written.
   resolvedSpecifiers: ReadonlyMap<string, ReadonlyMap<string, string>>;
+  // The files whose complete import/export walk produced the map above. A
+  // missing entry from one of these files is a real unresolved or non-program
+  // target; a missing entry from any other project file means its edges were
+  // never recorded.
+  analyzedFiles: ReadonlySet<string>;
   // Files a previous round's safety net added (see type-closure's own
   // header and module-graph.ts's own round loop) - reached as a whole
   // file, the same as an ambient root, since nothing below reached it on
@@ -743,14 +748,15 @@ export function sourceFileKey(file: string): string {
 // refused because ambient roots already apply unrelated augmentations.
 //
 // `unresolvable`: true the moment this walk crosses a shape it cannot
-// answer as confidently as the checker would (an `export =` target, or an
-// `import x = SomeNamespace.Y` export - DeclInfo's own `isImportEquals`
-// comment). The caller falls back to treating every surface as a closure
-// root and the checker's own named set when this is true, the same as if
-// scoping had never been requested. Silently omitting a name here instead
-// would read an already-named declaration as unnamed on its next surface
-// - a false leak - so an unresolvable shape stops the whole computation
-// rather than under-reporting one name and continuing.
+// answer as confidently as the checker would (an `export =` target, an
+// `import x = SomeNamespace.Y` export, or a specifier reached from a
+// non-analyzed project file whose edges were not recorded - DeclInfo's own
+// `isImportEquals` comment covers the second case). The caller falls back to
+// treating every surface as a closure root and the checker's own named set
+// when this is true, the same as if scoping had never been requested. Silently
+// omitting a name here instead would read an already-named declaration as
+// unnamed on its next surface - a false leak - so an unresolvable shape stops
+// the whole computation rather than under-reporting one name and continuing.
 export function computeSyntacticNamedDeclarations(
   inputs: TypeClosureInputs,
   surfaceFiles: readonly string[],
@@ -761,6 +767,19 @@ export function computeSyntacticNamedDeclarations(
   let unresolvable = false;
   const resolvedAllExportsOf = new Set<string>();
   const resolvedNames = new Set<string>();
+
+  // The graph records specifier resolutions only for analyzed files. A
+  // non-analyzed project file reached through one of those edges can therefore
+  // have real declarations beyond a missing record. Guessing that it exports
+  // nothing would create false leaks. An analyzed file's missing record is a
+  // real unresolved or non-program target, and an external package file can
+  // safely keep the checker's own no-declaration answer.
+  function resolveWalkTarget(file: string, specifier: string): string | undefined {
+    const target = resolveTarget(inputs, file, specifier);
+    if (target === undefined && !inputs.analyzedFiles.has(file) &&
+        !file.split(/[\\/]/).includes("node_modules")) unresolvable = true;
+    return target;
+  }
 
   function addDeclInfo(info: DeclInfo): void {
     // Every DeclInfo this walk can reach `summarize` sets a position on -
@@ -794,7 +813,7 @@ export function computeSyntacticNamedDeclarations(
     if (decls !== undefined) { for (const info of decls) addDeclInfo(info); return; }
     const binding = summary.imports.get(alias.name);
     if (binding !== undefined) {
-      const target = resolveTarget(inputs, file, binding.specifier);
+      const target = resolveWalkTarget(file, binding.specifier);
       if (target === undefined) return;
       if (binding.importedName === "*") { addSourceFileKey(target); return; }
       resolveNamed(target, binding.importedName);
@@ -824,8 +843,8 @@ export function computeSyntacticNamedDeclarations(
       if (decls !== undefined) { for (const info of decls) addDeclInfo(info); return; }
       const binding = summary.imports.get(local);
       if (binding !== undefined) {
-        const target = resolveTarget(inputs, file, binding.specifier);
-        if (target === undefined) return; // an external or unresolved import: no declarations on either side
+        const target = resolveWalkTarget(file, binding.specifier);
+        if (target === undefined) return;
         // A re-exported namespace import (`import * as NS from "./x";
         // export { NS };`): the checker's own declaration for it is the
         // target's own SourceFile, the same as `export * as ns` below.
@@ -846,7 +865,7 @@ export function computeSyntacticNamedDeclarations(
 
     const reexport = summary.reexports.get(name);
     if (reexport !== undefined) {
-      const target = resolveTarget(inputs, file, reexport.specifier);
+      const target = resolveWalkTarget(file, reexport.specifier);
       if (target === undefined) return;
       // `export * as ns from "./x"`: the checker's own declaration for
       // `ns` is `./x`'s own SourceFile (measured directly against a real
@@ -863,7 +882,7 @@ export function computeSyntacticNamedDeclarations(
     // declarations at all in that shape).
     if (name === "default") return;
     for (const spec of summary.stars) {
-      const target = resolveTarget(inputs, file, spec);
+      const target = resolveWalkTarget(file, spec);
       if (target !== undefined && hasExport(inputs, summaries, target, name, new Set(), visitedFiles)) { resolveNamed(target, name); return; }
     }
   }
@@ -883,7 +902,7 @@ export function computeSyntacticNamedDeclarations(
     for (const name of summary.exportsLocal.keys()) names.add(name);
     for (const name of summary.reexports.keys()) names.add(name);
     for (const spec of summary.stars) {
-      const target = resolveTarget(inputs, file, spec);
+      const target = resolveWalkTarget(file, spec);
       if (target !== undefined) for (const name of collectStarNames(target, seen)) names.add(name);
     }
     return names;
@@ -913,7 +932,7 @@ export function computeSyntacticNamedDeclarations(
     for (const name of summary.reexports.keys()) resolveNamed(file, name);
     if (summary.defaultInfo !== undefined) resolveNamed(file, "default");
     for (const spec of summary.stars) {
-      const target = resolveTarget(inputs, file, spec);
+      const target = resolveWalkTarget(file, spec);
       if (target === undefined) continue;
       for (const name of collectStarNames(target)) resolveNamed(file, name);
     }

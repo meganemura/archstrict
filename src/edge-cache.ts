@@ -175,6 +175,8 @@ export type CachedFileEntry = {
   hasAmbientDeclarations: boolean;
   hasModuleAugmentation: boolean;
   moduleAugmentationSpecifiers: ModuleAugmentationSpecifier[];
+  // Kept only so a cache written by older code is decoded and rejected by
+  // module-graph.ts's reparse gate. Current graph builds never persist it.
   unreadable?: true;
   // Keyed by `${specifier}\u0000${mode ?? ""}` - two imports of the same
   // specifier under two different resolution modes (rare, but legal) must
