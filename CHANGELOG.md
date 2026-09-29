@@ -29,6 +29,13 @@ may change commands, flags, config, or output shape. The version entry will desc
   surface. A type owned by another module with no surface needs a surface on that module, or the
   exposing export must leave this surface.
 
+### Documentation
+
+- The README (and its Japanese twin) has one Install section per host. Claude Code loads a git
+  clone of this repository as a plugin for the skill, the edit hooks, and the MCP server. Other
+  agents install the skill with `gh skill install`, add the `AGENTS.md` section with
+  `archstrict agents`, and run `archstrict check` in CI, since the edit hooks are Claude Code only.
+
 ## 0.1.0 (2026-09-29)
 
 ### Added

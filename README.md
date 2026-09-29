@@ -8,13 +8,60 @@ tsc and type checkers examine types, and ESLint examines style. archstrict exami
 
 ## Install
 
+Every host starts with the npm package in the project:
+
 ```sh
 npm install -D archstrict
 ```
 
 Requires Node.js 22 or newer.
 
-This puts a real `archstrict` binary at `node_modules/.bin/archstrict` in your project - the exact path the PreToolUse and PostToolUse hooks (see [hook.md](skills/archstrict/references/hook.md)) check for before previewing and confirming a change on your behalf around an edit. The install also carries the agent skill (`skills/archstrict/SKILL.md` and `skills/archstrict/references/`), `llms.txt`, and `.agents/` (the plugin manifest, the two hooks, and the MCP server) into `node_modules/archstrict/`. npm omits the checkout's symlinks (`.claude-plugin/plugin.json`, `hooks/`, `mcp/`), so the installed hooks are `node_modules/archstrict/.agents/hooks/pre-tool-use.mjs` and `post-tool-use.mjs`, and the installed MCP server is `node_modules/archstrict/.agents/mcp/server.mjs`. A git checkout still loads as a Claude Code plugin through those symlinks.
+This puts a real `archstrict` binary at `node_modules/.bin/archstrict`. The edit hooks and CI run this binary, and the MCP server loads the same installed package.
+
+### What each piece does
+
+- **The CLI** (`npm install -D archstrict`) runs `init`, `check`, `todo`, and the other verbs. It is the only piece that finds violations.
+- **The skill** (`skills/archstrict/`) teaches an agent to read a violation report and to change the config. A host loads it from its own skill directory, not from `node_modules/`.
+- **The AGENTS.md section** (`archstrict agents`) tells any agent that reads `AGENTS.md` to run `archstrict rules <path>` before it creates a file or adds an import, and `archstrict check` after it edits. It is a few lines of project instructions, not the skill.
+- **The edit hooks** (Claude Code only) run around each edit. The PreToolUse hook previews the change, and the PostToolUse hook runs `archstrict check <file>` and returns any violation into the agent's context. See [hook.md](skills/archstrict/references/hook.md).
+- **The MCP server** (Claude Code plugin) gives the agent `check`, `rules`, `search`, and `simulate` as tools.
+- **CI** runs `archstrict check` on every change, whichever host made it.
+
+### Claude Code
+
+Load a clone of this repository as a Claude Code plugin. The plugin carries the skill, the two edit hooks, and the MCP server. `--plugin-dir` loads it for one session, so pass it each time you start Claude Code:
+
+```sh
+git clone https://github.com/meganemura/archstrict.git
+claude --plugin-dir ./archstrict
+```
+
+The hooks run the project's own `node_modules/.bin/archstrict`, so the npm install above is still required. Load the plugin from a git clone: npm drops the symlinks that the plugin root needs (`.claude-plugin/plugin.json`, `hooks/`, `mcp/`), so `node_modules/archstrict/` does not load as a plugin. The package still carries the plugin's files under `node_modules/archstrict/.agents/`.
+
+### Other agents (Cursor, Codex, cloud agents)
+
+The edit hooks are Claude Code only. For any other agent, use three pieces:
+
+1. Install the skill from the public repository with the GitHub CLI. Replace `cursor` with your agent's value from `gh skill install --help`:
+
+   ```sh
+   gh skill install meganemura/archstrict archstrict --agent cursor
+   ```
+
+   The default scope is the project: Cursor, Codex, and several other agents share `.agents/skills/archstrict/`. Add `--scope user` to install it in your home directory instead.
+
+2. Add the AGENTS.md section:
+
+   ```sh
+   npx archstrict agents
+   ```
+
+3. Run `archstrict check` in CI. With no edit hook, CI is where a violation from an agent session is caught:
+
+   ```yaml
+   - run: npm ci
+   - run: npx archstrict check
+   ```
 
 ## Quick start
 

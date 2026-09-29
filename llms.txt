@@ -8,6 +8,12 @@ Agent skill: [skills/archstrict/SKILL.md](skills/archstrict/SKILL.md)
 
 Installed package: `node_modules/archstrict/skills/archstrict/SKILL.md` (this file sits beside it at `node_modules/archstrict/llms.txt`).
 
+## Install
+
+- Every host: `npm install -D archstrict` puts the CLI at `node_modules/.bin/archstrict`.
+- Claude Code: load a git clone of this repository as a plugin with `claude --plugin-dir <clone>`, passed each time Claude Code starts. The plugin carries the skill, the PreToolUse and PostToolUse edit hooks, and the MCP server.
+- Other agents (Cursor, Codex, cloud agents): `gh skill install meganemura/archstrict archstrict --agent <agent>` installs the skill; `npx archstrict agents` adds the `AGENTS.md` section; run `npx archstrict check` in CI, since the edit hooks are Claude Code only.
+
 ## Commands
 
 - `archstrict init [dir] [--json]` — declare one module per top-level directory holding `.ts` and one per loose top-level `.ts` file, so the first `check` covers every file by construction; write `archstrict.types.ts` and, if missing, `archstrict.config.ts` (`schemaVersion: 1`)

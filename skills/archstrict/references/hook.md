@@ -37,7 +37,7 @@ On a TypeScript source file, this hook shells out to `node_modules/.bin/archstri
 Every one of these is silent by design, not a failure:
 
 - The edited file isn't `.ts`, or the tool wasn't an Edit/Write/MultiEdit.
-- The project has no `node_modules/.bin/archstrict` at all - most edits happen in files or projects that never adopted this tool. `archstrict init` does not produce this file (it only writes `archstrict.config.ts`/`archstrict.types.ts`); see the [README](../../../README.md#install) for how to actually install the package into that project.
+- The project has no `node_modules/.bin/archstrict` at all - most edits happen in files or projects that never adopted this tool. `archstrict init` does not produce this file (it only writes `archstrict.config.ts`/`archstrict.types.ts`); see the [README](https://github.com/meganemura/archstrict#install) for how to actually install the package into that project.
 - `check <file>` found no violation in the edited file. Analysis still covers the whole project (resolving an edge needs every file), but the report is scoped to the one file that changed.
 
 For a module surface, `check <file>` builds rule 6 from that surface's type closure, and `typeLeaks` counts only leaks reported at that file.

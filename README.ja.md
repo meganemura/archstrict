@@ -10,13 +10,60 @@ tsc と型チェッカーが見るのは型であり、ESLint が見るのは st
 
 ## 導入
 
+どの host でも、まずプロジェクトに npm package を入れる。
+
 ```sh
 npm install -D archstrict
 ```
 
 Node.js 22 以降が要る。
 
-これで、プロジェクトの `node_modules/.bin/archstrict` に実体の `archstrict` binary が置かれる。これは PreToolUse と PostToolUse の 2 個の hook([hook.md](skills/archstrict/references/hook.md) を参照)が、編集の前後で変更を確認するために探す path そのものである。この導入では、agent skill(`skills/archstrict/SKILL.md` と `skills/archstrict/references/`)、`llms.txt`、`.agents/`(plugin manifest、2 個の hook、MCP server)も `node_modules/archstrict/` に入る。npm は checkout 側の symlink(`.claude-plugin/plugin.json`、`hooks/`、`mcp/`)を含めないため、導入後の hook は `node_modules/archstrict/.agents/hooks/pre-tool-use.mjs` と `post-tool-use.mjs` になり、MCP server は `node_modules/archstrict/.agents/mcp/server.mjs` になる。git の checkout では、それらの symlink を通じて Claude Code の plugin として読み込まれる。
+これで、プロジェクトの `node_modules/.bin/archstrict` に実体の `archstrict` binary が置かれる。編集 hook と CI はこの binary を実行し、MCP server は同じ導入済みの package を読み込む。
+
+### 各部品の役割
+
+- **CLI**(`npm install -D archstrict`)は `init`、`check`、`todo` などの verb を実行する。violation を見つけるのはこの部品だけである。
+- **skill**(`skills/archstrict/`)は、violation の報告の読み方と config の変え方を agent に教える。host は `node_modules/` からではなく、host 自身の skill directory から読み込む。
+- **AGENTS.md の節**(`archstrict agents`)は、`AGENTS.md` を読むすべての agent に、file を作る前や import を足す前に `archstrict rules <path>` を実行し、編集の後に `archstrict check` を実行するよう指示する。数行のプロジェクト向け指示であり、skill ではない。
+- **編集 hook**(Claude Code 専用)は編集ごとに動く。PreToolUse hook は変更を事前に確かめ、PostToolUse hook は `archstrict check <file>` を実行して violation を agent の文脈に返す。[hook.md](skills/archstrict/references/hook.md) を参照。
+- **MCP server**(Claude Code の plugin)は、`check`、`rules`、`search`、`simulate` を tool として agent に渡す。
+- **CI** は、どの host が加えた変更にも `archstrict check` を実行する。
+
+### Claude Code
+
+このリポジトリの clone を Claude Code の plugin として読み込む。plugin は skill、2 個の編集 hook、MCP server を持つ。`--plugin-dir` は 1 回の session だけ読み込むので、Claude Code を起動するたびに渡す。
+
+```sh
+git clone https://github.com/meganemura/archstrict.git
+claude --plugin-dir ./archstrict
+```
+
+hook はプロジェクト自身の `node_modules/.bin/archstrict` を実行するので、上の npm install も要る。plugin は git の clone から読み込む。npm は plugin root に要る symlink(`.claude-plugin/plugin.json`、`hooks/`、`mcp/`)を含めないため、`node_modules/archstrict/` は plugin として読み込まれない。plugin の file 自体は `node_modules/archstrict/.agents/` に入っている。
+
+### その他の agent(Cursor、Codex、cloud agent)
+
+編集 hook は Claude Code 専用である。それ以外の agent では、次の 3 つを使う。
+
+1. GitHub CLI で、公開リポジトリから skill を入れる。`cursor` は、`gh skill install --help` にある自分の agent の値に置き換える。
+
+   ```sh
+   gh skill install meganemura/archstrict archstrict --agent cursor
+   ```
+
+   既定の scope はプロジェクトである。Cursor、Codex など複数の agent が `.agents/skills/archstrict/` を共有する。home directory に入れるときは `--scope user` を足す。
+
+2. AGENTS.md の節を足す。
+
+   ```sh
+   npx archstrict agents
+   ```
+
+3. CI で `archstrict check` を実行する。編集 hook が無いので、agent の session で生じた violation は CI で捕まえる。
+
+   ```yaml
+   - run: npm ci
+   - run: npx archstrict check
+   ```
 
 ## クイックスタート
 
