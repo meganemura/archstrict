@@ -6,10 +6,14 @@ import type { Config } from "./archstrict.types.js";
 // the caches and config beside it. A new rule file or a new verb file then
 // stays inside the module that already owns that kind of change.
 //
-// Flat files under src/ share one module because a glob cannot name an
-// arbitrary subset of siblings. cli.ts, mcp-server.ts, and check-options.ts
-// are peeled off with more-specific globs: leaving them inside core would
-// cycle core with verbs (the CLI imports verbs, and verbs import the graph).
+// Flat files under src/ are one module because they change together: the
+// graph builder, config, caches, and the type-leak checker the builder
+// calls. A glob array can name a subset of siblings when a flat directory
+// holds more than one seam; this directory does not. cli.ts,
+// mcp-server.ts, and check-options.ts are peeled off with more-specific
+// globs: leaving them inside core would cycle core with verbs (the CLI
+// imports verbs, and verbs import the graph). map-shape.ts lives under
+// verbs: only those verbs call it.
 //
 // type-leak.ts lives in core, not under src/rules. The graph builder calls
 // that checker while it builds rule 6's closure, and the todo store reads

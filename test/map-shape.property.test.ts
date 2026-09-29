@@ -12,7 +12,7 @@ import {
   dominantBypassModule,
   dominantByFiles,
   shareAtLeast,
-} from "../src/map-shape.js";
+} from "../src/verbs/map-shape.js";
 
 describe("dominantByFiles (property)", () => {
   test("selects the largest module only when it holds at least 4/5 of the files and the minimum count", () => {

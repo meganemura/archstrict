@@ -8,7 +8,7 @@ import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { resolve, sep } from "node:path";
 import ts from "typescript";
 import { buildModuleGraphForRules, globResolutionDir, type ModuleGraph, type BuildOptions } from "../module-graph.js";
-import { dominantBypassModule, dominantBypassSentence, type DominantBypass } from "../map-shape.js";
+import { dominantBypassModule, dominantBypassSentence } from "./map-shape.js";
 import { assertEdgesShapeValid, assertGlobsSupported, assertSchemaVersion, describeShape, type Config } from "../config.js";
 import { ReportError } from "../report-error.js";
 import { checkPublicSurfaceBypass, type Violation as PublicSurfaceViolation } from "../rules/public-surface.js";
@@ -198,7 +198,15 @@ export type CheckResult = {
   // and most public-surface-bypass violations, including ones a todo file
   // would suppress. Freezing that set records one bucket. Absent otherwise,
   // and absent from `check <file>`, which the edit hook repeats.
-  dominantModule?: DominantBypass;
+  // Written out here: naming DominantBypass would publish a type declared
+  // in the private map-shape helper through this surface file.
+  dominantModule?: {
+    name: string;
+    files: number;
+    totalFiles: number;
+    bypasses: number;
+    totalBypasses: number;
+  };
 };
 
 export const NO_EDGES_SUMMARY =

@@ -3,7 +3,9 @@
 // hotspots and a frozen bypass list into one bucket. A file-per-module
 // inventory checks imports between files and still names no growth seam.
 // check, todo, recommend, and init share these thresholds so the note
-// does not drift between verbs.
+// does not drift between verbs. It lives under verbs: the graph builder
+// never calls it, so putting it in core would publish a verb-only helper
+// on the analysis surface.
 // Boundary: pure counts. No config I/O and no graph build.
 
 // 4/5, the same share check.ts uses for "most bypasses share one cause".

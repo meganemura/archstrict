@@ -7,7 +7,7 @@ import type { Config } from "../config.js";
 import { createConfigLocator } from "../config-pointer.js";
 import { fingerprintOf, relativizeForTodo } from "../todo-store.js";
 import { buildModuleGraphForRules, DEFAULT_SURFACE, moduleGlobBaseDir, moduleGlobList, type Module, type ModuleGlob, type ModuleGraph } from "../module-graph.js";
-import { dominantByFiles, filePerModuleCluster } from "../map-shape.js";
+import { dominantByFiles, filePerModuleCluster } from "./map-shape.js";
 // Without a config, recommend previews init's own walk in memory (same
 // argument rules, same groups and globs) instead of running its own
 // single-level "src/*" discovery - the two could disagree about which

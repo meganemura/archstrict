@@ -42,7 +42,7 @@ import {
 } from "../module-candidates.js";
 import { compileGlob } from "../classify.js";
 import { SCHEMA_VERSION } from "../config.js";
-import { dominantByFiles } from "../map-shape.js";
+import { dominantByFiles } from "./map-shape.js";
 import { ReportError } from "../report-error.js";
 import { loadConfig } from "./check.js";
 

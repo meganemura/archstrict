@@ -24,7 +24,7 @@ import {
 } from "../todo-store.js";
 import { deleteLegacyTodoFiles, readLegacyTodoState } from "../todo-migration.js";
 import { loadConfig, runRules, type AnyViolation } from "./check.js";
-import { dominantBypassModule, dominantBypassSentence } from "../map-shape.js";
+import { dominantBypassModule, dominantBypassSentence } from "./map-shape.js";
 
 // Only a violation with its own todoModule can be frozen: rule 1 (public-
 // surface bypass), rule 2 (cycles), rule 6 (type-leak), and rule 7 (the
