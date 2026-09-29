@@ -7,5 +7,7 @@
   "appendPlugins": ["stryker-agent-reporter"],
   "mutate": ["src/**/*.ts", "!src/cli.ts", "!src/mcp-server.ts"],
   "disableTypeChecks": "src/**/*.ts",
-  "ignorePatterns": ["/hooks", "/mcp", "/.claude-plugin/plugin.json"]
+  "ignorePatterns": ["/hooks", "/mcp", "/.claude-plugin/plugin.json"],
+  "concurrency": 8,
+  "cleanTempDir": true
 }
