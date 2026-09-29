@@ -57,6 +57,8 @@ import { compileGlob, mostSpecificMatch } from "./classify.js";
 import { buildTypeClosure, computeSyntacticNamedDeclarations, type TypeClosureInputs } from "./type-closure.js";
 import { checkTypeLeaks, type Violation as TypeLeakViolation } from "./rules/type-leak.js";
 import { makeProjectRelativePosix, type ProjectRelativePath } from "./project-path.js";
+import { forcedBasesOf, gitignoreStackAbove, isPathGitignored, nextIgnoreState, withGitignoreFile,
+  type GitignoreStack, type IgnoreState } from "./gitignore.js";
 
 // A node builtin (`fs`, `node:fs`, ...) never has a real resolvedModule:
 // ts.resolveModuleName looks for an actual file, but @types/node's ambient
@@ -728,13 +730,25 @@ function readDirEntries(dir: string): { files: Dirent[]; dirs: { entry: Dirent; 
 // calls this replaces took about 41 ms; this one recursive descent takes
 // about 23 ms - roughly 1.8x faster, from walking every directory once
 // instead of four times.
+//
+// A gitignored path is not project source (scratch corpora, build output,
+// local caches), so it leaves the analyzed list and the non-TS count, the
+// same two outputs config.exclude governs. It stays in the resolvable set
+// and the package.json list: a checked-in file can import gitignored
+// codegen output, and the resolution fingerprint must still see it appear
+// or vanish. Under `analysisOnly` nothing else is collected, so an ignored
+// directory is not entered at all - unless a declared module's base lies
+// inside it, since a declared module is the explicit request to analyze
+// an ignored path (see gitignore.ts's nextIgnoreState).
 function walkProjectTree(
   projectRoot: string,
   excludeGlobs: readonly string[],
   dtsSurfaceGlobs: readonly string[],
   analysisOnly = false,
   relativePath: ProjectRelativePath = makeProjectRelativePosix(projectRoot),
+  declaredBases: readonly string[] = [],
 ): ProjectTreeWalk {
+  const forced = forcedBasesOf(declaredBases);
   const analyzedFiles: string[] = [];
   let nonTsSourceFileCount = 0;
   const resolvableFiles: string[] = [];
@@ -743,14 +757,23 @@ function walkProjectTree(
   const distDirs: string[] = [];
   const visited = new Set<string>();
 
-  function visit(dir: string): void {
+  function visit(dir: string, dirState: IgnoreState, inherited: GitignoreStack): void {
     const { files, dirs } = readDirEntries(dir);
+    let stack = inherited;
+    if (dirState === "kept" && files.some((entry) => entry.name === ".gitignore")) {
+      try {
+        stack = withGitignoreFile(stack, relativePath(dir), readFileSync(join(dir, ".gitignore"), "utf8"));
+      } catch {
+        // An unreadable .gitignore ignores nothing, like any unreadable file here.
+      }
+    }
 
     for (const entry of files) {
       const full = join(dir, entry.name);
       if (entry.name === "package.json" && !analysisOnly) packageJsonFiles.push(full);
       if (!analysisOnly && isResolvableFile(entry.name)) resolvableFiles.push(full);
       const rel = relativePath(full);
+      if (nextIgnoreState(dirState, stack, rel, false, forced.bases) === "ignored") continue;
       if (excludeGlobs.some((glob) => compileGlob(glob).test(rel))) continue;
       if (NON_TS_SOURCE_EXTENSIONS.some((ext) => entry.name.endsWith(ext))) {
         nonTsSourceFileCount++;
@@ -775,15 +798,20 @@ function walkProjectTree(
         if (!analysisOnly) distDirs.push(full);
         continue; // never entered by this pass, unconditionally
       }
+      const rel = relativePath(full);
+      const state = nextIgnoreState(dirState, stack, rel, true, forced.bases);
+      if (state === "ignored" && analysisOnly && !forced.ancestors.has(rel)) continue;
       if (visited.has(real)) continue;
       visited.add(real);
-      visit(full);
+      visit(full, state, stack);
     }
   }
 
   const rootReal = realDirOf(projectRoot);
   if (rootReal !== undefined) visited.add(rootReal);
-  visit(projectRoot);
+  // The project root itself is never tested against a pattern: a root the
+  // caller pointed at is analyzed even when it sits inside an ignored path.
+  visit(projectRoot, "kept", gitignoreStackAbove(projectRoot));
 
   // The second pass: every dist/ directory the first pass met, walked
   // separately for the resolvable set, the package.json list, and the
@@ -820,6 +848,13 @@ function walkProjectTree(
   return { analyzedFiles, nonTsSourceFileCount, resolvableFiles, packageJsonFiles, nodeModulesDirs };
 }
 
+// Each declared module's literal base (see moduleGlobBaseDir): the walk
+// keeps a gitignored path at or under one, since declaring a module there
+// is the project's explicit request to analyze it.
+function declaredBasesOf(declaredModules: readonly DeclaredModule[]): string[] {
+  return declaredModules.map((dm) => moduleGlobBaseDir(dm.glob));
+}
+
 export function listAnalyzedFiles(
   projectRoot: string,
   excludeGlobs: readonly string[],
@@ -847,7 +882,7 @@ export function listAnalyzedFiles(
   // tree, plus the resolvable/package.json/node_modules collection) on
   // any project that has one.
   const dtsSurfaceGlobs = surfaceGlobsAllowingDts(declaredModules, projectRoot, globalDefaultSurface);
-  return walkProjectTree(projectRoot, excludeGlobs, dtsSurfaceGlobs, true).analyzedFiles;
+  return walkProjectTree(projectRoot, excludeGlobs, dtsSurfaceGlobs, true, undefined, declaredBasesOf(declaredModules)).analyzedFiles;
 }
 
 // A proposed new path has never passed through walkProjectTree.
@@ -867,7 +902,8 @@ export function isEligibleSourceFile(
     projectRoot,
     excludeGlobs,
     surfaceGlobsAllowingDts(declaredModules, projectRoot, globalDefaultSurface),
-  );
+  ) && !isPathGitignored(projectRoot, toProjectRelativePosix(file, projectRoot),
+    forcedBasesOf(declaredBasesOf(declaredModules)).bases);
 }
 
 // Shared core: takes the already-derived .d.ts-allowing surface globs
@@ -1103,7 +1139,7 @@ export function prepareGraph(options: BuildOptions) {
   // at no extra walk cost to a caller (simulate, fix, search) that never
   // touches them.
   const dtsSurfaceGlobs = surfaceGlobsAllowingDts(declaredModules, projectRoot, surface);
-  const tree = walkProjectTree(projectRoot, exclude, dtsSurfaceGlobs, false, relativePath);
+  const tree = walkProjectTree(projectRoot, exclude, dtsSurfaceGlobs, false, relativePath, declaredBasesOf(declaredModules));
   let rootNames = tree.analyzedFiles;
   if (options.fileListOverride) rootNames = options.fileListOverride(rootNames);
   let resolvableFiles = tree.resolvableFiles;

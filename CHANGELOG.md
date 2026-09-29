@@ -3,6 +3,18 @@
 The format follows Keep a Changelog, and the versions follow SemVer. Before 1.0, a minor version
 may change commands, flags, config, or output shape. The version entry will describe each change.
 
+## Unreleased
+
+### Changed
+
+- Every verb that walks the project (`init`, `check`, `todo`, `simulate`, `hotspots`, `recommend`)
+  now skips gitignored paths. archstrict reads the root and nested `.gitignore` files, the ones
+  above the project root, and the repository's `info/exclude` with git's own pattern rules, and
+  never runs git. A local scratch directory such as `tmp/` no longer floods `check` with
+  `uncovered-module` violations. A gitignored file stays resolvable as an import target. A config
+  that already declares a module inside a gitignored directory keeps analyzing that module; remove
+  the declaration to drop it.
+
 ## 0.1.0 (2026-09-29)
 
 ### Added
