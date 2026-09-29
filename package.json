@@ -44,6 +44,7 @@
     "build": "tsc -p tsconfig.build.json",
     "dogfood:nukadoko": "npm run build && nuka run features",
     "ci:ts7-probe": "node scripts/probe-typescript7.mjs",
+    "mutation": "stryker run",
     "prepare": "npm run build",
     "prepublishOnly": "npm run build && npm run typecheck && npm test"
   },
@@ -54,9 +55,12 @@
   "devDependencies": {
     "@hegeldev/hegel": "0.4.5",
     "@meganemura/depug": "0.1.3",
+    "@stryker-mutator/core": "10.0.0",
+    "@stryker-mutator/vitest-runner": "10.0.0",
     "@types/node": "26.5.1",
     "@vitest/coverage-v8": "5.0.0",
     "nukadoko": "0.12.0",
+    "stryker-agent-reporter": "0.1.0",
     "vitest": "5.0.0"
   },
   "engines": {

@@ -1,0 +1,11 @@
+{
+  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "packageManager": "npm",
+  "testRunner": "vitest",
+  "coverageAnalysis": "perTest",
+  "reporters": ["clear-text", "agent"],
+  "appendPlugins": ["stryker-agent-reporter"],
+  "mutate": ["src/**/*.ts", "!src/cli.ts", "!src/mcp-server.ts"],
+  "disableTypeChecks": "src/**/*.ts",
+  "ignorePatterns": ["/hooks", "/mcp", "/.claude-plugin/plugin.json"]
+}

@@ -221,7 +221,9 @@ export function computeAllowDeny(
       const targetValues = [...targetTags].filter((t) => t.startsWith(namespacePrefix));
       if (targetValues.length === 0) return; // no tag in this namespace: not this rule's concern
 
-      evaluatedCounts[i]!++; // this rule genuinely had a real edge to judge, whatever the verdict below
+      // Not `!++`: Babel 8 rejects an UpdateExpression whose argument is a
+      // non-null assertion, and the instrumenter builds exactly that.
+      evaluatedCounts[i] = evaluatedCounts[i]! + 1; // this rule genuinely had a real edge to judge, whatever the verdict below
 
       let violatingTag: string | undefined;
       if (rule.allow !== undefined) {
@@ -373,7 +375,7 @@ function computeOrder(
       assertSequenceListsValue(rule, withinValue, sequence, sourceLayer);
       assertSequenceListsValue(rule, withinValue, sequence, targetLayer);
 
-      evaluatedCounts[i]!++; // this rule genuinely had a real edge, within a real declared sequence, to judge
+      evaluatedCounts[i] = evaluatedCounts[i]! + 1; // this rule genuinely had a real edge, within a real declared sequence, to judge
 
       const sourceIndex = sequence.indexOf(sourceLayer.slice(namespacePrefix.length));
       const targetIndex = sequence.indexOf(targetLayer.slice(namespacePrefix.length));
@@ -446,7 +448,7 @@ function computePoint(
     rules.forEach((rule, i) => {
       if (!matchesEdgeFilters(edge, rule.edgeType, rule.importForm)) return;
       if (!matchesPredicate(rule.from, sourceRel, sourceTags)) return;
-      evaluatedCounts[i]!++;
+      evaluatedCounts[i] = evaluatedCounts[i]! + 1;
       if (!matchesPredicate(rule.to, targetRel, targetTags)) return;
       if (focus !== undefined && edge.fromFile !== focus) return; // evaluated (coverage counted above); not built for a scoped run
 

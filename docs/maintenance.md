@@ -37,6 +37,22 @@ happens to be installed. It never fails; an unsupported operation is the measure
 archstrict itself always analyzes with its own pinned `typescript` dependency, independent of this
 probe.
 
+`npm run mutation` runs Stryker (`stryker run`) with the Vitest runner. It mutates `src/**/*.ts`
+except `src/cli.ts` and `src/mcp-server.ts` — those two are process entry points, and several tests
+drive the built `dist/cli.js` rather than the source file Stryker rewrites. The full set is large
+(the suite is serial, and many tests build a real TypeScript program). A bounded look is
+`npx stryker run --mutate src/<file>.ts`. `coverageAnalysis` stays `perTest`.
+
+Stryker copies the project into a sandbox with `copyFile`. That call throws on the directory
+symlinks `hooks` and `mcp`, and it would replace `.claude-plugin/plugin.json` with a regular file.
+`ignorePatterns` leaves those three paths out of the copy. `test/global-setup.ts` recreates the
+symlinks when they are missing, which is a no-op in a normal checkout.
+
+The count increments in `src/rules/constraints.ts` are additions (`x = x! + 1`), not `x!++`.
+The instrumenter's update-operator mutator rebuilds `++`/`--` with Babel's `updateExpression`,
+and Babel 8 rejects a non-null assertion as that argument. Excluding the mutator does not help:
+the mutator still runs, and the throw aborts the run before any mutant is tested.
+
 ## Dependencies and Node.js
 
 Do not add a dependency without the owner's approval. Pin every dependency to an exact version.

@@ -38,3 +38,9 @@ spike/fixtures/generated-union/tsconfig.oneoff.json
 features/*.md
 
 coverage/
+
+# Stryker copies the project into a sandbox and writes the mutation report
+# beside it. Neither belongs in git.
+reports/
+.stryker-tmp/
+stryker.log
