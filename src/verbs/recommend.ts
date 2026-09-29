@@ -6,7 +6,8 @@ import { applyTodo, loadConfig, runRules, type AnyViolation } from "./check.js";
 import type { Config } from "../config.js";
 import { createConfigLocator } from "../config-pointer.js";
 import { fingerprintOf, relativizeForTodo } from "../todo-store.js";
-import { buildModuleGraphForRules, DEFAULT_SURFACE, moduleGlobBaseDir, type Module, type ModuleGraph } from "../module-graph.js";
+import { buildModuleGraphForRules, DEFAULT_SURFACE, moduleGlobBaseDir, moduleGlobList, type Module, type ModuleGlob, type ModuleGraph } from "../module-graph.js";
+import { dominantByFiles, filePerModuleCluster } from "../map-shape.js";
 // Without a config, recommend previews init's own walk in memory (same
 // argument rules, same groups and globs) instead of running its own
 // single-level "src/*" discovery - the two could disagree about which
@@ -32,8 +33,18 @@ export type PatternProposal = {
   do: string;
 };
 
+export type MapNote = {
+  kind: "mega-module" | "file-per-module";
+  evidence: string;
+  do: string;
+};
+
 export type RecommendResult = {
   modules: number;
+  // Empty when the declared map is neither one giant module nor a flat
+  // file-per-module inventory. Present either way, so a reader does not
+  // treat a missing field as "the map is finished".
+  mapNotes: MapNote[];
   proposedClassify: { glob: string; tags: string[] }[];
   // How many patterns the evidence supported before the top-5 cap below -
   // visible even when every one of them got cut, so a bounded list never
@@ -71,6 +82,16 @@ export type SurfaceProposal = {
 // (7 covered of 9) never rounds the wrong way against a float constant.
 const SURFACE_COVERAGE_NUMERATOR = 4;
 const SURFACE_COVERAGE_DENOMINATOR = 5;
+
+type DeclaredName = { name: string; glob: ModuleGlob };
+
+function classifyEntries(declaredModules: readonly DeclaredName[], name: string, tags: string[]): { glob: string; tags: string[] }[] {
+  return moduleGlobList(declaredModules.find((entry) => entry.name === name)!.glob).map((glob) => ({ glob, tags }));
+}
+
+function moduleMatchesSegment(declaredModules: readonly DeclaredName[], name: string, pattern: RegExp): boolean {
+  return moduleGlobList(declaredModules.find((entry) => entry.name === name)!.glob).some((glob) => matchesAnySegment(glob, pattern));
+}
 
 // Pure and exported so a property test can drive it directly with
 // synthetic importer counts, without building a real filesystem and
@@ -124,6 +145,8 @@ function proposeSurfaces(graph: ModuleGraph): SurfaceProposal[] {
       importers.add(edge.fromFile);
     }
     if (pairs.size === 0) continue;
+    const totalFiles = [...graph.modules.values()].reduce((sum, entry) => sum + entry.files.length, 0);
+    const fileDominant = dominantByFiles([...graph.modules.values()].map((entry) => ({ name: entry.name, files: entry.files.length })));
     const candidates = [...importersByFile.entries()]
       .map(([file, importers]) => ({ file: moduleRelative(module, file), importers: importers.size }))
       .sort((a, b) => b.importers - a.importers || (a.file < b.file ? -1 : a.file > b.file ? 1 : 0));
@@ -141,7 +164,9 @@ function proposeSurfaces(graph: ModuleGraph): SurfaceProposal[] {
       choices: [
         `do: set { name: ${JSON.stringify(module.name)}, ..., surface: ${JSON.stringify(proposedSurface)} } in declaredModules to retire ${coveredImports} of ${totalImports} bypasses into '${module.name}', leaving ${totalImports - coveredImports}`,
         `do: add a barrel file re-exporting from ${proposedSurface[0] ?? "a chosen entry file"}, then name it as this module's surface instead`,
-        `do: leave '${module.name}' entirely private and run archstrict todo to freeze its bypasses as debt instead`,
+        fileDominant?.name === module.name
+          ? `do: split '${module.name}' before archstrict todo: it holds ${fileDominant.files} of ${totalFiles} analyzed files, and freezing its bypasses records one bucket`
+          : `do: leave '${module.name}' entirely private and run archstrict todo to freeze its bypasses as debt instead`,
       ],
     });
   }
@@ -184,14 +209,14 @@ const PROVE_RULES_DO = "run archstrict simulate --json with a change set that ad
 // every detector this is used by, since none of them scope a rule by
 // module coverage, only by this one classify namespace.
 function partitionClassify(
-  declaredModules: readonly { name: string; glob: string }[],
+  declaredModules: readonly DeclaredName[],
   defaultTag: string,
   distinguishedNames: readonly string[],
   distinguishedTag: string,
 ): { glob: string; tags: string[] }[] {
   return [
     { glob: "**", tags: [defaultTag] },
-    ...distinguishedNames.map(name => ({ glob: moduleGlob(declaredModules, name), tags: [distinguishedTag] })),
+    ...distinguishedNames.flatMap(name => classifyEntries(declaredModules, name, [distinguishedTag])),
   ];
 }
 
@@ -205,7 +230,7 @@ function partitionClassify(
 function detectLayeredOrder(
   modules: readonly Module[],
   counts: ReadonlyMap<string, ReadonlyMap<string, number>>,
-  declaredModules: readonly { name: string; glob: string }[],
+  declaredModules: readonly DeclaredName[],
   baseConfig: Config,
   graph: ModuleGraph,
 ): { proposal: PatternProposal; weight: number } | undefined {
@@ -248,7 +273,7 @@ function detectLayeredOrder(
     }
   }
   const support = forward / (forward + reverse);
-  const classify = order.map(name => ({ glob: declaredModules.find(d => d.name === name)!.glob, tags: [`role:${name}`] }));
+  const classify = order.flatMap(name => classifyEntries(declaredModules, name, [`role:${name}`]));
   const because = `${forward} of ${forward + reverse} directed edges between these modules already match this order`;
   const orderRule = { tagNamespace: "role", sequence: { "": order }, direction: "downward-only" as const, because };
   const configFragment = [
@@ -288,7 +313,7 @@ function detectLayeredOrder(
 function detectLeafKernels(
   modules: readonly Module[],
   graph: ModuleGraph,
-  declaredModules: readonly { name: string; glob: string }[],
+  declaredModules: readonly DeclaredName[],
   baseConfig: Config,
 ): { proposal: PatternProposal; weight: number }[] {
   const outgoing = new Map<string, number>();
@@ -302,13 +327,13 @@ function detectLeafKernels(
   for (const module of modules) {
     const inCount = incoming.get(module.name) ?? 0;
     if (inCount === 0 || (outgoing.get(module.name) ?? 0) > 0) continue;
-    const glob = declaredModules.find(d => d.name === module.name)!.glob;
     const tag = `kind:${module.name}`;
+    const classify = classifyEntries(declaredModules, module.name, [tag]);
     const because = `'${module.name}' is imported by ${inCount} real edge(s) and imports no other declared module today`;
     const allowDenyRule = { source: tag, targetNamespace: "kind", allow: [] as string[], because };
     const proposedConfig: Config = {
       ...baseConfig,
-      classify: [...(baseConfig.classify ?? []), { glob, tags: [tag] }],
+      classify: [...(baseConfig.classify ?? []), ...classify],
       edges: { ...baseConfig.edges, allowDeny: [...(baseConfig.edges?.allowDeny ?? []), allowDenyRule] },
     };
     proposals.push({
@@ -317,7 +342,7 @@ function detectLeafKernels(
         support: 1,
         evidence: [`'${module.name}': 0 outgoing edges to another declared module; ${inCount} other module(s) import it`],
         configFragment: [
-          "classify: [", `  { glob: ${JSON.stringify(glob)}, tags: ${JSON.stringify([tag])} },`, "],",
+          "classify: [", ...classify.map(c => `  { glob: ${JSON.stringify(c.glob)}, tags: ${JSON.stringify(c.tags)} },`), "],",
           "edges: { allowDeny: [", `  { source: ${JSON.stringify(tag)}, targetNamespace: "kind", allow: [], because: ${JSON.stringify(because)} },`, "] },",
         ].join("\n"),
         addedViolations: countAddedViolations(graph, baseConfig, proposedConfig, "tag-boundary"),
@@ -371,8 +396,16 @@ function matchesAnySegment(glob: string, pattern: RegExp): boolean {
   return moduleSegments(glob).some(segment => pattern.test(segment));
 }
 
-function moduleGlob(declaredModules: readonly { name: string; glob: string }[], name: string): string {
-  return declaredModules.find(d => d.name === name)!.glob;
+function globsOf(declaredModules: readonly DeclaredName[], name: string): readonly string[] {
+  return moduleGlobList(declaredModules.find(d => d.name === name)!.glob);
+}
+
+function moduleFeatureKey(declaredModules: readonly DeclaredName[], name: string): string | undefined {
+  for (const glob of globsOf(declaredModules, name)) {
+    const key = featureContainerKey(glob);
+    if (key !== undefined) return key;
+  }
+  return undefined;
 }
 
 // Sums real cross-module edges from every member of `from` to every
@@ -419,11 +452,11 @@ const APP_SEGMENT_PATTERN = /^(app|apps|cli|cmd)$/;
 function detectAppOverLibrary(
   modules: readonly Module[],
   counts: ReadonlyMap<string, ReadonlyMap<string, number>>,
-  declaredModules: readonly { name: string; glob: string }[],
+  declaredModules: readonly DeclaredName[],
   baseConfig: Config,
   graph: ModuleGraph,
 ): { proposal: PatternProposal; weight: number } | undefined {
-  const appNames = modules.filter(m => matchesAnySegment(moduleGlob(declaredModules, m.name), APP_SEGMENT_PATTERN)).map(m => m.name);
+  const appNames = modules.filter(m => moduleMatchesSegment(declaredModules, m.name, APP_SEGMENT_PATTERN)).map(m => m.name);
   const libNames = modules.map(m => m.name).filter(n => !appNames.includes(n));
   if (appNames.length === 0 || libNames.length === 0) return undefined;
   const forward = edgesBetweenGroups(counts, appNames, libNames); // app -> library, the intended direction
@@ -486,7 +519,7 @@ const EXTERNAL_PACKAGE_PROPOSAL_CAP = 3;
 function detectExternalPackageConfined(
   modules: readonly Module[],
   graph: ModuleGraph,
-  declaredModules: readonly { name: string; glob: string }[],
+  declaredModules: readonly DeclaredName[],
   baseConfig: Config,
 ): { proposal: PatternProposal; weight: number }[] {
   if (modules.length < 2) return []; // "confined to one area" needs another area it is absent from
@@ -548,11 +581,11 @@ const TEST_SEGMENT_PATTERN = /^(tests?|__tests__|test-utils|fixtures?|mocks?|hel
 function detectTestCodeIsolation(
   modules: readonly Module[],
   counts: ReadonlyMap<string, ReadonlyMap<string, number>>,
-  declaredModules: readonly { name: string; glob: string }[],
+  declaredModules: readonly DeclaredName[],
   baseConfig: Config,
   graph: ModuleGraph,
 ): { proposal: PatternProposal; weight: number }[] {
-  const testNames = modules.filter(m => matchesAnySegment(moduleGlob(declaredModules, m.name), TEST_SEGMENT_PATTERN)).map(m => m.name);
+  const testNames = modules.filter(m => moduleMatchesSegment(declaredModules, m.name, TEST_SEGMENT_PATTERN)).map(m => m.name);
   const prodNames = modules.map(m => m.name).filter(n => !testNames.includes(n));
   if (prodNames.length === 0) return [];
   const proposals: { proposal: PatternProposal; weight: number }[] = [];
@@ -603,12 +636,12 @@ const PLUGIN_SEGMENT_PATTERN = /^(plugins?|extensions?)$/;
 function detectHostPluginInversion(
   modules: readonly Module[],
   counts: ReadonlyMap<string, ReadonlyMap<string, number>>,
-  declaredModules: readonly { name: string; glob: string }[],
+  declaredModules: readonly DeclaredName[],
   baseConfig: Config,
   graph: ModuleGraph,
 ): { proposal: PatternProposal; weight: number } | undefined {
-  const hostNames = modules.filter(m => matchesAnySegment(moduleGlob(declaredModules, m.name), HOST_SEGMENT_PATTERN)).map(m => m.name);
-  const pluginNames = modules.filter(m => matchesAnySegment(moduleGlob(declaredModules, m.name), PLUGIN_SEGMENT_PATTERN)).map(m => m.name);
+  const hostNames = modules.filter(m => moduleMatchesSegment(declaredModules, m.name, HOST_SEGMENT_PATTERN)).map(m => m.name);
+  const pluginNames = modules.filter(m => moduleMatchesSegment(declaredModules, m.name, PLUGIN_SEGMENT_PATTERN)).map(m => m.name);
   if (hostNames.length === 0 || pluginNames.length === 0) return undefined;
   const pluginToHost = edgesBetweenGroups(counts, pluginNames, hostNames);
   const hostToPlugin = edgesBetweenGroups(counts, hostNames, pluginNames);
@@ -616,8 +649,8 @@ function detectHostPluginInversion(
   const total = pluginToHost + hostToPlugin;
   const ns = freeTagNamespace(baseConfig, "kind");
   const classify = [
-    ...hostNames.map(name => ({ glob: moduleGlob(declaredModules, name), tags: [`${ns}:host`] })),
-    ...pluginNames.map(name => ({ glob: moduleGlob(declaredModules, name), tags: [`${ns}:plugin`] })),
+    ...hostNames.flatMap(name => classifyEntries(declaredModules, name, [`${ns}:host`])),
+    ...pluginNames.flatMap(name => classifyEntries(declaredModules, name, [`${ns}:plugin`])),
   ];
   const because = `plugin -> host: ${pluginToHost} edge(s); host -> plugin: ${hostToPlugin} edge(s)`;
   const allowDenyRule = { source: `${ns}:host`, targetNamespace: ns, deny: ["plugin"], because };
@@ -665,18 +698,18 @@ function featureContainerKey(glob: string): string | undefined {
 function detectFeatureIsolation(
   modules: readonly Module[],
   counts: ReadonlyMap<string, ReadonlyMap<string, number>>,
-  declaredModules: readonly { name: string; glob: string }[],
+  declaredModules: readonly DeclaredName[],
   baseConfig: Config,
   graph: ModuleGraph,
 ): { proposal: PatternProposal; weight: number }[] {
   const groups = new Map<string, string[]>();
   for (const module of modules) {
-    const key = featureContainerKey(moduleGlob(declaredModules, module.name));
+    const key = moduleFeatureKey(declaredModules, module.name);
     if (key === undefined) continue;
     (groups.get(key) ?? groups.set(key, []).get(key)!).push(module.name);
   }
-  const kernelNames = modules.filter(m => matchesAnySegment(moduleGlob(declaredModules, m.name), KERNEL_SEGMENT_PATTERN)
-    && featureContainerKey(moduleGlob(declaredModules, m.name)) === undefined).map(m => m.name);
+  const kernelNames = modules.filter(m => moduleMatchesSegment(declaredModules, m.name, KERNEL_SEGMENT_PATTERN)
+    && moduleFeatureKey(declaredModules, m.name) === undefined).map(m => m.name);
   const proposals: { proposal: PatternProposal; weight: number }[] = [];
   for (const [, featureNames] of groups) {
     if (featureNames.length < 2 || kernelNames.length === 0) continue;
@@ -689,8 +722,8 @@ function detectFeatureIsolation(
     const featureNs = freeTagNamespace(baseConfig, "feature");
     const kernelNs = freeTagNamespace(baseConfig, "kind");
     const classify = [
-      ...featureNames.map(name => ({ glob: moduleGlob(declaredModules, name), tags: [`${featureNs}:${name}`] })),
-      { glob: moduleGlob(declaredModules, kernelName), tags: [`${kernelNs}:shared`] },
+      ...featureNames.flatMap(name => classifyEntries(declaredModules, name, [`${featureNs}:${name}`])),
+      ...classifyEntries(declaredModules, kernelName, [`${kernelNs}:shared`]),
     ];
     const because = `features -> kernel ('${kernelName}'): ${featureToKernel} edge(s); features -> each other: ${crossFeature} edge(s)`;
     const allowDenyRules = featureNames.map(name => ({ source: `${featureNs}:${name}`, targetNamespace: featureNs, allow: [] as string[], because }));
@@ -749,7 +782,7 @@ function detectPatterns(
   modules: readonly Module[],
   graph: ModuleGraph,
   counts: ReadonlyMap<string, ReadonlyMap<string, number>>,
-  declaredModules: readonly { name: string; glob: string }[],
+  declaredModules: readonly DeclaredName[],
   baseConfig: Config,
   surfaceProposals: readonly SurfaceProposal[],
 ): PatternProposal[] {
@@ -800,6 +833,7 @@ export async function recommend(
     counts.set(edge.fromModule, targets);
   }
   const surfaceProposals = proposeSurfaces(graph);
+  const mapNotes = mapNotesFor(projectRoot, modules);
   // A placeholder Config for the no-config path (freshRun's own plan, not
   // a file on disk): detectPatterns only ever reads classify/edges/because
   // off it and passes it straight to runRules, which needs a well-formed
@@ -808,7 +842,8 @@ export async function recommend(
   const detected = detectPatterns(modules, graph, counts, declaredModules, baseConfig, surfaceProposals);
   return {
     modules: modules.length,
-    proposedClassify: modules.map(module => ({ glob: declaredModules.find(d => d.name === module.name)!.glob, tags: [`role:${module.name}`] })),
+    mapNotes,
+    proposedClassify: modules.flatMap(module => classifyEntries(declaredModules, module.name, [`role:${module.name}`])),
     detected: detected.length,
     patternProposals: detected.slice(0, PATTERN_PROPOSAL_CAP),
     surfaceProposals,
@@ -823,6 +858,40 @@ export async function recommend(
 // project with dozens of modules must not turn one `recommend` run's own
 // text into hundreds of lines; `--json` always carries every module,
 // every candidate, every name.
+function fileModuleParent(projectRoot: string, module: Module): string {
+  const rel = relative(projectRoot, module.dir).split(sep).join("/");
+  const slash = rel.lastIndexOf("/");
+  return slash === -1 ? "." : rel.slice(0, slash);
+}
+
+function mapNotesFor(projectRoot: string, modules: readonly Module[]): MapNote[] {
+  const notes: MapNote[] = [];
+  const dominant = dominantByFiles(modules.map((module) => ({ name: module.name, files: module.files.length })));
+  if (dominant !== undefined) {
+    notes.push({
+      kind: "mega-module",
+      evidence: `'${dominant.name}' holds ${dominant.files} of ${dominant.totalFiles} analyzed files. Hotspots and a frozen bypass list then collapse into one bucket.`,
+      do: `split '${dominant.name}' into directories that change together before archstrict todo, and add an edges rule so import direction is checked`,
+    });
+  }
+  // A directory that holds one file is still a directory seam, not a
+  // file-per-module inventory. Only rootIsFile modules count as singles.
+  const cluster = filePerModuleCluster(modules.map((module) => ({
+    files: module.rootIsFile ? 1 : 0,
+    parent: fileModuleParent(projectRoot, module),
+  })));
+  if (cluster !== undefined) {
+    const where = cluster.parent === "." ? "the project root" : `'${cluster.parent}'`;
+    const sampleDir = cluster.parent === "." ? "" : `${cluster.parent}/`;
+    notes.push({
+      kind: "file-per-module",
+      evidence: `${cluster.count} of ${cluster.total} modules are single files under ${where}. Each file is public as itself, so an import between them is checked, but no growth seam is named.`,
+      do: `group files that change together into one module, for example { name: "seam", glob: ["${sampleDir}a.ts", "${sampleDir}b.ts"], surface: "a.ts" }, then add an edges rule. archstrict hotspots shows which files change together once history exists`,
+    });
+  }
+  return notes;
+}
+
 const TEXT_LIST_CAP = 5;
 
 // Truncates a comma-separated list to its first `TEXT_LIST_CAP` items,
@@ -875,6 +944,14 @@ export function formatRecommendText(result: RecommendResult): string {
   const shownSurfaceProposals = result.surfaceProposals.slice(0, TEXT_LIST_CAP);
   return [
     `${result.modules} modules; ${result.detected} pattern(s) detected, ${result.patternProposals.length} shown`,
+    ...(result.mapNotes.length === 0 ? [] : [
+      "",
+      "map:",
+      ...result.mapNotes.flatMap(note => [
+        `  ${note.kind}: ${note.evidence}`,
+        `  do: ${note.do}`,
+      ]),
+    ]),
     ...(result.patternProposals.length === 0 ? [] : [
       "", "pattern proposals, ranked by evidence:",
       ...result.patternProposals.flatMap(proposal => [
@@ -892,12 +969,13 @@ export function formatRecommendText(result: RecommendResult): string {
       // proposeSurfaces's own `choices`, still complete in JSON).
       "  do: set { name, ..., surface: [...] } in declaredModules, per module below, to retire its listed bypasses",
       "  do: or add a barrel file re-exporting from a chosen entry file, and name that as the module's surface instead",
-      "  do: or leave a module entirely private and run archstrict todo to freeze its bypasses as debt instead",
+      "  do: or leave a small module entirely private and run archstrict todo; split a module that holds most of the files before freezing it",
       ...shownSurfaceProposals.flatMap(proposal => [
         `  ${proposal.module}: ${quote(proposal.proposedSurface)} covers ${proposal.coveredImports} of ${proposal.totalImports} bypasses, ${proposal.remainingImports} remaining`,
         ...proposal.candidates.slice(0, SURFACE_CANDIDATE_TEXT_CAP).map(c => `    ${c.file} (${c.importers} importer(s))`),
         ...(proposal.candidates.length > SURFACE_CANDIDATE_TEXT_CAP ? [`    ... ${proposal.candidates.length - SURFACE_CANDIDATE_TEXT_CAP} more candidate(s); see --json`] : []),
         `  ${proposal.choices[0]}`,
+        ...(proposal.choices[2]?.startsWith("do: split ") ? [`  ${proposal.choices[2]}`] : []),
       ]),
       ...(result.surfaceProposals.length > TEXT_LIST_CAP ? [`  ... ${result.surfaceProposals.length - TEXT_LIST_CAP} more surface-less module(s); see --json`] : []),
     ]),

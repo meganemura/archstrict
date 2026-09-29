@@ -29,7 +29,38 @@ Simulating the move first shows no new cycle. The move applies in one step: crea
 
 Measured result: frozen debt went from 444 to 428, and the CLI's fan-in went from 6 to 3. A later `archstrict hotspots` run shows the extracted module's own fan-in at 4 and fan-out at 0, confirming the dependency moved with the code instead of merely being renamed.
 
+## Cuts that kept the signal
+
+These are placements that showed up once a real import graph was drawn.
+They are examples to copy when the same shape is in the tree, and they
+are not presets.
+
+**Peel the CLI and the MCP server above the verbs.** A command-line entry
+and an MCP server call into check, todo, and the other verbs. If a verb
+imports the CLI (to reuse a flag parser, a printer, a process exit), the
+two modules cycle. Keep the verbs free of the CLI. The CLI imports the
+verbs. The same cut applies to an MCP server that is only a transport
+over those verbs.
+
+**A helper the graph calls sits with the graph.** Rule 6 walks types from
+a module surface. The module graph builds the program that walk needs, so
+the graph calls the helper. Placing that helper in the rules package
+makes the graph import the rules, and a rule that imports the graph then
+cycles. A type the graph and the rules both return (a violation, a leak
+finding) lives where the graph can import it without the rules importing
+it back. After the cut, hotspots may still show the graph and the verbs
+changing together. That pair is the API: the verbs are the callers. Read
+it as the boundary working, and split it only when a second caller needs
+a smaller surface.
+
+**A frozen bypass list against one module is a bucket.** If `check` or
+`todo` says one module holds most of the files and most of the
+public-surface bypasses, splitting that module is the move. Freezing the
+list records the bucket and `hotspots` then has one score to show.
+
 ## Pitfalls
 
+- **A mega-module makes hotspots one number.** One module over the whole tree (or one directory that holds almost every file) scores every commit against one fan-in. Split it into the directories that change for different reasons before reading the score as a seam.
+- **File-per-module is coverage.** Each file is public as itself. Group the files that change together with a `glob` array in a flat directory, or move them into a directory, and give the group one surface. Then add an `edges` rule.
 - **A move can expose a hidden cycle.** One planned move was moving a single file out of a hot module and behind a new surface. The file's own imports looked ordinary: type-only dependencies on two modules, and one value import from a third. Simulating the full change set reported a new cycle fingerprint the move would create: one of the file's own dependencies already imported services back from a module the move would newly route through. `archstrict simulate` found that fingerprint before any file changed, so step 6 caught it ahead of step 7. The move waited for a fix to the exposed cycle.
 - **Breaking a cycle can require injecting a dependency first.** In a separate case, two modules depended on each other in both directions: one called a lookup function owned by the other, and the other separately imported a cleanup function the first module owned. The fix moved zero files. The function on the calling side took the data it needed as a parameter from its own caller, which already had that data on hand. The cleanup function moved to the module that already owned the resource it cleaned up. That change alone turned four frozen entries stale; `archstrict todo` pruned all four and added none, taking frozen debt from 428 to 424, before the originally planned move even started.

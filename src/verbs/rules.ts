@@ -85,7 +85,7 @@ function uncoveredViolationForQuery(
   module: string | undefined,
   excluded: boolean,
   graph: ModuleGraph,
-  config: { declaredModules?: readonly { name: string; glob: string }[] },
+  config: { declaredModules?: readonly { name: string; glob: string | readonly string[] }[] },
 ): UncoveredViolation | undefined {
   if (excluded) return undefined;
   const isUncovered = exists ? graph.outsideFiles.includes(resolvedPath) : module === undefined;

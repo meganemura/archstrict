@@ -137,7 +137,7 @@ describe("loadConfig", () => {
     {
       label: "an entry with a non-string glob",
       declaredModules: `[{ name: "app", glob: 5 }]`,
-      message: "field 'declaredModules[0].glob' must be a string, not number",
+      message: "field 'declaredModules[0].glob' must be a string or a non-empty array of strings, not number",
     },
   ])("declaredModules shape: $label", ({ declaredModules, message }) => {
     test("loadConfig throws a ReportError naming the config path and the problem, with a do: to run archstrict check", async () => {

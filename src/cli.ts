@@ -115,7 +115,10 @@ async function runTodo(args: string[]): Promise<number> {
   } else {
     process.stdout.write(`pruned ${result.pruned} stale entrie(s)\n`);
   }
-  process.stdout.write(`do: archstrict check\n`);
+  for (const note of result.notes ?? []) process.stdout.write(`note: ${note}\n`);
+  process.stdout.write(result.notes !== undefined && result.notes.length > 0
+    ? `do: split the module named above before treating this freeze as done\n`
+    : `do: archstrict check\n`);
   return 0;
 }
 

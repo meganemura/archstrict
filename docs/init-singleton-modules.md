@@ -82,10 +82,15 @@ rules read production code) right beside the pattern it excluded.
 ## Zero-directory and zero-candidate cases
 
 A container holding only loose files (no directories at all) still
-declares one module per file; `init` prints one extra line, naming the
-alternative (checking the whole container as one module instead) without
-writing it - that shape stays a hand-edit, since a `do:` line names one
-action, not a menu.
+declares one module per file. `init` prints a line saying each file is
+public as itself, and that grouping files which change together is a
+`glob` array of those paths with one `surface`. One module over the whole
+container hides which seams move, so the line does not recommend that
+shape. `archstrict init .` can still declare the container as one
+directory module, for a caller who asks for that walk. The `do:` line
+stays `archstrict check`, one action. Every fresh run also prints that
+the map is an inventory: name seams, then add an `edges` rule.
+`archstrict recommend` proposes both.
 
 A project with no analyzed source file anywhere - under the seeded
 exclude - has nothing for `init` to declare. It writes neither file and

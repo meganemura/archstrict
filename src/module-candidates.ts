@@ -12,7 +12,7 @@
 // caller (init's own walk, or a config-vs-graph consistency check) already
 // decided that and hands this module the resulting file list, anchor set,
 // and the config's own declaredModules (for the `taken`-name check).
-import { moduleGlobBaseDir } from "./module-graph.js";
+import { moduleGlobBaseDir, moduleGlobList } from "./module-graph.js";
 
 // A file's project-relative path, POSIX-separated - the same shape
 // module-graph.ts's toProjectRelativePosix produces.
@@ -129,18 +129,25 @@ export function declaredModuleEntryText(entry: DeclaredModuleEntry): string {
 // as `taken` names. Anchors are the project root plus the parent directory
 // of each existing entry's own glob base - the same depth a fresh init
 // itself would have grouped that entry at, computed by string ops alone
-// (moduleGlobBaseDir already strips the glob down to its literal prefix;
-// only its own parent directory is needed here, not whether that prefix
-// names a real file or directory on disk).
+// (moduleGlobBaseDir strips the glob down to its literal prefix; only
+// that prefix's parent directory is the anchor, and a file list
+// contributes one anchor per path).
 export function suggestUncovered(
   uncoveredRelFiles: readonly string[],
-  declaredModules: readonly { name: string; glob: string }[],
+  declaredModules: readonly { name: string; glob: string | readonly string[] }[],
 ): NamedCandidateGroup[] {
   const anchors = new Set<string>([""]);
   for (const dm of declaredModules) {
-    const base = moduleGlobBaseDir(dm.glob);
-    const slash = base.lastIndexOf("/");
-    anchors.add(slash === -1 ? "" : base.slice(0, slash));
+    // The parent of each glob's literal base, the same depth a fresh init
+    // groups at. A directory glob `src/app/**` anchors at `src`, so a
+    // sibling directory is its own group. A file glob `src/sqlite.ts`
+    // anchors at `src`, so the file itself is a file group. A file list
+    // anchors at the shared directory, once per path.
+    for (const glob of moduleGlobList(dm.glob)) {
+      const base = moduleGlobBaseDir(glob);
+      const slash = base.lastIndexOf("/");
+      anchors.add(slash === -1 ? "" : base.slice(0, slash));
+    }
   }
   const taken = new Set(declaredModules.map((dm) => dm.name));
   return nameCandidates(groupAnalyzedFiles(uncoveredRelFiles, [...anchors]), taken);

@@ -48,7 +48,7 @@ The edit hooks are Claude Code only. For any other agent, use three pieces:
    gh skill install meganemura/archstrict archstrict --agent cursor
    ```
 
-   The default scope is the project: Cursor, Codex, and several other agents share `.agents/skills/archstrict/`. Add `--scope user` to install it in your home directory instead.
+   Install it once for the user, with `--scope user`, so the skill is not copied into every repository. The default scope is the project: Cursor, Codex, and several other agents share `.agents/skills/archstrict/`. `archstrict agents` (the next step) is the per-project `AGENTS.md` section. It is a few lines of commands, and it is not a second copy of the skill.
 
 2. Add the AGENTS.md section:
 
@@ -71,7 +71,7 @@ npx archstrict init
 npx archstrict check
 ```
 
-`init` writes `archstrict.config.ts` when that file is absent, and writes `archstrict.types.ts`, the module-name union. On a fresh project it declares one module per top-level directory that holds TypeScript source (`.ts`, `.tsx`, `.mts`, `.cts`), and one module per loose top-level source file, both inside the opened container and at the project root. The container is `src/` when that directory holds source, and the project root when `src/` is absent or holds none. A later run leaves a hand-edited config in place and only regenerates `archstrict.types.ts` from `declaredModules`.
+`init` writes `archstrict.config.ts` when that file is absent, and writes `archstrict.types.ts`, the module-name union. On a fresh project it declares one module per top-level directory that holds TypeScript source (`.ts`, `.tsx`, `.mts`, `.cts`), and one module per loose top-level source file, both inside the opened container and at the project root. The container is `src/` when that directory holds source, and the project root when `src/` is absent or holds none. That map covers every analyzed file. It does not yet name growth seams or check import direction. Run `npx archstrict recommend` next, group files that change together, and add an `edges` rule before treating the check as a finished architecture. A later run leaves a hand-edited config in place and only regenerates `archstrict.types.ts` from `declaredModules`.
 
 `check` analyzes the project and prints each violation with a rule id, `path:line:col`, the evidence, a `because` reason, and a `do:` command.
 

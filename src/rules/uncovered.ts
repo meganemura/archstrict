@@ -70,7 +70,7 @@ export function uncoveredViolationFor(file: string, rootDir: string, group: Name
 // own comment documents.
 export function checkUncoveredModules(
   graph: ModuleGraph,
-  config: { declaredModules?: readonly { name: string; glob: string }[] },
+  config: { declaredModules?: readonly { name: string; glob: string | readonly string[] }[] },
   focus?: string,
 ): Violation[] {
   const relFiles = graph.outsideFiles.map(graph.relativePath);

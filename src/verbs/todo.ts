@@ -24,6 +24,7 @@ import {
 } from "../todo-store.js";
 import { deleteLegacyTodoFiles, readLegacyTodoState } from "../todo-migration.js";
 import { loadConfig, runRules, type AnyViolation } from "./check.js";
+import { dominantBypassModule, dominantBypassSentence } from "../map-shape.js";
 
 // Only a violation with its own todoModule can be frozen: rule 1 (public-
 // surface bypass), rule 2 (cycles), rule 6 (type-leak), and rule 7 (the
@@ -45,6 +46,10 @@ export type TodoResult = {
   firstRun: boolean;
   added: number;
   pruned: number;
+  // Set when the violations being frozen (or already frozen) are mostly
+  // surface bypasses of one module that also holds most of the files.
+  // Absent otherwise, so a small project's JSON stays the three counts.
+  notes?: string[];
 };
 
 // An uncovered-module violation has no todoModule (module-graph.ts's
@@ -181,7 +186,24 @@ export function freezeOrPrune(
   writeTodoFile(rootDir, nextByModule);
   if (legacy !== undefined) deleteLegacyTodoFiles(legacy.filesToDelete);
 
-  return { firstRun, added, pruned };
+  const bypassesByModule = new Map<string, number>();
+  for (const violation of violations) {
+    if (violation.rule !== "public-surface-bypass" || !("todoModule" in violation)) continue;
+    bypassesByModule.set(violation.todoModule, (bypassesByModule.get(violation.todoModule) ?? 0) + 1);
+  }
+  const dominant = dominantBypassModule(
+    [...graph.modules.values()].map((module) => ({ name: module.name, files: module.files.length })),
+    bypassesByModule,
+  );
+  if (dominant === undefined) return { firstRun, added, pruned };
+  return {
+    firstRun,
+    added,
+    pruned,
+    notes: [
+      `${dominantBypassSentence(dominant)}. Freezing them records one bucket. Split '${dominant.name}' into directories that change together before treating this freeze as done.`,
+    ],
+  };
 }
 
 export async function todo(projectRoot: string): Promise<TodoResult> {

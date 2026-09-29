@@ -54,6 +54,7 @@ import { existsSync, readFileSync, readdirSync, realpathSync, statSync, type Dir
 import { dirname, join, relative, sep } from "node:path";
 import { builtinModules } from "node:module";
 import { compileGlob, mostSpecificMatch } from "./classify.js";
+import { ReportError } from "./report-error.js";
 import { buildTypeClosure, computeSyntacticNamedDeclarations, type TypeClosureInputs } from "./type-closure.js";
 import { checkTypeLeaks, type Violation as TypeLeakViolation } from "./type-leak.js";
 import { makeProjectRelativePosix, type ProjectRelativePath } from "./project-path.js";
@@ -128,6 +129,12 @@ export type Module = {
   // True when `dir` is a file. Rules that phrase a fix as "add a file to
   // <module>/" must not assume a directory in that case.
   rootIsFile: boolean;
+  // Type-leak's boundary roots. A directory module and a single-file
+  // module each have one, equal to `dir`. A multi-file module's `dir` is
+  // the shared parent, and widening the boundary to that parent would
+  // count every sibling file as internal; each glob's own file or
+  // directory is a root instead.
+  boundaryRoots: readonly string[];
   files: string[];
   // The module's public surface: the files other modules may import from.
   // `surface` is itself a glob, so this can be more than one file (Prisma's
@@ -159,9 +166,16 @@ export type Module = {
 // is a glob resolved relative to `glob`'s own literal base directory
 // (moduleGlobBaseDir below), not the project root - so it names a file
 // relative to the module's own directory.
+// One glob, or several file paths (or globs) that share one directory.
+// An array is how a flat directory names a seam without a directory
+// move: `{ glob: ["src/build/plan.ts", "src/build/graph.ts"] }` is one
+// module. Brace expansion is not a glob. Paths in different directories
+// are rejected; each directory stays its own entry.
+export type ModuleGlob = string | readonly string[];
+
 export type DeclaredModule = {
   name: string;
-  glob: string;
+  glob: ModuleGlob;
   // A single glob, or several - a real package can publish more than one
   // real, differently-shaped public entry point at once (a package.json
   // `exports` map naming several real paths, not just its default `main`).
@@ -323,6 +337,68 @@ export function moduleGlobBaseDir(glob: string): string {
   return prefix.replace(/\/+$/, "");
 }
 
+export function moduleGlobList(glob: string | readonly string[]): readonly string[] {
+  return typeof glob === "string" ? [glob] : glob;
+}
+
+// The directory a surface or friend path resolves against. A directory
+// glob's own base (`src/build/**` -> `src/build`). A file glob's parent
+// (`src/build/plan.ts` -> `src/build`), so several files in one flat
+// directory share it. Syntactic: it does not look at the disk, because a
+// file the change set has not written yet still belongs to that directory.
+export function globResolutionDir(glob: string): string {
+  const base = moduleGlobBaseDir(glob);
+  if (glob.includes("*")) return base;
+  const slash = base.lastIndexOf("/");
+  return slash === -1 ? "" : base.slice(0, slash);
+}
+
+// The shared resolution directory, or undefined when the list is empty or
+// the globs name more than one directory. One directory per entry is the
+// rule: a module that spans directories is several entries.
+export function sharedGlobResolutionDir(glob: string | readonly string[]): string | undefined {
+  const globs = moduleGlobList(glob);
+  if (globs.length === 0) return undefined;
+  const dir = globResolutionDir(globs[0]!);
+  for (const entry of globs) {
+    if (globResolutionDir(entry) !== dir) return undefined;
+  }
+  return dir;
+}
+
+export function declaredModuleMembership(
+  declaredModules: readonly DeclaredModule[],
+): { glob: string; value: string }[] {
+  return declaredModules.flatMap((dm) => moduleGlobList(dm.glob).map((glob) => ({ glob, value: dm.name })));
+}
+
+function joinPosix(dir: string, relativePath: string): string {
+  const joined = dir === "" ? relativePath : `${dir}/${relativePath}`;
+  return joined.replace(/\/{2,}/g, "/").replace(/^\//, "");
+}
+
+// A single glob keeps today's file-or-directory root. Several globs must
+// share one resolution directory; the caller uses that directory for
+// surface and friends, and each glob's own base as a type-leak root.
+function moduleGlobShape(dm: DeclaredModule): { kind: "single"; glob: string } | { kind: "many"; dir: string; globs: readonly string[] } {
+  const globs = moduleGlobList(dm.glob);
+  if (globs.length === 0) {
+    throw new ReportError(
+      `declared module '${dm.name}' has an empty glob list`,
+      `give '${dm.name}' a glob string or a non-empty array of paths in one directory, in archstrict.config.ts, then run archstrict check`,
+    );
+  }
+  if (globs.length === 1) return { kind: "single", glob: globs[0]! };
+  const dir = sharedGlobResolutionDir(dm.glob);
+  if (dir === undefined) {
+    throw new ReportError(
+      `declared module '${dm.name}' lists globs that do not share one directory`,
+      `list only files in one directory, or use one declaredModules entry per directory, in archstrict.config.ts, then run archstrict check`,
+    );
+  }
+  return { kind: "many", dir, globs };
+}
+
 function pathIsFile(path: string): boolean {
   try {
     return statSync(path).isFile();
@@ -418,10 +494,20 @@ export function surfaceGlobsFor(
   // one here so a change set's own new file classifies correctly.
   fileExists: (path: string) => boolean = pathIsFile,
 ): string[] {
-  const moduleDir = join(projectRoot, moduleGlobBaseDir(dm.glob));
+  const shape = moduleGlobShape(dm);
+  // A file list does not derive a surface from a package.json sitting in
+  // the shared directory. That derivation belongs to a directory module,
+  // whose glob is one directory. A seam lists its surface by hand, or
+  // takes the project default (index.ts in that directory).
+  if (shape.kind === "many") {
+    const surface = dm.surface ?? globalDefaultSurface;
+    const entries = Array.isArray(surface) ? surface : [surface as string];
+    return entries.map((s) => joinPosix(shape.dir, s));
+  }
+  const moduleDir = join(projectRoot, moduleGlobBaseDir(shape.glob));
   const surface = effectiveSurface(dm, moduleDir, globalDefaultSurface);
   const entries = Array.isArray(surface) ? surface : [surface as string];
-  return entries.map((s) => moduleRelativeGlob(projectRoot, dm.glob, s, fileExists));
+  return entries.map((s) => moduleRelativeGlob(projectRoot, shape.glob, s, fileExists));
 }
 
 function surfaceGlobsAllowingDts(
@@ -852,7 +938,7 @@ function walkProjectTree(
 // keeps a gitignored path at or under one, since declaring a module there
 // is the project's explicit request to analyze it.
 function declaredBasesOf(declaredModules: readonly DeclaredModule[]): string[] {
-  return declaredModules.map((dm) => moduleGlobBaseDir(dm.glob));
+  return declaredModules.flatMap((dm) => moduleGlobList(dm.glob).map(moduleGlobBaseDir));
 }
 
 export function listAnalyzedFiles(
@@ -942,21 +1028,30 @@ function buildDeclaredModules(
   // for a proposed file the same way it already is for one that exists.
   const allFilesSet = new Set(allFiles);
   const existsForClassification = (path: string) => allFilesSet.has(path) || pathIsFile(path);
-  const membership = declaredModules.map((dm) => ({ glob: dm.glob, value: dm.name }));
+  const membership = declaredModuleMembership(declaredModules);
   const modules = new Map<string, Module>(
     declaredModules.map((dm): [string, Module] => {
-      const dir = join(projectRoot, moduleGlobBaseDir(dm.glob));
+      const shape = moduleGlobShape(dm);
+      const dir = join(projectRoot, shape.kind === "single" ? moduleGlobBaseDir(shape.glob) : shape.dir);
+      const boundaryRoots = shape.kind === "single"
+        ? [dir]
+        : shape.globs.map((glob) => join(projectRoot, moduleGlobBaseDir(glob)));
       return [
         dm.name,
         {
           name: dm.name,
           dir,
-          rootIsFile: existsForClassification(dir),
+          rootIsFile: shape.kind === "single" && existsForClassification(dir),
+          boundaryRoots,
           files: [],
           surfaceFiles: [],
-          surfaceName: effectiveSurface(dm, dir, globalDefaultSurface),
+          surfaceName: shape.kind === "single"
+            ? effectiveSurface(dm, dir, globalDefaultSurface)
+            : (dm.surface ?? globalDefaultSurface),
           friends: (dm.friends ?? []).map((f) => ({
-            fileGlob: moduleRelativeGlob(projectRoot, dm.glob, f.file, existsForClassification),
+            fileGlob: shape.kind === "single"
+              ? moduleRelativeGlob(projectRoot, shape.glob, f.file, existsForClassification)
+              : joinPosix(shape.dir, f.file),
             from: f.from,
             because: f.because,
           })),
@@ -1001,7 +1096,7 @@ export function moduleForDeclaredFile(
   const rel = toProjectRelativePosix(filePath, projectRoot);
   return mostSpecificMatch(
     rel,
-    declaredModules.map((dm) => ({ glob: dm.glob, value: dm.name })),
+    declaredModuleMembership(declaredModules),
     (a, b) => a === b,
   );
 }
@@ -1153,7 +1248,7 @@ export function prepareGraph(options: BuildOptions) {
   // answer. Safe for the lifetime of one prepareGraph call: projectRoot
   // and declaredModules are both fixed for that call.
   const moduleForFileCache = new Map<string, string | undefined>();
-  const membership = declaredModules.map((dm) => ({ glob: dm.glob, value: dm.name }));
+  const membership = declaredModuleMembership(declaredModules);
   const resolveModuleForFile = (filePath: string) => {
     if (moduleForFileCache.has(filePath)) return moduleForFileCache.get(filePath);
     const result = mostSpecificMatch(
@@ -2145,7 +2240,7 @@ const TYPESCRIPT_VERSION: string = ts.version;
 
 function cacheMetadata(projectRoot: string, options: BuildOptions): Record<string, number | null> {
   const packages = [join(projectRoot, "package.json"), ...options.declaredModules
-    .map((dm) => join(projectRoot, moduleGlobBaseDir(dm.glob), "package.json"))];
+    .flatMap((dm) => moduleGlobList(dm.glob).map((glob) => join(projectRoot, moduleGlobBaseDir(glob), "package.json")))];
   const lock = ["package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lock"]
     .map((name) => join(projectRoot, name)).find((path) => existsSync(path));
   if (lock !== undefined) packages.push(lock);

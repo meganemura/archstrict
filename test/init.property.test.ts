@@ -19,6 +19,7 @@ import {
   listAnalyzedFiles,
   moduleForDeclaredFile,
   moduleGlobBaseDir,
+  moduleGlobList,
   toProjectRelativePosix,
   type ModuleGraph,
 } from "../src/module-graph.js";
@@ -184,7 +185,7 @@ describe("init (property)", () => {
         assert.ok(files.length > 0);
         for (const file of files) {
           const rel = toProjectRelativePosix(file, root);
-          const matches = declaredModules.filter((dm) => compileGlob(dm.glob).test(rel));
+          const matches = declaredModules.filter((dm) => moduleGlobList(dm.glob).some((glob) => compileGlob(glob).test(rel)));
           assert.equal(matches.length, 1, `expected exactly one glob match for ${rel}, got ${matches.length}`);
           assert.notEqual(moduleForDeclaredFile(file, root, declaredModules), undefined);
         }
@@ -217,7 +218,7 @@ describe("init (property)", () => {
       await withTree(tree, async (root) => {
         const config = await init(root).then(() => loadConfig(join(root, "archstrict.config.ts")));
         for (const dm of config.declaredModules!) {
-          assert.notEqual(moduleGlobBaseDir(dm.glob), "");
+          for (const glob of moduleGlobList(dm.glob)) assert.notEqual(moduleGlobBaseDir(glob), "");
         }
       });
     });

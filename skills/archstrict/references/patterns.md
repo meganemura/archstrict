@@ -734,6 +734,38 @@ shared tag value covers every area at once. Give each area a genuinely
 different tag only when the root's own rule must distinguish between
 them.
 
+## Flat directory seam
+
+**Recognize it.** A directory that stays flat because a move is off the
+table: `src/build/plan.ts`, `src/build/graph.ts`, and `src/build/emit.ts`
+sit side by side, and two of them change together while the third does
+not. One module per file makes each file public as itself. One module
+over `src/build/**` makes every file in the directory private-or-public
+together and hides the seam.
+
+**Config.** `glob` is an array of paths in that one directory. `surface`
+names the file other modules may import. `friends` names a file that one
+caller may still reach.
+
+```ts
+declaredModules: [
+  {
+    name: "plan",
+    glob: ["src/build/plan.ts", "src/build/graph.ts"],
+    surface: "plan.ts",
+    friends: [
+      { file: "graph.ts", from: "src/cli/main.ts", because: "the CLI reads the plan graph while it is built" },
+    ],
+  },
+  { name: "emit.ts", glob: "src/build/emit.ts", surface: "emit.ts" },
+],
+```
+
+`plan.ts` is public. `graph.ts` is public only to `src/cli/main.ts`.
+`emit.ts` is its own module. The type-leak boundary of `plan` is those
+two files, so a type declared in `emit.ts` is outside it. Paths in two
+directories are a config error. See [config.md](config.md).
+
 ## Friend list
 
 No category for this in the tool-search survey; 1 of 48 repositories in the

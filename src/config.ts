@@ -93,7 +93,10 @@ export type Config = {
   // surface can be more than one file.
   declaredModules?: readonly {
     name: string;
-    glob: string;
+    // One glob, or several paths that share one directory. An array names
+    // a seam inside a flat directory without moving files. Paths in
+    // different directories are a config error; use one entry per directory.
+    glob: string | readonly string[];
     // A single glob, or several - a real package can publish more than
     // one real, differently-shaped public entry point at once (a
     // package.json `exports` map naming several real paths, not just its
@@ -360,7 +363,14 @@ export function assertGlobsSupported(config: Config, verb: string): void {
     assertGlobSupported(configPath, `mustBeEmpty[${i}].glob`, entry?.glob, verb);
   }
   for (const [i, mod] of (config.declaredModules ?? []).entries()) {
-    assertGlobSupported(configPath, `declaredModules[${i}].glob`, mod?.glob, verb);
+    const glob = mod?.glob;
+    if (Array.isArray(glob)) {
+      for (const [j, entry] of glob.entries()) {
+        assertGlobSupported(configPath, `declaredModules[${i}].glob[${j}]`, entry, verb);
+      }
+    } else {
+      assertGlobSupported(configPath, `declaredModules[${i}].glob`, glob, verb);
+    }
     const surface = mod?.surface;
     if (Array.isArray(surface)) {
       for (const [j, s] of surface.entries()) {

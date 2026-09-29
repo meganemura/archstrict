@@ -7,7 +7,8 @@
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { resolve, sep } from "node:path";
 import ts from "typescript";
-import { buildModuleGraphForRules, type ModuleGraph, type BuildOptions } from "../module-graph.js";
+import { buildModuleGraphForRules, globResolutionDir, type ModuleGraph, type BuildOptions } from "../module-graph.js";
+import { dominantBypassModule, dominantBypassSentence, type DominantBypass } from "../map-shape.js";
 import { assertEdgesShapeValid, assertGlobsSupported, assertSchemaVersion, describeShape, type Config } from "../config.js";
 import { ReportError } from "../report-error.js";
 import { checkPublicSurfaceBypass, type Violation as PublicSurfaceViolation } from "../rules/public-surface.js";
@@ -193,6 +194,11 @@ export type CheckResult = {
   // past it. Left out of `check <file>`, which the edit hook runs after
   // every edit, where the same advice would repeat without end.
   nextSteps?: { summary: string; do: string[] };
+  // Set on a whole-project check when one module holds most analyzed files
+  // and most public-surface-bypass violations, including ones a todo file
+  // would suppress. Freezing that set records one bucket. Absent otherwise,
+  // and absent from `check <file>`, which the edit hook repeats.
+  dominantModule?: DominantBypass;
 };
 
 export const NO_EDGES_SUMMARY =
@@ -334,12 +340,19 @@ function assertDeclaredModulesShapeValid(configPath: string, raw: object, verb: 
       );
     }
     const glob = (entry as { glob?: unknown }).glob;
-    if (typeof glob !== "string") {
+    if (typeof glob === "string") return;
+    if (Array.isArray(glob) && glob.length > 0 && glob.every((item) => typeof item === "string" && item.length > 0)) {
+      const dir = globResolutionDir(glob[0] as string);
+      if (glob.every((item) => globResolutionDir(item as string) === dir)) return;
       throw new ReportError(
-        `${configPath} field 'declaredModules[${i}].glob' must be a string, not ${describeShape(glob)}`,
-        `give 'declaredModules[${i}]' a string 'glob' in ${configPath}, then run ${verb}`,
+        `${configPath} field 'declaredModules[${i}].glob' lists paths that do not share one directory`,
+        `list only files in one directory, or use one declaredModules entry per directory, in ${configPath}, then run ${verb}`,
       );
     }
+    throw new ReportError(
+      `${configPath} field 'declaredModules[${i}].glob' must be a string or a non-empty array of strings, not ${describeShape(glob)}`,
+      `give 'declaredModules[${i}]' a string 'glob', or an array of file paths in one directory, in ${configPath}, then run ${verb}`,
+    );
   });
 }
 
@@ -1060,6 +1073,20 @@ export async function check(projectRoot: string, focusFile?: string, options: Ch
   if (focusFile === undefined && !hasEdgesRule(config)) {
     focused.nextSteps = { summary: NO_EDGES_SUMMARY, do: [...NO_EDGES_DO] };
   }
+  // Count bypasses before todo suppression, so a project that already froze
+  // the mega-module still hears that the freeze recorded one bucket.
+  if (focusFile === undefined) {
+    const bypassesByModule = new Map<string, number>();
+    for (const violation of evaluated.violations) {
+      if (violation.rule !== "public-surface-bypass" || !("todoModule" in violation)) continue;
+      bypassesByModule.set(violation.todoModule, (bypassesByModule.get(violation.todoModule) ?? 0) + 1);
+    }
+    const dominant = dominantBypassModule(
+      [...graph.modules.values()].map((module) => ({ name: module.name, files: module.files.length })),
+      bypassesByModule,
+    );
+    if (dominant !== undefined) focused.dominantModule = dominant;
+  }
   return applyFilters(focused, options);
 }
 
@@ -1107,6 +1134,16 @@ const UNGROUPED_MODULE = "<project>";
 // root cause (no module in the project chose a surface at all), which "add
 // a surface file" fixes project-wide, not one violation at a time.
 const SURFACE_LESS_NOTE_THRESHOLD = 0.8;
+
+function dominantModuleLines(result: CheckResult): string[] {
+  const dominant = result.dominantModule;
+  if (dominant === undefined) return [];
+  return [
+    `note: ${dominantBypassSentence(dominant)}. Freezing them records one bucket, and hotspots then report one score.`,
+    `do: split '${dominant.name}' into directories that change together before archstrict todo`,
+    "do: archstrict recommend",
+  ];
+}
 
 function surfaceLessNote(result: CheckResult): string[] {
   const missing = new Set(result.modulesWithoutSurfaceNames);
@@ -1229,7 +1266,7 @@ function groupedViolationLines(result: CheckResult): string[] {
   const ordered = groupViolations(result.violations);
   const lines = [
     `violations: ${result.violations.length} in ${ordered.length} group${ordered.length === 1 ? "" : "s"}`,
-    ...surfaceLessNote(result),
+    ...(result.dominantModule !== undefined ? dominantModuleLines(result) : surfaceLessNote(result)),
   ];
   if (ordered.length === 1) {
     appendSingleGroupDetail(lines, ordered[0]!);
@@ -1288,7 +1325,9 @@ export function formatText(result: CheckResult): string {
   const lines: string[] = result.violations.length <= 20
     ? result.violations.flatMap(formatViolation)
     : groupedViolationLines(result);
-  if (result.violations.length <= 20) lines.push(...surfaceLessNote(result));
+  if (result.violations.length <= 20) {
+    lines.push(...(result.dominantModule !== undefined ? dominantModuleLines(result) : surfaceLessNote(result)));
+  }
   for (const s of result.suggestions) {
     lines.push(`[${s.rule}] ${s.path}:${s.line}:${s.column}`);
     lines.push(`  ${s.evidence}`);
@@ -1334,6 +1373,8 @@ export function formatText(result: CheckResult): string {
   // first, not to run todo.
   if (result.violations.some((v) => v.rule === "uncovered-module")) {
     lines.push(`do: add each uncovered-module file to declaredModules or exclude in archstrict.config.ts, then run archstrict check`);
+  } else if (result.dominantModule !== undefined && result.violations.some((v) => v.rule !== "config-meaning" && !v.frozen)) {
+    lines.push(`do: split module '${result.dominantModule.name}' before archstrict todo`);
   } else if (result.violations.some((v) => v.rule !== "config-meaning" && !v.frozen)) {
     lines.push(`do: archstrict todo`);
   }

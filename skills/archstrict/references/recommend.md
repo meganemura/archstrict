@@ -7,6 +7,22 @@ Read [patterns.md](patterns.md) first for what each detected pattern's own
 config looks like, and [config.md](config.md) for `surface`'s exact
 semantics.
 
+## `mapNotes`
+
+Zero or more notes about the declared map itself, before any pattern.
+`mega-module`: one module holds at least four fifths of the analyzed files
+and at least eight files. Hotspots and a frozen bypass list then collapse
+into one bucket. The `do` says to split that module into directories that
+change together before `archstrict todo`, and to add an `edges` rule.
+`file-per-module`: at least four fifths of the modules, and at least four
+of them, are single files in one directory. Each file is public as itself,
+so imports between them are checked, and no growth seam is named. The `do`
+shows a `glob` array that groups two of those files into one module with
+one surface. A directory that happens to hold one file is a directory
+seam, and it is left out of this count. Text prints every note. JSON
+always includes the array, empty when neither shape holds, so a missing
+field is not how "the map is finished" is spelled.
+
 ## `patternProposals`
 
 At most 5 proposals, ranked by evidence - a project with more detectable
@@ -62,11 +78,13 @@ module's own real imports (`coveredImports` of `totalImports`,
 `remainingImports` left over), offered as a `surface` value to paste into
 that module's `declaredModules` entry. `choices` gives the same alternative
 every surface-less module finding does: set the proposed `surface`, add a
-barrel file naming a different real entry, or leave the module entirely
-private and freeze its bypasses with `archstrict todo` - text prints these
-three choices once for the whole section, then one module-specific `do:`
-line per shown module (the `surface` edit); `choices` itself stays complete
-per module in JSON.
+barrel file naming a different real entry, or leave a small module private
+and freeze its bypasses with `archstrict todo`. When the module is the
+`mega-module` from `mapNotes`, the third choice says to split it before
+freezing, and text prints that line under the module. Text prints the
+three ordinary choices once for the whole section, then one
+module-specific `do:` line per shown module (the `surface` edit); `choices`
+itself stays complete per module in JSON.
 
 ## Reading a proposal before pasting it
 

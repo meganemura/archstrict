@@ -254,7 +254,7 @@ describe("init", () => {
     {
       label: "an entry with a non-string glob",
       declaredModules: `[{ name: "app", glob: 5 }]`,
-      message: "field 'declaredModules[0].glob' must be a string, not number",
+      message: "field 'declaredModules[0].glob' must be a string or a non-empty array of strings, not number",
     },
   ])("a re-run with $label", ({ declaredModules, message }) => {
     test("exits 1 with the exact message and do:, leaving archstrict.types.ts's exact old bytes", async () => {
@@ -316,6 +316,7 @@ describe("init", () => {
           `  src/: 2 directories, 4 files\n` +
           `excluded 1 hidden directory that holds TypeScript source: .scratch/\n` +
           `excluded 3 noise directories found on disk: test/, example/, spike/\n` +
+          `this map covers every analyzed file. Name seams that change together, split a directory that holds unrelated seams, then add an edges rule. archstrict recommend proposes both\n` +
           `do: archstrict check\n`,
       );
 
@@ -349,7 +350,10 @@ export default {
   ],
   // init declared one module per directory that holds TypeScript source and
   // one per TypeScript source file, so every file that check analyzes
-  // belongs to exactly one module. Merge, rename, or remove entries freely:
+  // belongs to exactly one module. This inventory is not a target
+  // architecture: group files that change together (glob may be an array of
+  // file paths in one directory), split a directory that holds unrelated
+  // seams, then add an edges rule. Merge, rename, or remove entries freely:
   // init never rewrites this file. After an edit, run archstrict init to
   // regenerate archstrict.types.ts.
   declaredModules: [
@@ -361,7 +365,7 @@ export default {
     { name: "gamma.ts", glob: "src/gamma.ts", surface: "gamma.ts" },
     { name: "runtime", glob: "src/runtime/**" },
   ],
-  because: "archstrict init: one module per directory that holds TypeScript source and per TypeScript source file, so the first check covers every file it analyzes",
+  because: "archstrict init: one module per directory that holds TypeScript source and per TypeScript source file, so the first check covers every file it analyzes. This inventory is not a target architecture: name seams that change together, then add edges",
 } satisfies Config;
 `,
       );
@@ -375,9 +379,11 @@ export default {
 
   // A fixture shaped like a flat package with no directories at all
   // directly under the opened container - every loose file becomes its own
-  // module, and init prints the only-files line naming the whole-directory
-  // alternative.
-  test("a container that holds only files: prints the only-files line, and 'init .' collapses it to one directory module", () => {
+  // module. The note names a glob array as the way to group a seam, and
+  // warns that one module over the whole container hides which seams move.
+  // `init .` still can declare the container as one directory, for a caller
+  // who asks for that walk; the note does not recommend it.
+  test("a container that holds only files: prints the seam note, and 'init .' can still declare the container as one directory", () => {
     const { root, put } = scratchProject("archstrict-init-flat-");
     put("src/one.ts", "export const one = 1;\n");
     put("src/two.ts", "export const two = 1;\n");
@@ -393,7 +399,8 @@ export default {
           `  src/: 0 directories, 3 files\n` +
           `  ./ (outside src/): 1 directory, 0 files: plugin\n` +
           `excluded 1 noise directory found on disk: tests/\n` +
-          `src/ holds only files, so each file is its own module. To check src/ as one module instead (then no import between two of its files is checked): delete archstrict.config.ts, then run archstrict init .\n` +
+          `src/ holds only files, so each file is its own module and is public as itself. Group files that change together as one module with glob set to an array of those file paths, and name one of them as surface. One module over all of src/ hides which seams move.\n` +
+          `this map covers every analyzed file. Name seams that change together, split a directory that holds unrelated seams, then add an edges rule. archstrict recommend proposes both\n` +
           `do: archstrict check\n`,
       );
       expect(readFileSync(join(root, "archstrict.types.ts"), "utf8")).toContain(
@@ -875,6 +882,7 @@ export default {
           `wrote ${join(root, "archstrict.types.ts")}\n` +
           `declared 1 module, one per directory that holds TypeScript source and one per TypeScript source file:\n` +
           `  src/: 1 directory, 0 files\n` +
+          `this map covers every analyzed file. Name seams that change together, split a directory that holds unrelated seams, then add an edges rule. archstrict recommend proposes both\n` +
           `do: archstrict check\n`,
       );
     } finally {
@@ -1260,7 +1268,7 @@ export default {
           noiseDirs: ["test", "example", "spike"],
           testFileExcludes: [],
           uncovered: [],
-          notes: [],
+          notes: ["this map covers every analyzed file. Name seams that change together, split a directory that holds unrelated seams, then add an edges rule. archstrict recommend proposes both"],
           do: "archstrict check",
         });
       } finally {

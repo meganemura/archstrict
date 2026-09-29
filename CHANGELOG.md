@@ -5,18 +5,12 @@ may change commands, flags, config, or output shape. The version entry will desc
 
 ## Unreleased
 
-### Changed
-
-- Every verb that walks the project (`init`, `check`, `todo`, `simulate`, `hotspots`, `recommend`)
-  now skips gitignored paths. archstrict reads the root and nested `.gitignore` files, the ones
-  above the project root, and the repository's `info/exclude` with git's own pattern rules, and
-  never runs git. A local scratch directory such as `tmp/` no longer floods `check` with
-  `uncovered-module` violations. A gitignored file stays resolvable as an import target. A config
-  that already declares a module inside a gitignored directory keeps analyzing that module; remove
-  the declaration to drop it.
-
 ### Added
 
+- `declaredModules[].glob` accepts an array of paths that share one directory, so a flat directory can name a multi-file seam without a directory move. Surface and friends resolve against that directory. The type-leak boundary is each listed file. Paths in two directories, and an empty array, are config errors.
+- `archstrict init` prints that the generated map is an inventory. A container of only files is told to group seams with a glob array. A directory that holds at least four fifths of the files (and at least eight) is named so it can be split before `archstrict todo`.
+- `archstrict recommend` adds `mapNotes` (`mega-module`, `file-per-module`). A surface proposal for the mega-module says to split it before freezing its bypasses.
+- `archstrict check` and `archstrict todo` name the case where one module holds most analyzed files and most public-surface bypasses, including bypasses a todo file already suppresses. The next command is to split that module before freezing more. `check <file>` leaves the note out.
 - While the config has no `edges` rule, a whole-project `check` prints one `summary:` line: the
   config so far freezes today's import graph, not a target architecture. Its `do:` lines name
   `archstrict recommend`, `archstrict hotspots`, and the rearchitect reference. `--json` carries
@@ -29,8 +23,19 @@ may change commands, flags, config, or output shape. The version entry will desc
   surface. A type owned by another module with no surface needs a surface on that module, or the
   exposing export must leave this surface.
 
+### Changed
+
+- Every verb that walks the project (`init`, `check`, `todo`, `simulate`, `hotspots`, `recommend`)
+  now skips gitignored paths. archstrict reads the root and nested `.gitignore` files, the ones
+  above the project root, and the repository's `info/exclude` with git's own pattern rules, and
+  never runs git. A local scratch directory such as `tmp/` no longer floods `check` with
+  `uncovered-module` violations. A gitignored file stays resolvable as an import target. A config
+  that already declares a module inside a gitignored directory keeps analyzing that module; remove
+  the declaration to drop it.
+
 ### Documentation
 
+- The skill, recommend reference, and re-architecture notes tell an adopter to treat `init` as an inventory, to split a mega-module before freezing it, to group a flat directory with a `glob` array, to install the skill once per user, and where a CLI and a graph helper sit.
 - The README (and its Japanese twin) has one Install section per host. Claude Code loads a git
   clone of this repository as a plugin for the skill, the edit hooks, and the MCP server. Other
   agents install the skill with `gh skill install`, add the `AGENTS.md` section with

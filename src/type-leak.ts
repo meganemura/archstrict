@@ -605,7 +605,7 @@ function leakDo(
 }
 
 export function checkTypeLeaks(graph: {
-  modules: Map<string, { name: string; dir: string; surfaceFiles: string[]; files?: string[] }>;
+  modules: Map<string, { name: string; dir: string; boundaryRoots?: readonly string[]; surfaceFiles: string[]; files?: string[] }>;
   program: ts.Program;
   checker: ts.TypeChecker;
   rootDir: string;
@@ -638,7 +638,10 @@ export function checkTypeLeaks(graph: {
   // Every declared module's own directory, not the whole project root -
   // see detectTypeLeaks' own comment on why a single, broad boundary was
   // measured wrong.
-  const moduleBoundaries = [...graph.modules.values()].map((m) => m.dir);
+  // boundaryRoots, when present, is the multi-file seam's own files.
+  // Falling back to dir keeps a caller that built a module the old way
+  // (one root, the directory or the single file) on the same answer.
+  const moduleBoundaries = [...graph.modules.values()].flatMap((m) => m.boundaryRoots ?? [m.dir]);
   // Every declaration named by ANY declared module's own surface, computed
   // once for the whole check (not per module): a type a consumer can
   // already import from module B is not a leak in module A's surface

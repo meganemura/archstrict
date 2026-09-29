@@ -50,7 +50,7 @@ hook はプロジェクト自身の `node_modules/.bin/archstrict` を実行す�
    gh skill install meganemura/archstrict archstrict --agent cursor
    ```
 
-   既定の scope はプロジェクトである。Cursor、Codex など複数の agent が `.agents/skills/archstrict/` を共有する。home directory に入れるときは `--scope user` を足す。
+   ユーザーにつき 1 回、`--scope user` で入れる。skill をリポジトリごとにコピーしない。既定の scope はプロジェクトである。Cursor、Codex など複数の agent が `.agents/skills/archstrict/` を共有する。次の `archstrict agents` は、プロジェクトごとの `AGENTS.md` の節である。コマンドを数行書くもので、skill の複製ではない。
 
 2. AGENTS.md の節を足す。
 
@@ -73,7 +73,7 @@ npx archstrict init
 npx archstrict check
 ```
 
-`init` は、`archstrict.config.ts` が無いときその file を書く。あわせて、module 名の union type である `archstrict.types.ts` を書く。初回は、TypeScript source(`.ts`、`.tsx`、`.mts`、`.cts`)を持つ top-level directory ごとに 1 module を宣言し、subdirectory には入っていない top-level の source file ごとに 1 module を宣言する。対象は、開いた container の中と project root の両方である。container は、`src/` が source を持つときは `src/`、`src/` が無い、または source を持たないときは project root である。再実行したときは、手で編集した config をそのまま残し、`declaredModules` から `archstrict.types.ts` だけを再生成する。
+`init` は、`archstrict.config.ts` が無いときその file を書く。あわせて、module 名の union type である `archstrict.types.ts` を書く。初回は、TypeScript source(`.ts`、`.tsx`、`.mts`、`.cts`)を持つ top-level directory ごとに 1 module を宣言し、subdirectory には入っていない top-level の source file ごとに 1 module を宣言する。対象は、開いた container の中と project root の両方である。container は、`src/` が source を持つときは `src/`、`src/` が無い、または source を持たないときは project root である。この map は、解析する file をすべて覆う。成長の seam や import の方向は、まだ検査しない。次に `npx archstrict recommend` を実行し、一緒に変わる file を 1 つの seam にまとめ、`edges` を足す。それが済むまで、この map は完成した architecture ではない。再実行したときは、手で編集した config をそのまま残し、`declaredModules` から `archstrict.types.ts` だけを再生成する。
 
 `check` は project を解析し、各 violation を rule id、`path:line:col`、evidence、`because` の理由、`do:` command とともに表示する。
 

@@ -42,6 +42,7 @@ import {
 } from "../module-candidates.js";
 import { compileGlob } from "../classify.js";
 import { SCHEMA_VERSION } from "../config.js";
+import { dominantByFiles } from "../map-shape.js";
 import { ReportError } from "../report-error.js";
 import { loadConfig } from "./check.js";
 
@@ -302,13 +303,16 @@ ${exclude.map((e) => `    ${q(e)},`).join("\n")}
   ],
   // init declared one module per directory that holds TypeScript source and
   // one per TypeScript source file, so every file that check analyzes
-  // belongs to exactly one module. Merge, rename, or remove entries freely:
+  // belongs to exactly one module. This inventory is not a target
+  // architecture: group files that change together (glob may be an array of
+  // file paths in one directory), split a directory that holds unrelated
+  // seams, then add an edges rule. Merge, rename, or remove entries freely:
   // init never rewrites this file. After an edit, run archstrict init to
   // regenerate archstrict.types.ts.
   declaredModules: [
 ${lines.join("\n")}
   ],
-  because: "archstrict init: one module per directory that holds TypeScript source and per TypeScript source file, so the first check covers every file it analyzes",
+  because: "archstrict init: one module per directory that holds TypeScript source and per TypeScript source file, so the first check covers every file it analyzes. This inventory is not a target architecture: name seams that change together, then add edges",
 } satisfies Config;
 `;
 }
@@ -369,7 +373,10 @@ export type Config = {
   // more than one file).
   declaredModules: readonly {
     name: ModuleName;
-    glob: string;
+    // One glob, or several paths that share one directory. An array names
+    // a seam inside a flat directory. Paths in different directories are
+    // a config error; use one entry per directory.
+    glob: string | readonly string[];
     // A single glob, or several - a real package can publish more than
     // one real, differently-shaped public entry point at once. Optional:
     // when absent, a real package.json's own exports map at this
@@ -638,10 +645,19 @@ export async function init(projectRoot: string, rawDir?: string): Promise<InitRe
   }
   const notes: string[] = [];
   if (opened !== "" && containerGroups.length > 0 && containerGroups.every((g) => g.kind === "file")) {
-    const note = `${opened}/ holds only files, so each file is its own module. To check ${opened}/ as one module instead (then no import between two of its files is checked): delete archstrict.config.ts, then run archstrict init .`;
+    const note = `${opened}/ holds only files, so each file is its own module and is public as itself. Group files that change together as one module with glob set to an array of those file paths, and name one of them as surface. One module over all of ${opened}/ hides which seams move.`;
     messageLines.push(note);
     notes.push(note);
   }
+  const dominant = dominantByFiles(allGroups.map((group) => ({ name: group.entry.name, files: group.fileCount })));
+  if (dominant !== undefined) {
+    const note = `module '${dominant.name}' holds ${dominant.files} of ${dominant.totalFiles} analyzed files. Split it into directories that change together before archstrict todo, so hotspots stay readable.`;
+    messageLines.push(note);
+    notes.push(note);
+  }
+  const inventoryNote = "this map covers every analyzed file. Name seams that change together, split a directory that holds unrelated seams, then add an edges rule. archstrict recommend proposes both";
+  messageLines.push(inventoryNote);
+  notes.push(inventoryNote);
 
   return {
     configPath,

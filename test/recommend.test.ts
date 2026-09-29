@@ -116,7 +116,7 @@ test("custom glob proposals use the actual directory and zero connectivity still
   const output = cli(root, "packages/*", "--json");
   expect(output.status).toBe(0);
   expect(JSON.parse(output.stdout)).toEqual({
-    modules: 1, detected: 0, patternProposals: [], surfaceProposals: [],
+    modules: 1, mapNotes: [], detected: 0, patternProposals: [], surfaceProposals: [],
     proposedClassify: [{ glob: "packages/one/**", tags: ["role:one"] }],
   });
 }));
