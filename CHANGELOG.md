@@ -15,6 +15,13 @@ may change commands, flags, config, or output shape. The version entry will desc
   that already declares a module inside a gitignored directory keeps analyzing that module; remove
   the declaration to drop it.
 
+### Added
+
+- While the config has no `edges` rule, a whole-project `check` prints one `summary:` line: the
+  config so far freezes today's import graph, not a target architecture. Its `do:` lines name
+  `archstrict recommend`, `archstrict hotspots`, and the rearchitect reference. `--json` carries
+  the same text as `nextSteps`. `check <file>` leaves it out.
+
 ## 0.1.0 (2026-09-29)
 
 ### Added

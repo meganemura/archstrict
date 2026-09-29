@@ -186,7 +186,27 @@ export type CheckResult = {
   // are still real either way, but a fallback run costs far more memory
   // than the closure this tool is built to keep bounded.
   notes?: string[];
+  // Set only on a whole-project check while the config has no edges rule.
+  // An init-written config declares one module per directory and freezes
+  // every current import, which reads like a finished architecture. It is
+  // only a record of today's graph, and this names the verbs that move
+  // past it. Left out of `check <file>`, which the edit hook runs after
+  // every edit, where the same advice would repeat without end.
+  nextSteps?: { summary: string; do: string[] };
 };
+
+export const NO_EDGES_SUMMARY =
+  "this config freezes today's import graph, not a target architecture; no edges rule is configured yet";
+export const NO_EDGES_DO = [
+  "archstrict recommend",
+  "archstrict hotspots",
+  "read node_modules/archstrict/skills/archstrict/references/rearchitect.md",
+];
+
+function hasEdgesRule(config: Config): boolean {
+  const edges = config.edges;
+  return (edges?.allowDeny?.length ?? 0) + (edges?.order?.length ?? 0) + (edges?.point?.length ?? 0) > 0;
+}
 
 // declaredModules replaces modules/kinds as the required field, the same
 // class of config error as a missing kinds used to be: check/todo build
@@ -1037,6 +1057,9 @@ export async function check(projectRoot: string, focusFile?: string, options: Ch
     includeFrozen: options.frozen,
   });
   const focused = focusFile === undefined ? result : filterToFile(result, focusFile);
+  if (focusFile === undefined && !hasEdgesRule(config)) {
+    focused.nextSteps = { summary: NO_EDGES_SUMMARY, do: [...NO_EDGES_DO] };
+  }
   return applyFilters(focused, options);
 }
 
@@ -1293,6 +1316,12 @@ export function formatText(result: CheckResult): string {
     : `type leaks: ${result.typeLeaks}`);
   lines.push(`todo: ${result.todo}`);
   for (const note of result.notes ?? []) lines.push(`note: ${note}`);
+  // Before the finding's own do: line, so the last line stays the one
+  // concrete action for this run's findings.
+  if (result.nextSteps !== undefined) {
+    lines.push(`summary: ${result.nextSteps.summary}`);
+    for (const step of result.nextSteps.do) lines.push(`do: ${step}`);
+  }
   // A do: line only when there is a concrete next action - a clean
   // check has none, and telling the reader to re-run the command that
   // just produced this clean result is circular, unlike every other

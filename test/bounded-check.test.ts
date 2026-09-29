@@ -324,6 +324,10 @@ describe("check filters", () => {
       "unsupported syntax: 0",
       "type leaks: 0",
       "todo: 0",
+      "summary: this config freezes today's import graph, not a target architecture; no edges rule is configured yet",
+      "do: archstrict recommend",
+      "do: archstrict hotspots",
+      "do: read node_modules/archstrict/skills/archstrict/references/rearchitect.md",
       "do: archstrict todo",
       "",
     ].join("\n"));

@@ -590,6 +590,10 @@ describe("check", () => {
         todo: 0,
         suggestions: [],
         edgeRuleCoverage: [],
+        nextSteps: {
+          summary: "this config freezes today's import graph, not a target architecture; no edges rule is configured yet",
+          do: ["archstrict recommend", "archstrict hotspots", "read node_modules/archstrict/skills/archstrict/references/rearchitect.md"],
+        },
         violations: [
           {
             rule: "public-surface-bypass",
@@ -642,7 +646,7 @@ describe("check", () => {
     });
   });
 
-  test("a project with no violations prints no do: line at all - nothing to re-run, unlike every other do:", async () => {
+  test("a clean check after init says it froze today's graph and names the next verbs, in exact text", async () => {
     await withTempProject(async (root) => {
       mkdirSync(join(root, "src", "app"), { recursive: true });
       writeFileSync(join(root, "src", "app", "module.ts"), "export const app = 1;\n");
@@ -650,9 +654,60 @@ describe("check", () => {
 
       const result = await check(root);
       expect(result.violations).toHaveLength(0);
+      expect(formatText(result)).toBe([
+        "modules: 1",
+        "modules without a public surface: 1",
+        "edges: 0",
+        "not covered by any declared module: 0",
+        "unresolved specifiers: 0",
+        "unsupported syntax: 0",
+        "type leaks: 0",
+        "todo: 0",
+        "summary: this config freezes today's import graph, not a target architecture; no edges rule is configured yet",
+        "do: archstrict recommend",
+        "do: archstrict hotspots",
+        "do: read node_modules/archstrict/skills/archstrict/references/rearchitect.md",
+        "",
+      ].join("\n"));
+      expect(JSON.parse(JSON.stringify(result)).nextSteps).toEqual({
+        summary: "this config freezes today's import graph, not a target architecture; no edges rule is configured yet",
+        do: ["archstrict recommend", "archstrict hotspots", "read node_modules/archstrict/skills/archstrict/references/rearchitect.md"],
+      });
+    });
+  });
+
+  test("a project with an edges rule and no violations prints no do: line at all - nothing to re-run", async () => {
+    await withTempProject(async (root) => {
+      mkdirSync(join(root, "src", "a"), { recursive: true });
+      mkdirSync(join(root, "src", "b"), { recursive: true });
+      writeFileSync(join(root, "src", "a", "index.ts"), "export const a = 1;\n");
+      writeFileSync(join(root, "src", "b", "index.ts"), "import { a } from \"../a/index.ts\";\nexport const b = a;\n");
+      writeFileSync(join(root, "archstrict.config.ts"), `export default ${JSON.stringify({
+        declaredModules: [{ name: "a", glob: "src/a/**" }, { name: "b", glob: "src/b/**" }],
+        classify: [{ glob: "src/a/**", tags: ["layer:a"] }, { glob: "src/b/**", tags: ["layer:b"] }],
+        edges: { order: [{ tagNamespace: "layer", sequence: { "": ["a", "b"] }, direction: "downward-only", because: "b builds on a" }] },
+        exclude: ["archstrict.config.ts"],
+        because: "Keep boundaries explicit.",
+      })};\n`);
+
+      const result = await check(root);
+      expect(result.nextSteps).toBeUndefined();
       const text = formatText(result);
+      expect(text).not.toContain("summary:");
       expect(text).not.toMatch(/(?:^|\n)\s*do:/);
       expect(text.trim().split("\n").at(-1)).toBe("todo: 0");
+    });
+  });
+
+  test("check <file> leaves the next-steps summary out, since the edit hook runs it after every edit", async () => {
+    await withTempProject(async (root) => {
+      mkdirSync(join(root, "src", "app"), { recursive: true });
+      writeFileSync(join(root, "src", "app", "module.ts"), "export const app = 1;\n");
+      await init(root);
+
+      const result = await check(root, join(root, "src", "app", "module.ts"));
+      expect(result.nextSteps).toBeUndefined();
+      expect(formatText(result)).not.toContain("summary:");
     });
   });
 
