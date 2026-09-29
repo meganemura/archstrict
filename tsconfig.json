@@ -13,6 +13,6 @@
     "resolveJsonModule": true,
     "noEmit": true
   },
-  "include": ["src", "test"],
+  "include": ["src", "test", "archstrict.config.ts", "archstrict.types.ts"],
   "exclude": ["test/fixtures", "spike/fixtures"]
 }

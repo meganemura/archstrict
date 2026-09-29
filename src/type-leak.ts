@@ -19,9 +19,12 @@
 // rather than a separate rule each).
 // Boundary: pure predicate over a ModuleGraph (its shared program and
 // checker) and a boundary root. No I/O, no output formatting.
+// Lives next to the graph builder, not under src/rules: module-graph.ts
+// calls checkTypeLeaks while it builds the closure. A rules-module home
+// would make that call a cycle with every other rule that reads the graph.
 import ts from "typescript";
 import { relative } from "node:path";
-import { declarationKey, sourceFileKey } from "../type-closure.js";
+import { declarationKey, sourceFileKey } from "./type-closure.js";
 
 export type Via = "inferred-return" | "generic-parameter" | "structural";
 

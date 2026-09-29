@@ -27,9 +27,11 @@ type BaseFinding = {
   do: string;
   tier: "calibrated";
 };
-type ContradictionFinding = BaseFinding & { confidence: number; skipped?: never; undecided?: never };
-type SkippedFinding = BaseFinding & { skipped: true; confidence?: never; undecided?: never };
-type UndecidedFinding = BaseFinding & { undecided: true; confidence?: never; skipped?: never };
+// Named from this surface: verbs/check.ts's violation union reaches them,
+// and a consumer needs a name for each arm, not only for the union.
+export type ContradictionFinding = BaseFinding & { confidence: number; skipped?: never; undecided?: never };
+export type SkippedFinding = BaseFinding & { skipped: true; confidence?: never; undecided?: never };
+export type UndecidedFinding = BaseFinding & { undecided: true; confidence?: never; skipped?: never };
 export type Violation = ContradictionFinding | SkippedFinding | UndecidedFinding;
 
 // Each entry gets one decision; no later triage of a larger candidate set filters out model noise.

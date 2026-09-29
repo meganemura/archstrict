@@ -14,7 +14,7 @@ import { buildModuleGraph, buildModuleGraphForRules, buildPreparedGraph, prepare
 import { readEdgeCache, writeEdgeCache, shardIndexForRelativePath, SHARD_COUNT, type EdgeCache, type CachedFileEntry, type CachedResolution } from "../src/edge-cache.js";
 import { rules } from "../src/verbs/rules.js";
 import { check, filterToFile } from "../src/verbs/check.js";
-import { checkTypeLeaks } from "../src/rules/type-leak.js";
+import { checkTypeLeaks } from "../src/type-leak.js";
 import { makeAbsolutePosix, makeProjectRelativePosix } from "../src/project-path.js";
 
 // `failRenameTo`: set to an absolute path to make exactly the next

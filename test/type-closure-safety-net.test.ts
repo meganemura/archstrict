@@ -18,7 +18,7 @@ import { buildPreparedGraph, prepareGraph, type DeclaredModule } from "../src/mo
 import { check, formatText } from "../src/verbs/check.js";
 import { formatSearchText, type SearchResult } from "../src/verbs/search.js";
 import { formatFixText, type FixResult } from "../src/verbs/fix.js";
-import { checkTypeLeaks } from "../src/rules/type-leak.js";
+import { checkTypeLeaks } from "../src/type-leak.js";
 
 const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), "fixtures/type-leak-closure");
 const declaredModules: DeclaredModule[] = [{ name: "m", glob: "src/m/**" }];

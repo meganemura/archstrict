@@ -21,7 +21,7 @@ A violation report always carries a rule id, `path:line:col`, the evidence, the 
 
 ## Layout
 
-- `src/` is the library and CLI.
+- `src/` is the library and CLI. The root `archstrict.config.ts` checks that tree: `core` is the analysis engine, `rules` and `verbs` are where a new rule or verb lands, and `cli`, `mcp`, and `check-options` sit above them. `archstrict.todo.json` is the ratchet. `skills/archstrict/` is the product skill shipped to consumers, not a second config.
 - `test/` is the Vitest suite; `features/` is the nukadoko (Gherkin) dogfood scenario.
 - `.agents/` is the canonical Claude Code plugin: the manifest, the PreToolUse and PostToolUse hooks, and the MCP server. `.claude-plugin/plugin.json` symlinks to `.agents/plugin.json`, and repo-root `hooks/` and `mcp/` symlink to `.agents/hooks` and `.agents/mcp`. `${CLAUDE_PLUGIN_ROOT}` is the directory that contains `.claude-plugin/`, so those plugin-root paths still resolve. `.claude-plugin/` stays a real directory holding only the manifest symlink: Claude loads `hooks/` from the plugin root, and a directory symlink onto `.agents/` would place `hooks/` and `mcp/` inside `.claude-plugin/`.
 - `skills/archstrict/` (and root `llms.txt`) is the agent-facing skill (`SKILL.md` plus `references/`).
@@ -48,6 +48,7 @@ If you want to cite an internal document, write its substance in place instead.
 For working on archstrict itself:
 
 - `npm run build` — compile `src/` to `dist/`. The CLI's own tests spawn the built `dist/cli.js`, so run this before `npm test` if `dist/` is missing or stale.
+- `node dist/cli.js check` — checks this repository against the root `archstrict.config.ts`. `node dist/cli.js todo` prunes `archstrict.todo.json` after the first run and does not add debt again.
 - `npm run typecheck` — `tsc --noEmit` over the whole project.
 - `npm test` — the Vitest suite.
 - `npm run dogfood:nukadoko` — a nukadoko (Gherkin) scenario that runs the built CLI's full init/check/todo/edit/check round trip against nukadoko's own published `src/` (a real, unrelated codebase with no public-surface convention), copied into a disposable scratch directory. Never modifies the real nukadoko package or a checkout of it.
@@ -67,3 +68,14 @@ The CLI itself:
 ## Claude Code plugin
 
 This repository is itself a Claude Code plugin (`.claude-plugin/plugin.json`, a symlink to `.agents/plugin.json`). It ships two hooks around every Edit/Write/MultiEdit, both shelling out to the edited project's own `node_modules/.bin/archstrict`, never to this repository's own build. Its `PreToolUse` hook (`.agents/hooks/pre-tool-use.mjs`, reached as `hooks/pre-tool-use.mjs`) runs before the write happens: it builds the file text the tool call would produce and previews it through that project's `archstrict simulate --json`, returning any added violation into the agent's own context so it can change course before the write lands, or denying the tool call outright when `ARCHSTRICT_PRETOOLUSE=deny` is set. Its `PostToolUse` hook (`.agents/hooks/post-tool-use.mjs`, reached as `hooks/post-tool-use.mjs`) runs the edited project's own installed `archstrict check <file>` right after the write and returns any violation into the agent's own context - the same moment a human editor's red squiggly would appear. Both say nothing when the edited project has no `archstrict` installed at all or the edited file has no violation; see [the hook reference](skills/archstrict/references/hook.md) for the full set of silent cases. The MCP server is `.agents/mcp/server.mjs`, reached as `${CLAUDE_PLUGIN_ROOT}/mcp/server.mjs`. `npm pack` ships `.agents/` and drops the symlinks, so an installed package's hooks are `node_modules/archstrict/.agents/hooks/pre-tool-use.mjs` and `post-tool-use.mjs`.
+
+
+<!-- ARCHSTRICT_START -->
+## archstrict
+
+In projects with an `archstrict.config.ts` (module-boundary/architecture linting), run `archstrict rules <path>` BEFORE creating a file or adding an import - it reports the module, tags, and constraints that would govern that path, even before it exists. Run `archstrict check` after editing to confirm.
+
+The full rule reference (every rule's evidence/because/do shape, the config schema, the pre-edit query) is at `node_modules/archstrict/skills/archstrict/SKILL.md` when installed via npm - read it before configuring `archstrict.config.ts`, or when a violation's `do:` text alone isn't enough.
+
+If there is no `archstrict.config.ts`, skip archstrict entirely - it may not be installed here.
+<!-- ARCHSTRICT_END -->

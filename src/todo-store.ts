@@ -13,7 +13,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { isAbsolute, join } from "node:path";
 import ts from "typescript";
-import { REFERENCED_BY_MARKER } from "./rules/type-leak.js";
+import { REFERENCED_BY_MARKER } from "./type-leak.js";
 import { ReportError } from "./report-error.js";
 import { toProjectRelativePosix } from "./module-graph.js";
 import type { ProjectRelativePath } from "./project-path.js";

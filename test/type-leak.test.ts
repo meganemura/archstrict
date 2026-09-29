@@ -5,7 +5,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { check } from "../src/verbs/check.js";
 import { buildModuleGraph } from "../src/module-graph.js";
-import { checkTypeLeaks } from "../src/rules/type-leak.js";
+import { checkTypeLeaks } from "../src/type-leak.js";
 
 const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), "fixtures/type-leak");
 const VALUES_AND_BASES_FIXTURE = join(

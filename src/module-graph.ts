@@ -55,7 +55,7 @@ import { dirname, join, relative, sep } from "node:path";
 import { builtinModules } from "node:module";
 import { compileGlob, mostSpecificMatch } from "./classify.js";
 import { buildTypeClosure, computeSyntacticNamedDeclarations, type TypeClosureInputs } from "./type-closure.js";
-import { checkTypeLeaks, type Violation as TypeLeakViolation } from "./rules/type-leak.js";
+import { checkTypeLeaks, type Violation as TypeLeakViolation } from "./type-leak.js";
 import { makeProjectRelativePosix, type ProjectRelativePath } from "./project-path.js";
 import { forcedBasesOf, gitignoreStackAbove, isPathGitignored, nextIgnoreState, withGitignoreFile,
   type GitignoreStack, type IgnoreState } from "./gitignore.js";

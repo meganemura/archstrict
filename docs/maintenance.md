@@ -26,6 +26,12 @@ scratch copy of a local clone, converting each project's own real config with th
 [AGENTS.md](../AGENTS.md)'s Commands section for what each requires (a local clone, `pnpm install`
 for the Prisma one) and what each prints.
 
+After `npm run build`, `node dist/cli.js check` analyzes this repository's own `src/` with the root
+`archstrict.config.ts`. A clean run exits 0. `node dist/cli.js todo` creates `archstrict.todo.json`
+on the first run and only prunes it afterward. Modules named in that config's `strict` list cannot
+take on frozen debt. The skill under `skills/archstrict/` is what the package ships; it is not a
+second copy of this config.
+
 `npm run ci:ts7-probe` measures which of the operations rule 6 needs work on whatever typescript 7
 happens to be installed. It never fails; an unsupported operation is the measurement, not an error.
 archstrict itself always analyzes with its own pinned `typescript` dependency, independent of this

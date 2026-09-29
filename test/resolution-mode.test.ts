@@ -13,7 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import ts from "typescript";
 import { buildModuleGraph, buildPreparedGraph, prepareGraph, type DeclaredModule } from "../src/module-graph.js";
-import { checkTypeLeaks } from "../src/rules/type-leak.js";
+import { checkTypeLeaks } from "../src/type-leak.js";
 
 const NODE16_TSCONFIG = JSON.stringify({
   compilerOptions: { target: "esnext", module: "nodenext", moduleResolution: "nodenext", strict: true, skipLibCheck: true, noEmit: true },

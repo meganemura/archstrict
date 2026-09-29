@@ -19,7 +19,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-// Every operation detectTypeLeaks (src/rules/type-leak.ts) calls on a
+// Every operation detectTypeLeaks (src/type-leak.ts) calls on a
 // TypeChecker, exercised here against a real, minimal fixture - not
 // asserted structurally, since typescript 7's own internals (and which of
 // these still work) are exactly what may change between releases.

@@ -20,7 +20,7 @@ import { describe, expect, test } from "vitest";
 import ts from "typescript";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { detectTypeLeaks } from "../src/rules/type-leak.js";
+import { detectTypeLeaks } from "../src/type-leak.js";
 
 const NUKADOKO_SRC = fileURLToPath(new URL("../node_modules/nukadoko/src", import.meta.url));
 

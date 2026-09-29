@@ -12,7 +12,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildModuleGraph, prepareGraph, type DeclaredModule } from "../src/module-graph.js";
-import { checkTypeLeaks, type Violation } from "../src/rules/type-leak.js";
+import { checkTypeLeaks, type Violation } from "../src/type-leak.js";
 
 function keysOf(violations: readonly Violation[]): string[] {
   return violations.map((v) => `${v.path}:${v.line}:${v.column} ${v.evidence}`).sort();

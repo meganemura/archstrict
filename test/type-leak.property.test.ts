@@ -16,7 +16,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildModuleGraph } from "../src/module-graph.js";
-import { checkTypeLeaks } from "../src/rules/type-leak.js";
+import { checkTypeLeaks } from "../src/type-leak.js";
 
 const PROPERTY_COUNT = 4;
 const declaredModules = [{ name: "m", glob: "src/m/**" }];

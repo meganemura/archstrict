@@ -6,7 +6,7 @@ import { dirname, relative, resolve, sep } from "node:path";
 import { prepareGraph, type ModuleGraph } from "../module-graph.js";
 import { createWarmGraph } from "../warm-graph.js";
 import { fingerprintOf, relativizeForTodo, type ViolationForTodo } from "../todo-store.js";
-import type { Violation } from "../rules/type-leak.js";
+import type { Violation } from "../type-leak.js";
 import { loadConfig, runRules, applyTodo, filterToFile } from "./check.js";
 import { resolveWriteTarget, writeTarget } from "./agents.js";
 import { createConfigLocator } from "../config-pointer.js";

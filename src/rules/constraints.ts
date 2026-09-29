@@ -22,6 +22,9 @@
 // Boundary: pure predicates over a ModuleGraph and a Config, same as every
 // other rule file. No I/O, no output formatting, no todo handling.
 import { computeMoves, type Move } from "./moves.js";
+// Move is part of ConstraintViolation's public shape. Naming it from this
+// surface keeps moves.ts private: only constraints.ts imports that file.
+export type { Move };
 import { compileGlob } from "../classify.js";
 import { classifyFile } from "../classify.js";
 import { type Edge, type ModuleGraph } from "../module-graph.js";

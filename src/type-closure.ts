@@ -558,7 +558,7 @@ export function buildTypeClosure(inputs: TypeClosureInputs): TypeClosureResult {
   // is dispatched. module-graph.ts's own safety net (a resolution failure
   // rule 6 itself reports while walking the closure Program this
   // function's own output becomes a root list for - see
-  // rules/type-leak.ts's own ReportUnresolvedReference) is a separate
+  // type-leak.ts's own ReportUnresolvedReference) is a separate
   // pass over the real Program, not this syntactic walk; a net built from
   // the same rules it is meant to catch a gap in could never fire.
   //

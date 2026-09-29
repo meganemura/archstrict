@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { buildModuleGraph } from "../src/module-graph.js";
 import { checkPublicSurfaceBypass } from "../src/rules/public-surface.js";
 import { checkCycles } from "../src/rules/cycles.js";
-import { checkTypeLeaks } from "../src/rules/type-leak.js";
+import { checkTypeLeaks } from "../src/type-leak.js";
 
 const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), "fixtures/declared-modules");
 const CYCLES_FIXTURE = join(dirname(fileURLToPath(import.meta.url)), "fixtures/cycles");

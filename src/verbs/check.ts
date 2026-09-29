@@ -24,7 +24,7 @@ import {
   type Suggestion as DeprecatedSuggestion,
   type Violation as DeprecatedViolation,
 } from "../rules/deprecated.js";
-import { checkTypeLeaks, type Violation as TypeLeakViolation } from "../rules/type-leak.js";
+import { checkTypeLeaks, type Violation as TypeLeakViolation } from "../type-leak.js";
 import { checkMustBeEmpty, type Violation as MustBeEmptyViolation } from "../rules/must-be-empty.js";
 import {
   checkAllowDeny,
