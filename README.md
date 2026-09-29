@@ -2,24 +2,57 @@
 
 [![npm version](https://img.shields.io/npm/v/archstrict?logo=npm)](https://www.npmjs.com/package/archstrict)
 
-arch is architecture, not tsc, not eslint, not a type checker: module boundary checking.
-Not archetype.
+archstrict checks TypeScript module boundaries, in the sense of ArchUnit (Java) and archspec (Ruby). You declare each module in config: one directory, or one file when its glob names that file. A module shows the rest of the codebase one public-surface file, and anything that file does not export is private.
 
-TypeScript module boundary checking, in the sense of ArchUnit (Java) and archspec (Ruby): a module is one directory declared explicitly in config, it shows the rest of the codebase one public-surface file, and everything else inside it is private.
-
-See [AGENTS.md](AGENTS.md) for the shape, the rules, and the commands, and [skills/archstrict/SKILL.md](skills/archstrict/SKILL.md) for the workflow.
+tsc and type checkers examine types, and ESLint examines style. archstrict examines the boundary: an import that reaches past that public surface into a module's internals is a violation.
 
 ## Install
 
 ```sh
-npm install --save-dev archstrict
+npm install -D archstrict
 ```
+
+Requires Node.js 22 or newer.
 
 This puts a real `archstrict` binary at `node_modules/.bin/archstrict` in your project - the exact path the PreToolUse and PostToolUse hooks (see [hook.md](skills/archstrict/references/hook.md)) check for before previewing and confirming a change on your behalf around an edit. The install also carries the agent skill (`skills/archstrict/SKILL.md` and `skills/archstrict/references/`), `llms.txt`, and `.agents/` (the plugin manifest, the two hooks, and the MCP server) into `node_modules/archstrict/`. npm omits the checkout's symlinks (`.claude-plugin/plugin.json`, `hooks/`, `mcp/`), so the installed hooks are `node_modules/archstrict/.agents/hooks/pre-tool-use.mjs` and `post-tool-use.mjs`, and the installed MCP server is `node_modules/archstrict/.agents/mcp/server.mjs`. A git checkout still loads as a Claude Code plugin through those symlinks.
 
-### Installing from a local checkout
+## Quick start
 
-Use one of these instead when working against an unpublished checkout of this repository.
+```sh
+npm install -D archstrict
+npx archstrict init
+npx archstrict check
+```
+
+`init` writes `archstrict.config.ts` when that file is absent, and writes `archstrict.types.ts`, the module-name union. On a fresh project it declares one module per top-level directory that holds TypeScript source (`.ts`, `.tsx`, `.mts`, `.cts`), and one module per loose top-level source file, both inside the opened container and at the project root. The container is `src/` when that directory holds source, and the project root when `src/` is absent or holds none. A later run leaves a hand-edited config in place and only regenerates `archstrict.types.ts` from `declaredModules`.
+
+`check` analyzes the project and prints each violation with a rule id, `path:line:col`, the evidence, a `because` reason, and a `do:` command.
+
+A config is one TypeScript value. `init` writes the real `declaredModules` from the tree it walked; the entries below are examples of a directory module and a single-file module. The `exclude` list below is the base that `init` always writes. `init` also adds an entry for each noise directory and colocated test-file pattern it finds on disk.
+
+```ts
+import type { Config } from "./archstrict.types.js";
+
+export default {
+  schemaVersion: 1,
+  surface: ["index.ts", "index.tsx", "index.mts", "index.cts"],
+  exclude: ["archstrict.config.ts", "archstrict.types.ts", ".*/**", "**/.*/**"],
+  declaredModules: [
+    { name: "app", glob: "src/app/**" },
+    { name: "shared", glob: "src/shared/**" },
+    { name: "cli.ts", glob: "src/cli.ts", surface: "cli.ts" },
+  ],
+  because: "app and shared are directory modules; cli.ts is one loose file, public as itself",
+} satisfies Config;
+```
+
+`surface` names the public-surface file of a directory module. A single-file module names that file as its own `surface`, as `cli.ts` does above. `because` is required. A file that matches no `declaredModules` glob and no `exclude` pattern is an `uncovered-module` violation.
+
+Rules, commands, and the full config: [AGENTS.md](AGENTS.md), [skills/archstrict/SKILL.md](skills/archstrict/SKILL.md), and [skills/archstrict/references/config.md](skills/archstrict/references/config.md).
+
+## Installing from a local checkout
+
+The `npm install` above installs the published package. Contributors and agents working from a checkout of this repository use one of the modes below.
 
 1. **`npm link`, from a local checkout on the same machine.**
 
