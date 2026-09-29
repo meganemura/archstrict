@@ -31,14 +31,14 @@ Node.js 22 以降が要る。
 
 ### Claude Code
 
-このリポジトリの clone を Claude Code の plugin として読み込む。plugin は skill、2 個の編集 hook、MCP server を持つ。`--plugin-dir` は 1 回の session だけ読み込むので、Claude Code を起動するたびに渡す。
+このリポジトリの marketplace から plugin を入れる。plugin は skill、2 個の編集 hook、MCP server を持つ。Claude Code の中で次を実行する。
 
-```sh
-git clone https://github.com/meganemura/archstrict.git
-claude --plugin-dir ./archstrict
+```text
+/plugin marketplace add meganemura/archstrict
+/plugin install archstrict@archstrict
 ```
 
-hook はプロジェクト自身の `node_modules/.bin/archstrict` を実行するので、上の npm install も要る。plugin は git の clone から読み込む。npm は plugin root に要る symlink(`.claude-plugin/plugin.json`、`hooks/`、`mcp/`)を含めないため、`node_modules/archstrict/` は plugin として読み込まれない。plugin の file 自体は `node_modules/archstrict/.agents/` に入っている。
+hook はプロジェクト自身の `node_modules/.bin/archstrict` を実行するので、上の npm install も要る。`node_modules/archstrict/` は plugin として読み込まれない。npm は plugin root に要る symlink(`.claude-plugin/plugin.json`、`hooks/`、`mcp/`)を含めないためである。plugin の file 自体は `node_modules/archstrict/.agents/` に入っている。リリース前の checkout を試すときは、`claude --plugin-dir <clone のパス>` で 1 回の session だけ読み込む。
 
 ### その他の agent(Cursor、Codex、cloud agent)
 

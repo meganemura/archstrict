@@ -11,7 +11,7 @@ Installed package: `node_modules/archstrict/skills/archstrict/SKILL.md` (this fi
 ## Install
 
 - Every host: `npm install -D archstrict` puts the CLI at `node_modules/.bin/archstrict`.
-- Claude Code: load a git clone of this repository as a plugin with `claude --plugin-dir <clone>`, passed each time Claude Code starts. The plugin carries the skill, the PreToolUse and PostToolUse edit hooks, and the MCP server.
+- Claude Code: install the plugin from this repository's marketplace with `/plugin marketplace add meganemura/archstrict` and `/plugin install archstrict@archstrict`. The plugin carries the skill, the PreToolUse and PostToolUse edit hooks, and the MCP server.
 - Other agents (Cursor, Codex, cloud agents): `gh skill install meganemura/archstrict archstrict --agent <agent>` installs the skill; `npx archstrict agents` adds the `AGENTS.md` section; run `npx archstrict check` in CI, since the edit hooks are Claude Code only.
 
 ## Commands

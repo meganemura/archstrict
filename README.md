@@ -29,14 +29,14 @@ This puts a real `archstrict` binary at `node_modules/.bin/archstrict`. The edit
 
 ### Claude Code
 
-Load a clone of this repository as a Claude Code plugin. The plugin carries the skill, the two edit hooks, and the MCP server. `--plugin-dir` loads it for one session, so pass it each time you start Claude Code:
+Install the plugin from this repository's marketplace. The plugin carries the skill, the two edit hooks, and the MCP server. Run these inside Claude Code:
 
-```sh
-git clone https://github.com/meganemura/archstrict.git
-claude --plugin-dir ./archstrict
+```text
+/plugin marketplace add meganemura/archstrict
+/plugin install archstrict@archstrict
 ```
 
-The hooks run the project's own `node_modules/.bin/archstrict`, so the npm install above is still required. Load the plugin from a git clone: npm drops the symlinks that the plugin root needs (`.claude-plugin/plugin.json`, `hooks/`, `mcp/`), so `node_modules/archstrict/` does not load as a plugin. The package still carries the plugin's files under `node_modules/archstrict/.agents/`.
+The hooks run the project's own `node_modules/.bin/archstrict`, so the npm install above is still required. The plugin does not load from `node_modules/archstrict/`: npm drops the symlinks that the plugin root needs (`.claude-plugin/plugin.json`, `hooks/`, `mcp/`). The package still carries the plugin's files under `node_modules/archstrict/.agents/`. To try an unreleased checkout, load it for one session with `claude --plugin-dir <path-to-clone>`.
 
 ### Other agents (Cursor, Codex, cloud agents)
 

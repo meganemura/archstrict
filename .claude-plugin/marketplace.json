@@ -1,0 +1,12 @@
+{
+  "name": "archstrict",
+  "description": "TypeScript module boundary checking for coding agents.",
+  "owner": { "name": "meganemura" },
+  "plugins": [
+    {
+      "name": "archstrict",
+      "source": "./",
+      "description": "The archstrict skill, a PreToolUse hook that previews new boundary violations before an edit, a PostToolUse hook that reports them after, and the archstrict MCP server."
+    }
+  ]
+}
