@@ -43,6 +43,11 @@ drive the built `dist/cli.js` rather than the source file Stryker rewrites. The 
 (the suite is serial, and many tests build a real TypeScript program). A bounded look is
 `npx stryker run --mutate src/<file>.ts`. `coverageAnalysis` stays `perTest`.
 
+That bounded form is the one to use. The full mutate set is thousands of mutants, and the
+Vitest `related` filter still selects most of the suite for a single source file, because tests
+reach that file through other imports. The time goes to the suite — synchronous CLI spawns and
+TypeScript startup — rather than to Stryker's instrumenter.
+
 Stryker copies the project into a sandbox with `copyFile`. That call throws on the directory
 symlinks `hooks` and `mcp`, and it would replace `.claude-plugin/plugin.json` with a regular file.
 `ignorePatterns` leaves those three paths out of the copy. `test/global-setup.ts` recreates the
