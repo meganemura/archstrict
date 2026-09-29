@@ -184,7 +184,7 @@ test("a non-surface declaration still leaks beside a public sibling type", () =>
     const leak = leaks[0]!;
     expect(leak.leak?.internalType).toBe("Hidden");
     const internalFile = join("src", "m", "internal.ts");
-    expect(leak.do).toBe(`export 'Hidden' by name from ${leak.path} (it's declared in ${internalFile}), change the referencing exports to not expose it, or add ${internalFile} to this module's own surface`);
+    expect(leak.do).toBe(`'Hidden' belongs to module 'm': export 'Hidden' by name from ${leak.path} (it's declared in ${internalFile})`);
   }));
 
 describe("checkTypeLeaks (a consumer already has a name from another declared module's surface)", () => {
@@ -269,4 +269,27 @@ describe("checkTypeLeaks (a dependency's own type, real node_modules on disk)", 
     });
     expect(checkTypeLeaks(graph)).toHaveLength(0);
   });
+});
+
+// The do: line tells apart a leak this module can fix by naming the type
+// from one it cannot: a type owned by another module with no surface.
+test("a type owned by a module with no surface names that module and the two fixes, in exact text", async () => {
+  const root = mkdtempSync(join(tmpdir(), "archstrict-leak-owner-"));
+  try {
+    mkdirSync(join(root, "src/m"), { recursive: true });
+    mkdirSync(join(root, "src/z"), { recursive: true });
+    writeFileSync(join(root, "tsconfig.json"), JSON.stringify({ compilerOptions: { noLib: true, types: [] } }));
+    writeFileSync(join(root, "src/z/model.ts"), "export interface Hidden { secret: string }");
+    writeFileSync(join(root, "src/m/index.ts"),
+      'import type { Hidden } from "../z/model.js"; export interface Leaky { item: Hidden }');
+    const graph = buildModuleGraph({ projectRoot: root, declaredModules: [
+      { name: "m", glob: "src/m/**" },
+      { name: "z", glob: "src/z/**" },
+    ] });
+    const leaks = checkTypeLeaks(graph);
+    expect(leaks).toHaveLength(1);
+    expect(leaks[0]!.do).toBe(
+      "'Leaky' reaches 'Hidden', owned by module 'z', which has no surface: give 'z' a surface that exports 'Hidden', or drop 'Leaky' from this surface",
+    );
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

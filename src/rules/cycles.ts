@@ -149,6 +149,30 @@ function lopsidedDo(pair: LopsidedPair, relativePath: ProjectRelativePath): stri
   return `remove the ${pair.minorityEdges.length} import(s) from ${pair.minorityFrom} to ${pair.minorityTo} (${pair.minorityTo} imports ${pair.minorityFrom} ${pair.majorityCount} times, so ${pair.minorityFrom} -> ${pair.minorityTo} is likely the unintended direction): ${fileEdges}`;
 }
 
+// Edges named per side are capped: a side with dozens of imports is named
+// by its count and first few edges, which is enough to find it.
+const SIDE_FILE_EDGES_SHOWN = 3;
+
+function sideEdges(edges: readonly Edge[], relativePath: ProjectRelativePath): string {
+  const unique = [...new Set(edges.map((e) => `${relativePath(e.fromFile)} -> ${relativePath(e.resolvedFile)}`))].sort();
+  const more = unique.length > SIDE_FILE_EDGES_SHOWN ? ` (and ${unique.length - SIDE_FILE_EDGES_SHOWN} more)` : "";
+  return unique.slice(0, SIDE_FILE_EDGES_SHOWN).join(", ") + more;
+}
+
+// The two moves a rearchitecting pass uses on a two-module cycle: extract
+// a shared contract, or invert the dependency. Checking the plan with
+// simulate first is named here because a move that only relocates the
+// cycle is common, and simulate shows it without touching the tree.
+function twoModuleDo(a: string, b: string, edgesByPair: Map<string, Edge[]>, relativePath: ProjectRelativePath): string {
+  const aToB = edgesByPair.get(`${a}->${b}`) ?? [];
+  const bToA = edgesByPair.get(`${b}->${a}`) ?? [];
+  return `${a} imports ${b} ${aToB.length} time(s): ${sideEdges(aToB, relativePath)}; ` +
+    `${b} imports ${a} ${bToA.length} time(s): ${sideEdges(bToA, relativePath)}; ` +
+    `either extract the part both sides use into a leaf module that ${a} and ${b} both import, ` +
+    `or pass the dependency in from the side that owns it, so the other side stops importing it; ` +
+    `run archstrict simulate on the planned change first`;
+}
+
 // Smaller (fromFile, line, column) wins, by plain code-unit path compare -
 // a total order independent of which edge the walk happened to visit
 // first, so the SAME representative edge is picked for a given (from, to)
@@ -302,9 +326,16 @@ export function checkCycles(
     // cheap fix, so they lead the do:; the general break-the-cycle advice
     // stays as the fallback for when that guess is wrong.
     const lopsided = findMostLopsidedPair(component, valueEdgesByPair);
+    // A two-module cycle has one known pair of sides, so its do: can name
+    // the edges on each side and the two restructuring moves that remove a
+    // direction for good. A longer cycle keeps the general advice: which
+    // pair to restructure is a judgment the shortest cycle alone cannot make.
+    const generalDo = component.length === 2
+      ? twoModuleDo(sorted[0]!, sorted[1]!, valueEdgesByPair, graph.relativePath)
+      : breakCycleDo;
     const doText = lopsided === undefined
-      ? breakCycleDo
-      : `${lopsidedDo(lopsided, graph.relativePath)}; alternatively, ${breakCycleDo}`;
+      ? generalDo
+      : `${lopsidedDo(lopsided, graph.relativePath)}; alternatively, ${generalDo}`;
 
     violations.push({
       rule: "cycle",

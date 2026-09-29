@@ -21,6 +21,13 @@ may change commands, flags, config, or output shape. The version entry will desc
   config so far freezes today's import graph, not a target architecture. Its `do:` lines name
   `archstrict recommend`, `archstrict hotspots`, and the rearchitect reference. `--json` carries
   the same text as `nextSteps`. `check <file>` leaves it out.
+- A cycle between two modules now names the imports on each side and two moves in its `do:`:
+  extract the shared part into a leaf module both import, or pass the dependency in from the side
+  that owns it, and run `archstrict simulate` on the planned change first. A lopsided pair still
+  names its minority imports first. A cycle of three or more modules keeps the earlier text.
+- A `type-leak` `do:` now tells two cases apart. A type this module owns needs only a name on this
+  surface. A type owned by another module with no surface needs a surface on that module, or the
+  exposing export must leave this surface.
 
 ## 0.1.0 (2026-09-29)
 

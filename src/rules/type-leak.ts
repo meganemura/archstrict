@@ -578,8 +578,31 @@ function groupByInternalType(findings: readonly LeakFinding[], surfacePath: stri
   return groups;
 }
 
+// Two leaks look alike in evidence but need different fixes. A type this
+// module owns needs only a name on this surface. A type owned by a module
+// with no surface cannot get a public name from this surface at all: that
+// module needs a surface, or this surface must stop exposing the type.
+// Any other owner (a module with a surface that does not name the type,
+// or a file no module declares) keeps the general three-way advice.
+function leakDo(
+  moduleName: string,
+  group: LeakGroup,
+  relativeInternalFile: string,
+  owner: string | undefined,
+  modules: ReadonlyMap<string, { surfaceFiles: string[] }>,
+  exportsShown: string,
+): string {
+  if (owner === moduleName) {
+    return `'${group.type}' belongs to module '${moduleName}': export '${group.type}' by name from ${group.path} (it's declared in ${relativeInternalFile})`;
+  }
+  if (owner !== undefined && (modules.get(owner)?.surfaceFiles.length ?? 0) === 0) {
+    return `${exportsShown} reaches '${group.type}', owned by module '${owner}', which has no surface: give '${owner}' a surface that exports '${group.type}', or drop ${exportsShown} from this surface`;
+  }
+  return `export '${group.type}' by name from ${group.path} (it's declared in ${relativeInternalFile}), change the referencing exports to not expose it, or add ${relativeInternalFile} to this module's own surface`;
+}
+
 export function checkTypeLeaks(graph: {
-  modules: Map<string, { name: string; dir: string; surfaceFiles: string[] }>;
+  modules: Map<string, { name: string; dir: string; surfaceFiles: string[]; files?: string[] }>;
   program: ts.Program;
   checker: ts.TypeChecker;
   rootDir: string;
@@ -619,6 +642,12 @@ export function checkTypeLeaks(graph: {
   // either - see collectNamedDeclarations' own header comment.
   const allSurfaceFiles = [...graph.modules.values()].flatMap((m) => m.surfaceFiles);
   const namedDeclarations = collectNamedDeclarations(graph.program, graph.checker, allSurfaceFiles, options.report);
+
+  // Which declared module owns each analyzed file, for the do: line: a
+  // type owned by this module needs only a name on this surface, while a
+  // type owned by a module with no surface cannot get one from here.
+  const ownerOf = new Map<string, string>();
+  for (const [name, module] of graph.modules) for (const file of module.files ?? []) ownerOf.set(file, name);
 
   for (const [name, module] of graph.modules) {
     // The focused Program owns only one module's surface closure. Walking other
@@ -665,7 +694,7 @@ export function checkTypeLeaks(graph: {
         column: group.column,
         evidence: `'${group.type}', declared in '${relativeInternalFile}', is never exported by name from module '${name}'${REFERENCED_BY_MARKER}${shown}${more}`,
         because: BECAUSE,
-        do: `export '${group.type}' by name from ${group.path} (it's declared in ${relativeInternalFile}), change the referencing exports to not expose it, or add ${relativeInternalFile} to this module's own surface`,
+        do: leakDo(name, group, relativeInternalFile, ownerOf.get(group.file), graph.modules, shown + more),
         todoModule: name,
         leak: { internalType: group.type, internalFile: group.file, exportedAs: names },
       });

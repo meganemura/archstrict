@@ -76,7 +76,7 @@ test("coarse module buckets name the actual importing files", () => {
     const violations = checkCycles(graph);
     expect(violations).toHaveLength(1);
     expect(violations[0]!.evidence).toBe("root -> rules -> root");
-    expect(violations[0]!.do).toBe("break the cycle at src/todo-store.ts -> src/rules/type-leak.ts (module root -> rules), or merge the modules involved - real import chain: src/todo-store.ts -> src/rules/type-leak.ts, src/rules/type-leak.ts -> src/config.ts");
+    expect(violations[0]!.do).toBe("root imports rules 1 time(s): src/todo-store.ts -> src/rules/type-leak.ts; rules imports root 1 time(s): src/rules/type-leak.ts -> src/config.ts; either extract the part both sides use into a leaf module that root and rules both import, or pass the dependency in from the side that owns it, so the other side stops importing it; run archstrict simulate on the planned change first");
     expect(violations[0]!.path).toBe(join(root, "src/todo-store.ts"));
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
@@ -114,12 +114,13 @@ test("a lopsided 2-module cycle (6 edges a -> b, 1 edge b -> a) names the b -> a
     expect(violations[0]!.evidence).toBe("a -> b -> a");
     expect(violations[0]!.do).toBe(
       "remove the 1 import(s) from b to a (a imports b 6 times, so b -> a is likely the unintended direction): src/b/module.ts -> src/a/module.ts" +
-      "; alternatively, break the cycle at src/a/module.ts -> src/b/module.ts (module a -> b), or merge the modules involved - real import chain: src/a/module.ts -> src/b/module.ts, src/b/module.ts -> src/a/module.ts",
+      "; alternatively, a imports b 6 time(s): src/a/module.ts -> src/b/module.ts; b imports a 1 time(s): src/b/module.ts -> src/a/module.ts; " +
+      "either extract the part both sides use into a leaf module that a and b both import, or pass the dependency in from the side that owns it, so the other side stops importing it; run archstrict simulate on the planned change first",
     );
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-test("a balanced 2-module cycle (2 edges each way) leaves the do: unchanged", () => {
+test("a balanced 2-module cycle (2 edges each way) names both sides and the two moves", () => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "archstrict-balanced-cycle-")));
   try {
     buildLopsidedFixture(root, {
@@ -132,7 +133,8 @@ test("a balanced 2-module cycle (2 edges each way) leaves the do: unchanged", ()
     const violations = checkCycles(graph);
     expect(violations).toHaveLength(1);
     expect(violations[0]!.do).toBe(
-      "break the cycle at src/a/module.ts -> src/b/module.ts (module a -> b), or merge the modules involved - real import chain: src/a/module.ts -> src/b/module.ts, src/b/module.ts -> src/a/module.ts",
+      "a imports b 2 time(s): src/a/module.ts -> src/b/module.ts; b imports a 2 time(s): src/b/module.ts -> src/a/module.ts; " +
+      "either extract the part both sides use into a leaf module that a and b both import, or pass the dependency in from the side that owns it, so the other side stops importing it; run archstrict simulate on the planned change first",
     );
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
@@ -177,7 +179,8 @@ test("a lopsided pair's minority edges spread across more than one file are list
     expect(violations).toHaveLength(1);
     expect(violations[0]!.do).toBe(
       "remove the 2 import(s) from b to a (a imports b 6 times, so b -> a is likely the unintended direction): src/b/x.ts -> src/a/module.ts, src/b/y.ts -> src/a/module.ts" +
-      "; alternatively, break the cycle at src/a/module.ts -> src/b/module.ts (module a -> b), or merge the modules involved - real import chain: src/a/module.ts -> src/b/module.ts, src/b/x.ts -> src/a/module.ts",
+      "; alternatively, a imports b 6 time(s): src/a/module.ts -> src/b/module.ts; b imports a 2 time(s): src/b/x.ts -> src/a/module.ts, src/b/y.ts -> src/a/module.ts; " +
+      "either extract the part both sides use into a leaf module that a and b both import, or pass the dependency in from the side that owns it, so the other side stops importing it; run archstrict simulate on the planned change first",
     );
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

@@ -192,13 +192,21 @@ describe("checkCycles (property)", () => {
               assert.equal(v.todoModule, [...component!].sort()[0]);
 
               const valueEdges = edges.filter((e) => !e.isTypeOnly);
+              // A two-module cycle names both sides and the two moves; a longer one
+              // keeps the general break-the-cycle advice.
+              const [first, second] = [...component!].sort();
+              const side = (from: string, to: string) =>
+                `${from} imports ${to} ${valueEdges.filter((e) => e.from === from && e.to === to).length} time(s): src/${from}/importer.ts -> src/${to}/module.ts`;
+              const generalDo = component!.length === 2
+                ? `${side(first!, second!)}; ${side(second!, first!)}; either extract the part both sides use into a leaf module that ${first} and ${second} both import, or pass the dependency in from the side that owns it, so the other side stops importing it; run archstrict simulate on the planned change first`
+                : breakCycleDo;
               const lopsided = mostLopsidedPair(component!, valueEdges);
               if (lopsided === undefined) {
-                assert.equal(v.do, breakCycleDo);
+                assert.equal(v.do, generalDo);
               } else {
                 const fileEdge = `src/${lopsided.minorityFrom}/importer.ts -> src/${lopsided.minorityTo}/module.ts`;
                 const lopsidedDo = `remove the ${lopsided.minorityCount} import(s) from ${lopsided.minorityFrom} to ${lopsided.minorityTo} (${lopsided.minorityTo} imports ${lopsided.minorityFrom} ${lopsided.majorityCount} times, so ${lopsided.minorityFrom} -> ${lopsided.minorityTo} is likely the unintended direction): ${fileEdge}`;
-                assert.equal(v.do, `${lopsidedDo}; alternatively, ${breakCycleDo}`);
+                assert.equal(v.do, `${lopsidedDo}; alternatively, ${generalDo}`);
               }
               for (let i = 0; i < path.length - 1; i++) {
                 assert.ok(valuePairs.has(`${path[i]}->${path[i + 1]}`));
