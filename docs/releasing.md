@@ -45,11 +45,14 @@ to work.
    the `package.json` version. Push the commit and tag. The tag push starts the workflow.
 5. Approve the `publish` environment for that Actions run. The workflow runs `npm ci`, the build,
    typecheck, and tests before `npm publish`. `prepublishOnly` repeats those checks.
-6. Extract only that version's notes. `--notes-file CHANGELOG.md` would include every version.
-   Use `awk '/^## 0.x.0/{in_version=1;next} /^## /{in_version=0} in_version' CHANGELOG.md > notes.md`.
-   Then run `gh release create v0.x.0 --title v0.x.0 --notes-file notes.md`.
+6. After `npm publish` succeeds, the workflow's `release` job creates the GitHub release. It
+   extracts only that version's section from `CHANGELOG.md` (the whole file would carry every
+   version), and it skips a release that already exists, so re-running the tag is safe. If that job
+   fails, extract the section and create the release by hand:
+   `awk '/^## 0.x.0/{in_version=1;next} /^## /{in_version=0} in_version' CHANGELOG.md > notes.md`,
+   then `gh release create v0.x.0 --title v0.x.0 --notes-file notes.md`.
 7. Install or update the skill and plugin for the agents that use this repository, following
    whatever install path Claude Code and the agent's own tooling document for a plugin repository
    at that time; this repository names no fixed install command for that step.
 
-The owner performs the commit, tag, push, environment approval, release creation, and npm publish.
+The owner performs the commit, tag, push, and environment approval. The workflow then publishes to npm and creates the GitHub release.
