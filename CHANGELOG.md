@@ -3,10 +3,11 @@
 The format follows Keep a Changelog, and the versions follow SemVer. Before 1.0, a minor version
 may change commands, flags, config, or output shape. The version entry will describe each change.
 
-## Unreleased
+## 0.2.0 (2026-10-01)
 
 ### Added
 
+- This repository includes `.claude-plugin/marketplace.json`. Claude Code users can install the plugin with `/plugin marketplace add meganemura/archstrict` and `/plugin install archstrict@archstrict`.
 - `declaredModules[].glob` accepts an array of paths that share one directory, so a flat directory can name a multi-file seam without a directory move. Surface and friends resolve against that directory. The type-leak boundary is each listed file. Paths in two directories, and an empty array, are config errors.
 - `archstrict init` prints that the generated map is an inventory. A container of only files is told to group seams with a glob array. A directory that holds at least four fifths of the files (and at least eight) is named so it can be split before `archstrict todo`.
 - `archstrict recommend` adds `mapNotes` (`mega-module`, `file-per-module`). A surface proposal for the mega-module says to split it before freezing its bypasses.
@@ -36,9 +37,9 @@ may change commands, flags, config, or output shape. The version entry will desc
 ### Documentation
 
 - The skill, recommend reference, and re-architecture notes tell an adopter to treat `init` as an inventory, to split a mega-module before freezing it, to group a flat directory with a `glob` array, to install the skill once per user, and where a CLI and a graph helper sit.
-- The README (and its Japanese twin) has one Install section per host. Claude Code loads a git
-  clone of this repository as a plugin for the skill, the edit hooks, and the MCP server. Other
-  agents install the skill with `gh skill install`, add the `AGENTS.md` section with
+- The README (and its Japanese twin) has one Install section per host. Claude Code users add the
+  repository marketplace, then install `archstrict@archstrict` for the skill, edit hooks, and MCP
+  server. Other agents install the skill with `gh skill install`, add the `AGENTS.md` section with
   `archstrict agents`, and run `archstrict check` in CI, since the edit hooks are Claude Code only.
 
 ## 0.1.0 (2026-09-29)

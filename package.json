@@ -1,6 +1,6 @@
 {
   "name": "archstrict",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "TypeScript module boundary checker: default-private module surfaces, layers, cycles, and a todo freeze that can only shrink.",
   "keywords": [
     "architecture",
