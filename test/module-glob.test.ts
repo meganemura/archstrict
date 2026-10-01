@@ -5,7 +5,7 @@ import { describe, expect, test } from "vitest";
 import assert from "node:assert/strict";
 import * as hegel from "@hegeldev/hegel";
 import * as gen from "@hegeldev/hegel/generators";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mostSpecificMatch } from "../src/classify.js";
@@ -166,6 +166,17 @@ describe("mega-module and file-per-module notes", () => {
       const mega = await recommend(root);
       expect(mega.mapNotes.map((note) => note.kind)).toContain("mega-module");
       expect(mega.mapNotes.find((note) => note.kind === "mega-module")?.evidence).toContain("8 of 9");
+    });
+  });
+
+  test("recommend keeps file-per-module globs relative through a symlink root", async () => {
+    await withTempProject(async (root) => {
+      const realRoot = join(root, "real");
+      const linkedRoot = join(root, "linked");
+      for (const name of ["a", "b", "c", "d"]) write(realRoot, `src/${name}.ts`, `export const ${name} = 1;\n`);
+      symlinkSync(realRoot, linkedRoot, "dir");
+      const result = await recommend(linkedRoot);
+      expect(result.mapNotes.find((note) => note.kind === "file-per-module")?.do).toContain('glob: ["src/a.ts", "src/b.ts"]');
     });
   });
 

@@ -833,7 +833,8 @@ export async function recommend(
     counts.set(edge.fromModule, targets);
   }
   const surfaceProposals = proposeSurfaces(graph);
-  const mapNotes = mapNotesFor(projectRoot, modules);
+  // Graph module.dir paths are realpath-resolved, so use the same root for relative paths.
+  const mapNotes = mapNotesFor(graph.rootDir, modules);
   // A placeholder Config for the no-config path (freshRun's own plan, not
   // a file on disk): detectPatterns only ever reads classify/edges/because
   // off it and passes it straight to runRules, which needs a well-formed
