@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildModuleGraph, type ModuleGraph } from "../src/module-graph.js";
 import type { Config } from "../src/config.js";
-import { checkAllowDeny, computeAllowDeny, checkExhaustiveAllow } from "../src/rules/constraints.js";
+import { checkAllowDeny, computeAllowDeny, checkExhaustiveAllow, type ConstraintViolation } from "../src/rules/constraints.js";
 import { fingerprintOf } from "../src/todo-store.js";
 import { check, formatText } from "../src/verbs/check.js";
 import type { Move } from "../src/rules/moves.js";
@@ -97,6 +97,39 @@ test("deny widening removes the value and uses whole-graph reroute candidates", 
   expect(computeAllowDeny(graph, replaceRule(deny, { deny: [] })).violations).toEqual([]);
 }));
 
+// The do text is the edit an agent applies to the config. It must name the list that the
+// move's kind changes, because adding to allow and removing from deny are opposite edits.
+test.each([
+  { kind: "widen-allow", lists: {}, do: 'add "forbidden" to allow for allowDeny entry 0' },
+  { kind: "widen-deny", lists: { allow: undefined, deny: ["forbidden"] }, do: 'remove "forbidden" from deny for allowDeny entry 0' },
+])("a $kind move names its list, the value, and the entry to edit", ({ kind, lists, do: text }) => project((_root, config, graph) => {
+  const move = checkAllowDeny(graph, replaceRule(config, lists))[0]!.moves!.find(move => move.kind.startsWith("widen-"))!;
+  expect(move).toMatchObject({ kind, do: text });
+}));
+
+// Real projects tag one module in several namespaces, so a tag outside the rule's namespace
+// must not make the denied module look like a legal target. The source's own module is no
+// alternative either: proposing it would send the violating file back to itself.
+test("deny-list reroutes propose only surfaces with an admitted value in the rule's namespace, never the denied target or the source's own module", () => project((root, config) => {
+  writeFileSync(join(root, "src/other/index.ts"), 'import "../future/index.js"; import "../app/index.js";');
+  const cfg = replaceRule({ ...config, classify: config.classify!.map(entry =>
+    entry.glob === "src/forbidden/**" ? { ...entry, tags: ["role:forbidden", "layer:core"] } : entry) },
+  { allow: undefined, deny: ["forbidden"] });
+  const graph = buildModuleGraph({ projectRoot: root, declaredModules: cfg.declaredModules! });
+  const reroute = checkAllowDeny(graph, cfg)[0]!.moves!.find(move => move.kind === "reroute")!;
+  const surfaces = JSON.parse(/(\[.*\])/.exec(reroute.do)![1]!);
+  expect(surfaces).toEqual(["src/allowed/index.ts", "src/future/index.ts"]);
+}));
+
+// Authors order declaredModules by meaning, not by path. The proposal must read the same for
+// any declaration order, so two runs over equivalent configs can be compared line by line.
+test("reroute surfaces are listed in path order whatever order the config declares modules in", () => project((root, config) => {
+  const cfg = replaceRule({ ...config, declaredModules: [...config.declaredModules!].reverse() }, { allow: ["allowed", "future"] });
+  const graph = buildModuleGraph({ projectRoot: root, declaredModules: cfg.declaredModules! });
+  const reroute = checkAllowDeny(graph, cfg)[0]!.moves!.find(move => move.kind === "reroute")!;
+  expect(JSON.parse(/(\[.*\])/.exec(reroute.do)![1]!)).toEqual(["src/allowed/index.ts", "src/future/index.ts"]);
+}));
+
 test.each([{ allow: [] }, { allow: ["missing"] }])("no reachable surface omits reroute: %j", ({ allow }) => project((_root, config, graph) => {
   expect(checkAllowDeny(graph, replaceRule(config, { allow }))[0]!.moves!.some(move => move.kind === "reroute")).toBe(false);
 }));
@@ -168,6 +201,64 @@ test("matching rules retain their own move identity and pre-existing findings ar
   expect(checkExhaustiveAllow(graph, cfg)).toHaveLength(1);
 }));
 
+// An exhaustive finding belongs to one entry. Another entry that is exhaustive already says
+// nothing about the entry this widening changes, so the new finding must still be named.
+test("a widening that makes its own entry exhaustive names that finding even when another entry already is", () => project((_root, config, graph) => {
+  const cfg: Config = { ...config, edges: { allowDeny: [
+    { ...config.edges!.allowDeny![0]!, allow: ["allowed", "forbidden", "future"] },
+    { ...config.edges!.allowDeny![0]!, allow: ["allowed", "future"], because: "Second rule owns this violation." },
+  ] } };
+  expect(checkExhaustiveAllow(graph, cfg)).toHaveLength(1);
+  const violation = checkAllowDeny(graph, cfg)[0]!;
+  expect(violation.because).toBe("Second rule owns this violation.");
+  expect(violation.moves!.find(move => move.kind === "widen-allow")).toMatchObject({ verified: true, creates: ["exhaustive-allow-list"] });
+}));
+
+// One edge can violate entries in two namespaces at once. Widening one entry leaves the other
+// entry's violations as they were, so naming them in creates would report a consequence the
+// change does not have.
+test("a widening never lists a violation that another entry already reports as one it creates", () => project((_root, config, graph) => {
+  const cfg: Config = { ...config,
+    classify: config.classify!.map(entry => entry.glob === "src/allowed/**" ? { ...entry, tags: ["role:allowed", "layer:core"] } : entry),
+    edges: { allowDeny: [
+      config.edges!.allowDeny![0]!,
+      { source: "role:app", targetNamespace: "layer", deny: ["core"], because: "App stays off the core layer." },
+    ] } };
+  const widenings = checkAllowDeny(graph, cfg).map(violation => violation.moves!.find(move => move.kind.startsWith("widen-"))!);
+  expect(widenings.map(move => move.kind)).toEqual(["widen-allow", "widen-deny"]);
+  for (const move of widenings) {
+    expect(move.verified).toBe(true);
+    expect(move).not.toHaveProperty("creates");
+  }
+}));
+
+// A finding is one edge judged by one entry, and each finding carries its own moves. Another
+// finding that outlives this widening gets its own widening, so it must not mark this one
+// unverified: that would tell the reader the edit fails to clear the finding it was made for.
+test.each([
+  { remaining: "another edge still breaks the same entry", shared: (v: ConstraintViolation) => v.because,
+    setup: (root: string, config: Config) => {
+      writeFileSync(join(root, "src/app/index.ts"), 'import "../forbidden/index.js"; import "../allowed/index.js"; import "../future/index.js";');
+      return config;
+    } },
+  { remaining: "the same edge still breaks another entry", shared: (v: ConstraintViolation) => `${v.path}:${v.line}:${v.column}`,
+    setup: (_root: string, config: Config): Config => ({ ...config,
+      classify: config.classify!.map(entry => entry.glob === "src/forbidden/**" ? { ...entry, tags: ["role:forbidden", "layer:core"] } : entry),
+      edges: { allowDeny: [
+        config.edges!.allowDeny![0]!,
+        { source: "role:app", targetNamespace: "layer", deny: ["core"], because: "App stays off the core layer." },
+      ] } }) },
+])("a widening that clears its own finding is verified while $remaining", ({ shared, setup }) => project((root, config) => {
+  const cfg = setup(root, config);
+  const graph = buildModuleGraph({ projectRoot: root, declaredModules: cfg.declaredModules! });
+  const violations = checkAllowDeny(graph, cfg);
+  expect(violations).toHaveLength(2);
+  expect(new Set(violations.map(shared)).size).toBe(1);
+  for (const violation of violations) {
+    expect(violation.moves!.find(move => move.kind.startsWith("widen-"))).toMatchObject({ verified: true });
+  }
+}));
+
 test("an internal file tag cannot supply a reroute surface", () => project((root, config) => {
   writeFileSync(join(root, "src/allowed/internal.ts"), 'export const internal = 1;');
   const cfg: Config = { ...config, classify: [...config.classify!,
@@ -178,11 +269,17 @@ test("an internal file tag cannot supply a reroute surface", () => project((root
   expect(checkAllowDeny(graph, cfg)[0]!.moves!.some(move => move.kind === "reroute")).toBe(false);
 }));
 
-test("a widening that leaves another forbidden target tag is not verified", () => project((root, config) => {
+// A builtin import carries both pkg:<name> and the pkg:node umbrella tag. Admitting one of them
+// leaves the other forbidden, in either list mode.
+test.each([
+  { mode: "allow", lists: { allow: [] }, admitFs: { allow: ["fs"] } },
+  { mode: "deny", lists: { allow: undefined, deny: ["node", "fs"] }, admitFs: { deny: ["node"] } },
+])("a widening that leaves another forbidden target tag is not verified: $mode list", ({ lists, admitFs }) => project((root, config) => {
   writeFileSync(join(root, "src/app/index.ts"), 'import "node:fs";');
   const graph = buildModuleGraph({ projectRoot: root, declaredModules: config.declaredModules! });
-  const cfg = replaceRule(config, { targetNamespace: "pkg", allow: [] });
-  const move = checkAllowDeny(graph, cfg)[0]!.moves!.find(move => move.kind === "widen-allow")!;
+  const cfg = replaceRule(config, { targetNamespace: "pkg", ...lists });
+  const move = checkAllowDeny(graph, cfg)[0]!.moves!.find(move => move.kind.startsWith("widen-"))!;
   expect(move.verified).toBe(false);
-  expect(computeAllowDeny(graph, replaceRule(cfg, { allow: ["fs"] })).violations).toHaveLength(1);
+  expect(move).not.toHaveProperty("creates");
+  expect(computeAllowDeny(graph, replaceRule(cfg, admitFs)).violations).toHaveLength(1);
 }));
