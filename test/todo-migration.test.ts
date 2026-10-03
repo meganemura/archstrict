@@ -48,6 +48,24 @@ describe("readLegacyTodoState", () => {
     });
   });
 
+  // The old layout's reader looked for the todo inside any module path that
+  // was not an existing file. Once a single-file module's file is deleted,
+  // the todo frozen beside it was never read again, so check stayed green.
+  // Reading it now would report its entries as stale-todo and fail check on
+  // a project that passed before the upgrade.
+  test("a single-file module whose file is gone does not adopt the todo left beside it", () => {
+    withRoot((root) => {
+      mkdirSync(join(root, "src"), { recursive: true });
+      writeFileSync(join(root, LEGACY_MARKER_NAME), "");
+      writeFileSync(
+        join(root, "src", "secret.ts.archstrict.todo.json"),
+        JSON.stringify({ entries: [{ rule: "public-surface-bypass", path: "src/app/index.ts", evidence: "e" }] }),
+      );
+      const state = readLegacyTodoState(root, new Map([["secret", join(root, "src", "secret.ts")]]));
+      expect(state.entriesByModule.get("secret") ?? []).toEqual([]);
+    });
+  });
+
   test("normalizes a legacy absolute path/target into project-relative form", () => {
     withRoot((root) => {
       mkdirSync(join(root, "src", "app"), { recursive: true });

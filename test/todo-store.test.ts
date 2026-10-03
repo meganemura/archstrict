@@ -8,8 +8,31 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildModuleGraph } from "../src/module-graph.js";
 import { runRules, applyTodo } from "../src/verbs/check.js";
+import { ReportError } from "../src/report-error.js";
 
 const { fingerprintOf } = todoStore;
+
+const RULE_IDS = ["cycle", "type-leak", "tag-order", "tag-boundary", "point-rule", "public-surface-bypass"] as const;
+
+const MALFORMED = /not a valid archstrict\.todo\.json/;
+
+const TEXTS_HOLDING_NO_OBJECT = ["", "  \n", "[]", "null", "1", "\"text\"", JSON.stringify([{ schemaVersion: 1, modules: {} }])];
+
+// A broken todo file reaches the reader as an error plus a `do:` command,
+// and both todo-file errors are fixed by regenerating the file. toThrow
+// alone skips its message check when the thrown value is falsy, so the
+// error is caught and checked field by field.
+function expectTodoFileError(read: () => unknown, message: RegExp): void {
+  let thrown: unknown;
+  try {
+    read();
+  } catch (error) {
+    thrown = error;
+  }
+  expect(thrown).toBeInstanceOf(ReportError);
+  expect((thrown as ReportError).message).toMatch(message);
+  expect((thrown as ReportError).do).toMatch(/archstrict todo/);
+}
 
 describe("fingerprintOf", () => {
   test("a cycle violation's fingerprint excludes path, so it survives which file's edge happened to be reported", () => {
@@ -138,6 +161,85 @@ describe("fingerprintOf", () => {
         .not.toBe(fingerprintOf({ ...base, evidence: evidenceA }));
     }, { testCases: 30 });
   });
+
+  test("evidence stays in the identity unless a public-surface-bypass violation carries both specifier and target", () => {
+    hegel.test(tc => {
+      const path = tc.draw(gen.fromRegex("src/[a-z]{1,6}/[a-z]{1,6}\\.ts"));
+      const specifier = tc.draw(gen.fromRegex("\\.\\./[a-z]{1,6}\\.js"));
+      const target = tc.draw(gen.fromRegex("src/[a-z]{1,6}/[a-z]{1,6}\\.ts"));
+      const evidenceA = tc.draw(gen.fromRegex("[a-z]{1,20}"));
+      const evidenceB = tc.draw(gen.fromRegex("[a-z]{1,20}"));
+      tc.assume(evidenceA !== evidenceB);
+      const fieldSets = [{}, { specifier }, { target }, { specifier, target }];
+      for (const rule of RULE_IDS) {
+        for (const fields of fieldSets) {
+          if (rule === "public-surface-bypass" && "specifier" in fields && "target" in fields) continue;
+          expect(fingerprintOf({ rule, path, evidence: evidenceA, ...fields }))
+            .not.toBe(fingerprintOf({ rule, path, evidence: evidenceB, ...fields }));
+        }
+      }
+    }, { testCases: 20 });
+  });
+
+  test("a type-leak violation's identity ends where its referenced-by list starts, so an entry with no list matches the same leak", () => {
+    hegel.test(tc => {
+      const internalType = tc.draw(gen.fromRegex("[A-Z][a-z]{1,6}"));
+      const declaredIn = tc.draw(gen.fromRegex("src/[a-z]{1,6}/[a-z]{1,6}\\.ts"));
+      const moduleName = tc.draw(gen.fromRegex("[a-z]{1,6}"));
+      const exportsShown = tc.draw(gen.fromRegex("'[A-Z][a-z]{0,5}'(, '[A-Z][a-z]{0,5}'){0,2}"));
+      const leak = `'${internalType}', declared in '${declaredIn}', is never exported by name from module '${moduleName}'`;
+      const path = `src/${moduleName}/index.ts`;
+      expect(fingerprintOf({ rule: "type-leak", path, evidence: leak }))
+        .toBe(fingerprintOf({ rule: "type-leak", path, evidence: `${leak} - referenced by ${exportsShown}` }));
+    }, { testCases: 20 });
+  });
+
+  test("a tag-order violation's identity is the sentence before its sequence clause, so an entry without the clause matches the same edge", () => {
+    hegel.test(tc => {
+      const specifier = tc.draw(gen.fromRegex("\\./[a-z]{1,6}\\.js"));
+      const namespace = tc.draw(gen.fromRegex("[a-z]{1,6}"));
+      const sourceLayer = tc.draw(gen.fromRegex("[a-z]{1,4}"));
+      const targetLayer = tc.draw(gen.fromRegex("[a-z]{1,4}"));
+      const sequence = tc.draw(gen.fromRegex("[a-z]{1,4}( -> [a-z]{1,4}){1,3}"));
+      const sentence = `'${specifier}' reaches '${namespace}:${targetLayer}' from '${namespace}:${sourceLayer}'`;
+      const path = "src/ui/widget.ts";
+      expect(fingerprintOf({ rule: "tag-order", path, evidence: `${sentence} (${namespace} sequence: ${sequence})` }))
+        .toBe(fingerprintOf({ rule: "tag-order", path, evidence: sentence }));
+    }, { testCases: 20 });
+  });
+
+  test("tag-order evidence keeps all its text when the sequence marker or its preceding opening parenthesis is absent", () => {
+    const evidences = [
+      "(hand-written) './a.js' reaches 'layer:b'",
+      "(hand-written) './a.js' reaches 'layer:c'",
+      "'./a.js' reaches 'layer:b' - layer sequence: a -> b",
+      "'./a.js' reaches 'layer:b' - layer sequence: a -> c",
+    ];
+    const fingerprints = evidences.map(evidence => fingerprintOf({ rule: "tag-order", path: "src/ui/widget.ts", evidence }));
+    expect(new Set(fingerprints).size).toBe(evidences.length);
+  });
+
+  test("an evidence suffix is dropped only for the rule whose template it belongs to", () => {
+    hegel.test(tc => {
+      const path = tc.draw(gen.fromRegex("src/[a-z]{1,6}/[a-z]{1,6}\\.ts"));
+      const sentence = tc.draw(gen.fromRegex("[a-z]{1,10}( [a-z]{1,10}){0,3}"));
+      const sequenceA = tc.draw(gen.fromRegex("[a-z]{1,4}( -> [a-z]{1,4}){1,3}"));
+      const sequenceB = tc.draw(gen.fromRegex("[a-z]{1,4}( -> [a-z]{1,4}){1,3}"));
+      const shownA = tc.draw(gen.fromRegex("'[A-Z][a-z]{0,5}'"));
+      const shownB = tc.draw(gen.fromRegex("'[A-Z][a-z]{0,5}'"));
+      tc.assume(sequenceA !== sequenceB && shownA !== shownB);
+      for (const rule of RULE_IDS) {
+        if (rule !== "tag-order") {
+          expect(fingerprintOf({ rule, path, evidence: `${sentence} (layer sequence: ${sequenceA})` }))
+            .not.toBe(fingerprintOf({ rule, path, evidence: `${sentence} (layer sequence: ${sequenceB})` }));
+        }
+        if (rule !== "type-leak") {
+          expect(fingerprintOf({ rule, path, evidence: `${sentence} - referenced by ${shownA}` }))
+            .not.toBe(fingerprintOf({ rule, path, evidence: `${sentence} - referenced by ${shownB}` }));
+        }
+      }
+    }, { testCases: 20 });
+  });
 });
 
 describe("findMatchingEntry's migration path for a legacy public-surface-bypass entry", () => {
@@ -168,6 +270,74 @@ describe("findMatchingEntry's migration path for a legacy public-surface-bypass 
     // A genuinely different specifier at the same path must not match.
     const different = { ...reworded, specifier: "../shared/other.js" };
     expect(todoStore.findMatchingEntry(index, different, relativePath)).toBeUndefined();
+  });
+
+  test("a legacy entry whose evidence does not open with a quoted specifier matches no live violation", () => {
+    const path = "src/app/importer.ts";
+    const legacyEntry = {
+      rule: "public-surface-bypass",
+      path,
+      evidence: "note: '../shared/internal.js' resolved to module 'shared', which has no index.ts",
+    };
+    const index = todoStore.buildTodoIndex([legacyEntry]);
+    const relativePath = (p: string) => p;
+    for (const specifier of ["../shared/internal.js", "undefined"]) {
+      const live = {
+        rule: "public-surface-bypass",
+        path,
+        evidence: `'${specifier}' resolved to module 'shared', which has no index.ts`,
+        specifier,
+        target: "src/shared/internal.ts",
+      };
+      expect(todoStore.findMatchingEntry(index, live, relativePath)).toBeUndefined();
+    }
+  });
+
+  test("an entry of another rule never matches a public-surface-bypass violation, whatever its evidence says", () => {
+    const path = "src/app/importer.ts";
+    const specifier = "../shared/internal.js";
+    const evidence = `'${specifier}' resolved to module 'shared', which has no index.ts`;
+    const live = { rule: "public-surface-bypass", path, evidence, specifier, target: "src/shared/internal.ts" };
+    const relativePath = (p: string) => p;
+    for (const rule of RULE_IDS) {
+      if (rule === "public-surface-bypass") continue;
+      const index = todoStore.buildTodoIndex([{ rule, path, evidence }]);
+      expect(todoStore.findMatchingEntry(index, live, relativePath)).toBeUndefined();
+    }
+  });
+
+  test("an entry that stores specifier and target matches only the file it resolved to", () => {
+    const path = "src/app/importer.ts";
+    const specifier = "../shared/internal.js";
+    const entry = {
+      rule: "public-surface-bypass",
+      path,
+      evidence: `'${specifier}' resolved to a file inside module 'shared' other than its index.ts`,
+      specifier,
+      target: "src/shared/internal.ts",
+    };
+    const index = todoStore.buildTodoIndex([entry]);
+    const relativePath = (p: string) => p;
+    expect(todoStore.findMatchingEntry(index, { ...entry }, relativePath)).toBe(entry);
+    expect(todoStore.findMatchingEntry(index, { ...entry, target: "src/shared/internal.tsx" }, relativePath)).toBeUndefined();
+  });
+});
+
+describe("EMPTY_TODO_INDEX", () => {
+
+  test("matches no violation, the same as an index built from no entries", () => {
+    const empty = todoStore.buildTodoIndex([]);
+    const relativePath = (p: string) => p;
+    const specifier = "../shared/internal.js";
+    const target = "src/shared/internal.ts";
+    const evidence = `'${specifier}' resolved to module 'shared', which has no index.ts`;
+    for (const rule of RULE_IDS) {
+      for (const fields of [{}, { specifier }, { target }, { specifier, target }]) {
+        const v = { rule, path: "src/app/importer.ts", evidence, ...fields };
+        expect(todoStore.findMatchingEntry(todoStore.EMPTY_TODO_INDEX, v, relativePath)).toBeUndefined();
+        expect(todoStore.findMatchingEntry(empty, v, relativePath)).toBeUndefined();
+      }
+    }
   });
 });
 
@@ -220,8 +390,6 @@ describe("an old-format todo file keeps matching today's algorithm, for every ru
 });
 
 describe("buildTodoEntry's round trip: a freshly frozen entry always matches the live violation it came from", () => {
-  const RULE_IDS = ["cycle", "type-leak", "tag-order", "tag-boundary", "point-rule", "public-surface-bypass"] as const;
-
   test("for every freezable rule id, findMatchingEntry(buildTodoIndex([entry]), v) recovers the entry it was built from", () => {
     hegel.test(tc => {
       const rule = tc.draw(gen.sampledFrom(RULE_IDS));
@@ -238,6 +406,23 @@ describe("buildTodoEntry's round trip: a freshly frozen entry always matches the
       const index = todoStore.buildTodoIndex([entry]);
       expect(todoStore.findMatchingEntry(index, v, relativePath)).toBe(entry);
     }, { testCases: 40 });
+  });
+
+  test("the row it builds is the row a write and a read of the todo file give back, whatever identity fields the violation carries", () => {
+    hegel.test(tc => {
+      const path = tc.draw(gen.fromRegex("src/[a-z]{1,6}/[a-z]{1,6}\\.ts"));
+      const evidence = tc.draw(gen.fromRegex("[a-z ]{1,30}"));
+      const specifier = tc.draw(gen.fromRegex("\\.\\./[a-z]{1,6}\\.js"));
+      const target = tc.draw(gen.fromRegex("src/[a-z]{1,6}/[a-z]{1,6}\\.ts"));
+      const relativePath = (p: string) => p;
+      for (const rule of RULE_IDS) {
+        for (const fields of [{}, { specifier }, { target }, { specifier, target }]) {
+          const entry = todoStore.buildTodoEntry({ rule, path, evidence, ...fields }, relativePath);
+          const parsed = parseTodoFileText("archstrict.todo.json", serializeTodoFile(new Map([["m", [entry]]])));
+          expect(parsed.modules.get("m")).toEqual([entry]);
+        }
+      }
+    }, { testCases: 10 });
   });
 });
 
@@ -258,12 +443,183 @@ describe("readTodoFile's projectRoot normalization", () => {
   });
 });
 
+describe("parseTodoFileText", () => {
+
+  test("a module's entries are exactly its objects whose rule, path, and evidence are text, keeping specifier and target only as a pair", () => {
+    const text = {
+      rule: "public-surface-bypass",
+      path: "src/app/importer.ts",
+      evidence: "e",
+      specifier: "../shared/internal.js",
+      target: "src/shared/internal.ts",
+    };
+    const fields = Object.keys(text) as (keyof typeof text)[];
+
+    const kinds = [undefined, "text", 7, null] as const;
+    const objects: Record<string, unknown>[] = [];
+    for (let combination = 0; combination < kinds.length ** fields.length; combination++) {
+      const object: Record<string, unknown> = {};
+      fields.forEach((field, i) => {
+        const kind = kinds[Math.floor(combination / kinds.length ** i) % kinds.length];
+        if (kind === "text") object[field] = text[field];
+        else if (kind !== undefined) object[field] = kind;
+      });
+      objects.push(object);
+    }
+    const plain = { rule: "public-surface-bypass", path: "src/app/importer.ts", evidence: "e" };
+    const edge = {
+      rule: "public-surface-bypass", path: "src/app/importer.ts", evidence: "e",
+      specifier: "../shared/internal.js", target: "src/shared/internal.ts",
+    };
+    const expected = [
+      plain, plain, plain, plain,
+      plain, edge, plain, plain,
+      plain, plain, plain, plain,
+      plain, plain, plain, plain,
+    ];
+
+    const parsed = parseTodoFileText("archstrict.todo.json", JSON.stringify({ schemaVersion: 1, modules: { m: objects } }));
+    expect(parsed.modules.get("m")).toEqual(expected);
+
+    const optionalStates = [
+      { fields: {}, expected: { rule: "cycle", path: "src/a.ts", evidence: "a -> b -> a" } },
+      { fields: { specifier: "./b.js" }, expected: { rule: "cycle", path: "src/a.ts", evidence: "a -> b -> a" } },
+      { fields: { target: "src/b.ts" }, expected: { rule: "cycle", path: "src/a.ts", evidence: "a -> b -> a" } },
+      {
+        fields: { specifier: "./b.js", target: "src/b.ts" },
+        expected: { rule: "cycle", path: "src/a.ts", evidence: "a -> b -> a", specifier: "./b.js", target: "src/b.ts" },
+      },
+    ];
+    for (const state of optionalStates) {
+      const input = { rule: "cycle", path: "src/a.ts", evidence: "a -> b -> a", ...state.fields };
+      const read = parseTodoFileText("archstrict.todo.json", JSON.stringify({ schemaVersion: 1, modules: { m: [input] } }));
+      expect(read.modules.get("m")).toEqual([state.expected]);
+    }
+  });
+
+  test("a module value that is not an array, and an element that is not an object, record no debt beside the entries that do", () => {
+    const entry = { rule: "cycle", path: "src/a.ts", evidence: "a -> b -> a" };
+    const notArrays = { nullValue: null, objectValue: { m: [entry] }, textValue: "text", numberValue: 3 };
+    const text = JSON.stringify({
+      schemaVersion: 1,
+      modules: { listed: [1, "text", null, true, [entry], entry], ...notArrays },
+    });
+
+    const parsed = parseTodoFileText("archstrict.todo.json", text);
+    expect(parsed.modules.get("listed")).toEqual([entry]);
+    for (const name of Object.keys(notArrays)) {
+      expect(parsed.modules.get(name) ?? []).toEqual([]);
+    }
+  });
+
+  test("a text that holds no object reads as a malformed todo file", () => {
+    for (const text of TEXTS_HOLDING_NO_OBJECT) {
+      expectTodoFileError(() => parseTodoFileText("archstrict.todo.json", text), MALFORMED);
+    }
+  });
+
+  test("a schemaVersion that is missing or is not a number reads as a malformed file, not an unsupported version", () => {
+    const versions = [undefined, "1", null, [1], { value: 1 }];
+    for (const schemaVersion of versions) {
+      const text = JSON.stringify({ schemaVersion, modules: {} });
+      expectTodoFileError(() => parseTodoFileText("archstrict.todo.json", text), MALFORMED);
+    }
+  });
+
+  test("a top-level key other than schemaVersion and modules changes neither the version nor the entries", () => {
+    const entry = { rule: "cycle", path: "src/a.ts", evidence: "a -> b -> a" };
+    const file = { schemaVersion: 1, modules: { m: [entry] } };
+
+    const extras = { count: 2, notes: { other: [entry] }, comment: "text", list: [entry], flag: true, empty: null };
+
+    const plain = parseTodoFileText("archstrict.todo.json", JSON.stringify(file));
+    const withExtras = parseTodoFileText("archstrict.todo.json", JSON.stringify({ ...file, ...extras }));
+    expect(withExtras.schemaVersion).toBe(plain.schemaVersion);
+    expect([...withExtras.modules]).toEqual([["m", [entry]]]);
+  });
+
+  test("an absolute path or target under the given project root reads back project-relative, and as written when no root is given", () => {
+    hegel.test(tc => {
+      const root = join(tmpdir(), tc.draw(gen.fromRegex("[a-z]{1,8}")));
+      const path = tc.draw(gen.fromRegex("src/[a-z]{1,6}/[a-z]{1,6}\\.ts"));
+      const target = tc.draw(gen.fromRegex("src/[a-z]{1,6}/[a-z]{1,6}\\.ts"));
+      const relativeEntry = { rule: "public-surface-bypass", path, evidence: "e", specifier: "../x.js", target };
+      const absoluteEntry = { ...relativeEntry, path: join(root, path), target: join(root, target) };
+      const text = JSON.stringify({ schemaVersion: 1, modules: { m: [absoluteEntry, relativeEntry] } });
+
+      expect(parseTodoFileText("archstrict.todo.json", text, root).modules.get("m")).toEqual([relativeEntry, relativeEntry]);
+      expect(parseTodoFileText("archstrict.todo.json", text).modules.get("m")).toEqual([absoluteEntry, relativeEntry]);
+    }, { testCases: 10 });
+  });
+
+  test("each module key and each entry is located at its own 1-based line and column, whatever the indentation", () => {
+    hegel.test(tc => {
+      const indent = () => " ".repeat(tc.draw(gen.integers({ minValue: 0, maxValue: 8 })));
+      const [a, b, c] = [
+        { rule: "cycle", path: "src/a.ts", evidence: "a -> b -> a" },
+        { rule: "cycle", path: "src/b.ts", evidence: "b -> c -> b" },
+        { rule: "cycle", path: "src/c.ts", evidence: "c -> d -> c" },
+      ].map((entry) => JSON.stringify(entry));
+      const lines = [
+        "{",
+        `${indent()}"schemaVersion": 1,`,
+        `${indent()}"modules": {`,
+        `${indent()}"alpha": [`,
+        `${indent()}${a},`,
+        `${indent()}${b}`,
+        `${indent()}],`,
+
+        `${indent()}"beta": [${indent()}${c}${indent()}]`,
+        `${indent()}}`,
+        "}",
+      ];
+      const locate = (needle: string) => {
+        const index = lines.findIndex((line) => line.includes(needle));
+        return { line: index + 1, column: lines[index]!.indexOf(needle) + 1 };
+      };
+
+      const parsed = parseTodoFileText("archstrict.todo.json", lines.join("\n"));
+      for (const name of ["alpha", "beta"]) {
+        expect(parsed.moduleKeyLocation.get(name)).toEqual(locate(`"${name}"`));
+      }
+      const entries = [...parsed.modules.values()].flat();
+      expect(entries).toHaveLength(3);
+      for (const entry of entries) {
+        expect(parsed.entryLocation.get(entry)).toEqual(locate(JSON.stringify(entry)));
+      }
+    }, { testCases: 10 });
+  });
+});
+
 describe("readTodoFile's schemaVersion guard", () => {
+
   test("returns undefined only for the legacy { entries: [...] } shape, with no schemaVersion", () => {
     const root = mkdtempSync(join(tmpdir(), "archstrict-todo-schema-guard-"));
     try {
       writeFileSync(join(root, "archstrict.todo.json"), JSON.stringify({ entries: [{ rule: "cycle", path: "src/a.ts", evidence: "e" }] }));
       expect(readTodoFile(root)).toBeUndefined();
+
+      const current = { rule: "cycle", path: "src/m/a.ts", evidence: "a -> b -> a" };
+      const legacy = { rule: "cycle", path: "src/legacy.ts", evidence: "x -> y -> x" };
+      writeFileSync(
+        join(root, "archstrict.todo.json"),
+        JSON.stringify({ schemaVersion: 1, entries: [legacy], modules: { m: [current] } }),
+      );
+      const parsed = readTodoFile(root);
+      expect(parsed).toBeDefined();
+      expect([...parsed!.modules]).toEqual([["m", [current]]]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("throws a malformed-file error on a file whose text holds no object", () => {
+    const root = mkdtempSync(join(tmpdir(), "archstrict-todo-schema-guard-"));
+    try {
+      for (const text of TEXTS_HOLDING_NO_OBJECT) {
+        writeFileSync(join(root, "archstrict.todo.json"), text);
+        expectTodoFileError(() => readTodoFile(root), MALFORMED);
+      }
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -273,7 +629,7 @@ describe("readTodoFile's schemaVersion guard", () => {
     const root = mkdtempSync(join(tmpdir(), "archstrict-todo-schema-guard-"));
     try {
       writeFileSync(join(root, "archstrict.todo.json"), JSON.stringify({ modules: { shared: [] } }));
-      expect(() => readTodoFile(root)).toThrow(/not a valid archstrict\.todo\.json/);
+      expectTodoFileError(() => readTodoFile(root), MALFORMED);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -283,7 +639,7 @@ describe("readTodoFile's schemaVersion guard", () => {
     const root = mkdtempSync(join(tmpdir(), "archstrict-todo-schema-guard-"));
     try {
       writeFileSync(join(root, "archstrict.todo.json"), "{}");
-      expect(() => readTodoFile(root)).toThrow(/not a valid archstrict\.todo\.json/);
+      expectTodoFileError(() => readTodoFile(root), MALFORMED);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -293,7 +649,7 @@ describe("readTodoFile's schemaVersion guard", () => {
     const root = mkdtempSync(join(tmpdir(), "archstrict-todo-schema-guard-"));
     try {
       writeFileSync(join(root, "archstrict.todo.json"), '{\n  "schemaVersion": 1,\n  "modules": {\n    "shared": [\n      {"rule":');
-      expect(() => readTodoFile(root)).toThrow(/not a valid archstrict\.todo\.json/);
+      expectTodoFileError(() => readTodoFile(root), MALFORMED);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -303,7 +659,7 @@ describe("readTodoFile's schemaVersion guard", () => {
     const root = mkdtempSync(join(tmpdir(), "archstrict-todo-schema-guard-"));
     try {
       writeFileSync(join(root, "archstrict.todo.json"), JSON.stringify({ schemaVersion: 2, modules: {} }));
-      expect(() => readTodoFile(root)).toThrow(/schemaVersion 2 is not supported/);
+      expectTodoFileError(() => readTodoFile(root), /schemaVersion 2 is not supported/);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -354,6 +710,49 @@ describe("serializeTodoFile/parseTodoFileText round trip", () => {
         expect(roundTripped).toEqual(original);
       }
     }, { testCases: 40 });
+  });
+
+  test("two module maps that read back as the same debt write the same bytes", () => {
+    hegel.test(tc => {
+      const rule = tc.draw(gen.sampledFrom(RULE_IDS));
+      const path = tc.draw(gen.fromRegex("src/[a-z]{1,6}/[a-z]{1,6}\\.ts"));
+      const evidence = tc.draw(gen.fromRegex("[a-z ]{1,30}"));
+      const specifier = tc.draw(gen.fromRegex("\\.\\./[a-z]{1,6}\\.js"));
+      const target = tc.draw(gen.fromRegex("src/[a-z]{1,6}/[a-z]{1,6}\\.ts"));
+      for (const fields of [{}, { specifier }, { target }, { specifier, target }]) {
+        const entries = [{ rule, path, evidence, ...fields }];
+        const written = serializeTodoFile(new Map([["m", entries]]));
+
+        const readBack = parseTodoFileText("archstrict.todo.json", written).modules;
+        expect(serializeTodoFile(readBack)).toBe(written);
+        expect(serializeTodoFile(new Map([["a", []], ["m", entries], ["z", []]]))).toBe(written);
+      }
+    }, { testCases: 10 });
+  });
+
+  test("a module's entries are written in path order, then rule order, whatever order they arrive in", () => {
+    hegel.test(tc => {
+      const entries = tc.draw(gen.arrays(gen.record({
+        rule: gen.sampledFrom(RULE_IDS),
+        path: gen.fromRegex("src/[a-z]{1,3}\\.ts"),
+        evidence: gen.fromRegex("[a-z ]{1,10}"),
+      }), { minSize: 6, maxSize: 8 }));
+
+      const written = parseTodoFileText("archstrict.todo.json", serializeTodoFile(new Map([["m", entries]])));
+      const order = written.modules.get("m")!;
+      expect(order).toHaveLength(entries.length);
+      for (let i = 1; i < order.length; i++) {
+        const before = order[i - 1]!;
+        const after = order[i]!;
+        expect(before.path < after.path || (before.path === after.path && before.rule <= after.rule)).toBe(true);
+      }
+    }, { testCases: 20 });
+  });
+
+  test("the written file ends in a newline, with or without debt", () => {
+    const entry = { rule: "cycle", path: "src/a/x.ts", evidence: "a -> b -> a" };
+    expect(serializeTodoFile(new Map())).toMatch(/\n$/);
+    expect(serializeTodoFile(new Map([["m", [entry]]]))).toMatch(/\n$/);
   });
 });
 

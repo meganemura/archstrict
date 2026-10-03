@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { init } from "../src/verbs/init.js";
 import { check } from "../src/verbs/check.js";
+
+import { readTodoFile } from "../src/todo-store.js";
 import { todo } from "../src/verbs/todo.js";
 import { ReportError } from "../src/report-error.js";
 
@@ -52,6 +54,116 @@ function writeSurfaceProject(unresolvedRoot: string): string {
 }
 
 describe("todo", () => {
+  test("first run names multiple uncovered files and leaves freezing available", async () => {
+    await withTempProject(async (root) => {
+      mkdirSync(join(root, "src", "app"), { recursive: true });
+      writeFileSync(join(root, "src", "app", "index.ts"), "export const app = 1;\n");
+      writeFileSync(join(root, "src", "extra.ts"), "export const extra = 1;\n");
+      writeFileSync(join(root, "src", "other.ts"), "export const other = 1;\n");
+      writeFileSync(join(root, "archstrict.config.ts"),
+        'export default { declaredModules: [{ name: "app", glob: "src/app/**" }], exclude: ["archstrict.config.ts"], because: "test" };\n');
+      await expect(todo(root)).rejects.toMatchObject({
+        message: "todo's first run refuses: 2 files match no declared module",
+        do: "add each to declaredModules or exclude in archstrict.config.ts, then run archstrict todo",
+      });
+      expect(existsSync(join(root, "archstrict.todo.json"))).toBe(false);
+    });
+  });
+
+  test("an existing root todo file takes precedence over leftover legacy files", async () => {
+    await withTempProject(async (root) => {
+      writeBypassProject(root);
+      await init(root);
+      expect(await todo(root)).toEqual({ firstRun: true, added: 1, pruned: 0 });
+      const rootTodo = readFileSync(join(root, "archstrict.todo.json"), "utf8");
+      const legacyFile = join(root, "src", "shared", "archstrict.todo.json");
+      writeFileSync(legacyFile, "unfinished legacy JSON");
+      writeFileSync(join(root, ".archstrict-todo-initialized"), "");
+      expect(await todo(root)).toEqual({ firstRun: false, added: 0, pruned: 0 });
+      expect(readFileSync(join(root, "archstrict.todo.json"), "utf8")).toBe(rootTodo);
+      expect(readFileSync(legacyFile, "utf8")).toBe("unfinished legacy JSON");
+      expect(existsSync(join(root, ".archstrict-todo-initialized"))).toBe(true);
+    });
+  });
+
+  test("pruning counts every entry under a module that the current graph no longer declares", async () => {
+    await withTempProject(async (root) => {
+      writeBypassProject(root);
+      await init(root);
+      expect(await todo(root)).toEqual({ firstRun: true, added: 1, pruned: 0 });
+      const saved = readTodoFile(root)!;
+      const entries = saved.modules.get("shared")!;
+      writeFileSync(join(root, "archstrict.todo.json"), JSON.stringify({
+        schemaVersion: 1,
+        modules: { shared: entries, retired: [entries[0], entries[0]] },
+      }));
+      expect(await todo(root)).toEqual({ firstRun: false, added: 0, pruned: 2 });
+      expect([...readTodoFile(root)!.modules.keys()]).toEqual(["shared"]);
+      expect(readTodoFile(root)!.modules.get("shared")).toEqual(entries);
+    });
+  });
+
+  test("pruning retains an existing imported edge and leaves a new imported edge unfrozen", async () => {
+    await withTempProject(async (root) => {
+      writeBypassProject(root);
+      await init(root);
+      expect(await todo(root)).toEqual({ firstRun: true, added: 1, pruned: 0 });
+      writeFileSync(join(root, "src", "shared", "other.ts"), "export const other = 2;\n");
+      writeFileSync(join(root, "src", "app", "module.ts"),
+        'import { shared } from "../shared/module.ts";\nimport { other } from "../shared/other.ts";\nexport const x = shared + other;\n');
+      expect(await todo(root)).toEqual({ firstRun: false, added: 0, pruned: 0 });
+      const entries = readTodoFile(root)!.modules.get("shared")!;
+      expect(entries).toHaveLength(1);
+      expect(entries[0]).toMatchObject({
+        rule: "public-surface-bypass", path: "src/app/module.ts",
+        specifier: "../shared/module.ts", target: "src/shared/module.ts",
+      });
+      const after = await check(root);
+      expect(after.todo).toBe(1);
+      expect(after.violations).toHaveLength(1);
+      expect(after.violations[0]).toMatchObject({
+        rule: "public-surface-bypass", specifier: "../shared/other.ts",
+        target: join(realpathSync(root), "src", "shared", "other.ts"),
+      });
+    });
+  });
+
+  test("the freeze note counts bypasses and excludes other freezable rules", async () => {
+    await withTempProject(async (root) => {
+      mkdirSync(join(root, "src", "app"), { recursive: true });
+      mkdirSync(join(root, "src", "shared"), { recursive: true });
+      const imports: string[] = [];
+      for (let i = 0; i < 8; i++) {
+        writeFileSync(join(root, "src", "shared", `file${i}.ts`), `export const value${i} = ${i};\n`);
+        imports.push(`import { value${i} } from "../shared/file${i}.ts";`);
+      }
+      writeFileSync(join(root, "src", "app", "module.ts"),
+        `${imports.join("\n")}\nexport const values = [value0, value1, value2, value3, value4, value5, value6, value7];\n`);
+      const config = {
+        declaredModules: [{ name: "app", glob: "src/app/**" }, { name: "shared", glob: "src/shared/**" }],
+        exclude: ["archstrict.config.ts"],
+        classify: [
+          { glob: "src/app/**", tags: ["domain:app"] },
+          { glob: "src/shared/file0.ts", tags: ["domain:shared"] },
+        ],
+        edges: { allowDeny: [{ source: "domain:app", targetNamespace: "domain", allow: [], because: "app cannot reach shared" }] },
+        because: "test",
+      };
+      writeFileSync(join(root, "archstrict.config.ts"), `export default ${JSON.stringify(config)};\n`);
+      const before = await check(root);
+      expect(before.violations.filter(v => v.rule === "public-surface-bypass")).toHaveLength(8);
+      expect(before.violations.filter(v => v.rule === "tag-boundary")).toHaveLength(1);
+      expect(await todo(root)).toEqual({
+        firstRun: true, added: 9, pruned: 0,
+        notes: ["8 of 8 public-surface-bypass violations target 'shared', which holds 8 of 9 analyzed files. Freezing them records one bucket. Split 'shared' into directories that change together before treating this freeze as done."],
+      });
+      const saved = readTodoFile(root)!;
+      expect(saved.modules.get("shared")).toHaveLength(8);
+      expect(saved.modules.get("app")).toHaveLength(1);
+      expect(saved.modules.get("app")![0]!.rule).toBe("tag-boundary");
+    });
+  });
+
   test("a config's top-level surface freezes the same bypass check reports", async () => {
     await withTempProject(async (unresolvedRoot) => {
       const root = writeSurfaceProject(unresolvedRoot);
@@ -71,7 +183,6 @@ describe("todo", () => {
       expect(after.todo).toBe(1);
     });
   });
-
 
   test("first run freezes the current violation; check on the same input is then green", async () => {
     await withTempProject(async (root) => {
