@@ -3,11 +3,12 @@
 // and never cloned this repository, finds the workflow. `npm pack --dry-run`
 // is the same file list installing the tarball would get.
 import { describe, expect, test } from "vitest";
-import { execFileSync } from "node:child_process";
+import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join, posix } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const REPO_ROOT = new URL("..", import.meta.url).pathname;
+const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
 
 const SKILL_PATHS = [
   "llms.txt",
@@ -18,7 +19,7 @@ const SKILL_PATHS = [
 ];
 
 function packedPaths(): { path: string }[] {
-  const stdout = execFileSync("npm", ["pack", "--dry-run", "--json"], {
+  const stdout = execSync("npm pack --dry-run --json", {
     cwd: REPO_ROOT,
     encoding: "utf8",
   });
