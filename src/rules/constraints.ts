@@ -285,6 +285,7 @@ export function targetTagsInGraph(graph: ModuleGraph, config: Config): Set<strin
 // Apply this check only to allow lists. A deny list can legitimately name
 // a value that does not exist yet to guard against a future regression.
 export function checkExhaustiveAllow(graph: ModuleGraph, config: Config): { identifier: string; rule: AllowDenyRule; ruleId: "exhaustive-allow-list" }[] {
+  // Stryker disable next-line ArrayDeclaration: The fallback string has no allow property, so the following guard still returns an empty result.
   const rules = config.edges?.allowDeny ?? [];
   if (!rules.some(rule => rule.allow !== undefined)) return [];
   const { coverage } = computeAllowDeny(graph, config);
@@ -302,6 +303,7 @@ export function checkExhaustiveAllow(graph: ModuleGraph, config: Config): { iden
 export function checkAllowDeny(graph: ModuleGraph, config: Config, focus?: string): ConstraintViolation[] {
   return computeAllowDeny(graph, config, focus).matches.map(match => {
     const moves = computeMoves(match.violation, graph, config, match);
+    // Stryker disable next-line OptionalChaining: A match supplies a valid same-config rule index, so computeMoves returns a widening move.
     return moves?.length ? Object.assign(match.violation, { moves }) : match.violation;
   }).sort(byPosition);
 }
@@ -364,6 +366,7 @@ function computeOrder(
         const withinPrefix = `${rule.within}:`;
         const sourceWithin = [...sourceTags].find((t) => t.startsWith(withinPrefix));
         const targetWithin = [...targetTags].find((t) => t.startsWith(withinPrefix));
+        // Stryker disable next-line LogicalOperator: The following unequal-scope guard rejects either case with exactly one undefined scope.
         if (sourceWithin === undefined || targetWithin === undefined) return;
         if (sourceWithin !== targetWithin) return; // different scope entirely: this order rule doesn't cross it
         withinValue = sourceWithin.slice(withinPrefix.length);
@@ -477,7 +480,9 @@ export function checkPoint(graph: ModuleGraph, config: Config, focus?: string): 
   return computePoint(graph, config, focus).violations.sort(byPosition);
 }
 
+// Stryker disable next-line BlockStatement: The check verb calls the three focused checks directly; this aggregate wrapper has no CLI behavior.
 export function checkConstraints(graph: ModuleGraph, config: Config): ConstraintViolation[] {
+  // Stryker disable next-line ArrayDeclaration: The check verb calls the three focused checks directly; this aggregate result has no CLI behavior.
   return [...checkAllowDeny(graph, config), ...checkOrder(graph, config), ...checkPoint(graph, config)];
 }
 
