@@ -1,7 +1,8 @@
 // Property: a classify glob is flagged exactly when it matches no real file
 // in scope (a declared module's own file, or an outsideFiles entry) —
 // checked against an independently computed expected set, not against
-// checkEmptyRuleSet re-deriving its own answer.
+// checkEmptyRuleSet re-deriving its own answer. The same holds for a
+// deprecated entry against a hand-written edge set of the cycles fixture.
 import { describe, test } from "vitest";
 import assert from "node:assert/strict";
 import * as hegel from "@hegeldev/hegel";
@@ -12,9 +13,13 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { buildModuleGraph } from "../src/module-graph.js";
 import { checkEmptyRuleSet } from "../src/rules/empty-rule.js";
+import { createConfigLocator, locateViolations } from "../src/config-pointer.js";
 import type { Config } from "../src/config.js";
 
 const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), "fixtures/uncovered"); // a, b, c
+const CYCLES_FIXTURE = join(dirname(fileURLToPath(import.meta.url)), "fixtures/cycles");
+
+const CYCLES_EDGES = new Set(["a -> b", "b -> c", "c -> a"]);
 // "nonexistent" and "ghost" name no real directory; kept alongside the
 // fixture's own module names rather than a separately hardcoded "doesn't
 // match" list, so drawing one of them always means "matches nothing"
@@ -57,6 +62,38 @@ describe("checkEmptyRuleSet (property)", () => {
         assert.ok(expectedEmptyGlobs.some(({ glob }) => v.evidence.includes(`'${glob}'`)));
       }
     });
+  });
+
+  test("a deprecated entry is flagged exactly when its own pair has no cross-module edge, at its own index", () => {
+    const graph = buildModuleGraph({
+      projectRoot: CYCLES_FIXTURE,
+      declaredModules: ["a", "b", "c", "d"].map((name) => ({ name, glob: `src/${name}/**` })),
+    });
+    const pairs = ["a", "b", "c", "d"].flatMap((from) =>
+      ["a", "b", "c", "d"].filter((to) => to !== from).map((to) => ({ from, to })));
+
+    hegel.test((tc) => {
+      const drawn = tc.draw(gs.arrays(gs.sampledFrom(pairs), { minSize: 0, maxSize: 4 }));
+      const deprecated = drawn.map(({ from, to }) => ({ from, to, count: 1, because: "property test" }));
+      const config: Config = { configPath: "<test>", because: "property test", deprecated };
+
+      const located = locateViolations(checkEmptyRuleSet(graph, config), config, createConfigLocator(config));
+
+      const expected = drawn.flatMap(({ from, to }, i) =>
+        CYCLES_EDGES.has(`${from} -> ${to}`) ? [] : [{ index: i, pointer: `deprecated[${i}]`, pair: `'${from} -> ${to}'` }]);
+      assert.equal(located.length, expected.length);
+      located.forEach((violation, i) => {
+        assert.ok(!Array.isArray(violation.config));
+        assert.ok("pointer" in violation.config);
+        assert.equal(violation.config.pointer, expected[i]!.pointer);
+        assert.equal(violation.config.path, "<test>");
+        assert.equal(violation.config.role, "fired");
+        assert.equal(violation.config.line, 1);
+        assert.equal(violation.config.column, 1);
+        assert.deepEqual(violation.config.value, deprecated[expected[i]!.index]);
+      });
+      located.forEach((v, i) => assert.ok(v.do.includes(expected[i]!.pair)));
+    }, { testCases: 20 });
   });
 });
 

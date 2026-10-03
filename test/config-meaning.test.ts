@@ -80,12 +80,18 @@ test.each([
   [Object.assign(new Error("private error details"), { name: "TimeoutError" }), "timeout"],
   [new ProverFailure("http-status"), "HTTP status"],
   [new ProverFailure("invalid-json"), "invalid JSON"],
+
+  ["private error details", "network error"],
+  [null, "network error"],
+  [undefined, "network error"],
 ])("request failure becomes one safe skip: %s", async (error, expected) => {
   const result = await checkConfigMeaning(config, true, async () => { throw error; });
   expect(result).toHaveLength(1);
   expect(result[0]).toMatchObject({ skipped: true, tier: "calibrated" });
   expect(result[0]).not.toHaveProperty("confidence");
   expect(result[0]!.evidence).toContain(expected);
+
+  expect(result[0]!.do).toContain("archstrict check --prove");
   expect(JSON.stringify(result)).not.toContain("private error details");
 });
 
@@ -135,7 +141,10 @@ test("choices preserve confidence and partition contradictions at the inclusive 
   });
 });
 
-async function project(fn: (root: string) => Promise<void>) {
+const projectEdges: Config["edges"] = {
+  allowDeny: [{ source: "role:app", targetNamespace: "pkg", allow: ["fs", "node"], because: "Restrict external imports." }],
+};
+async function project(fn: (root: string) => Promise<void>, edges: Config["edges"] = projectEdges) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "archstrict-meaning-")));
   mkdirSync(join(root, "src/app"), { recursive: true });
   mkdirSync(join(root, "src/other"), { recursive: true });
@@ -144,8 +153,7 @@ async function project(fn: (root: string) => Promise<void>) {
   writeFileSync(join(root, "tsconfig.json"), '{"compilerOptions":{"noLib":true,"types":[]}}');
   writeFileSync(join(root, "archstrict.config.ts"), `export default ${JSON.stringify({
     declaredModules: [{ name: "app", glob: "src/app/**" }, { name: "other", glob: "src/other/**" }], exclude: ["*.ts"], strict: ["app"],
-    classify: [{ glob: "src/app/**", tags: ["role:app"] }], because: "test architecture",
-    edges: { allowDeny: [{ source: "role:app", targetNamespace: "pkg", allow: ["fs", "node"], because: "Restrict external imports." }] },
+    classify: [{ glob: "src/app/**", tags: ["role:app"] }], because: "test architecture", edges,
   })};`);
   try { await fn(root); } finally { rmSync(root, { recursive: true, force: true }); }
 }
@@ -155,6 +163,8 @@ test.each([1, 0.6])("check keeps assessments advisory in strict modules and appl
   const result = await check(root, undefined, { prove: true, prover });
   expect(result.violations).toHaveLength(1);
   expect(result.violations[0]!.rule).toBe("config-meaning");
+
+  expect(result.violations[0]!.config).toMatchObject({ pointer: "edges.allowDeny[0]", role: "fired" });
   expect(hasBlockingViolations(result)).toBe(false);
   expect(result.todo).toBe(0);
   expect(formatText(result)).toContain("tier: calibrated");
@@ -168,6 +178,39 @@ test.each([1, 0.6])("check keeps assessments advisory in strict modules and appl
     config: result.violations[0]!.config }] };
   expect(hasBlockingViolations(blocking)).toBe(true);
 }));
+
+test("check locates a skip at the edges section it left unchecked", async () => project(async root => {
+  const prover: Prover = async () => { throw new ProverFailure("http-status"); };
+  const result = await check(root, undefined, { prove: true, prover });
+  expect(result.violations).toHaveLength(1);
+  expect(result.violations[0]).toMatchObject({ rule: "config-meaning", skipped: true,
+    config: { path: join(root, "archstrict.config.ts"), pointer: "edges", role: "governs",
+      value: { allowDeny: [{ source: "role:app", targetNamespace: "pkg", allow: ["fs", "node"], because: "Restrict external imports." }] } } });
+}));
+
+test("check points each contradiction at the edge rule it assessed", async () => {
+  const order = { tagNamespace: "layer", sequence: { core: ["data", "app"] }, direction: "downward-only" as const,
+    because: "Keep the dependency direction." };
+  const edges = {
+    allowDeny: [{ source: "role:app", targetNamespace: "pkg", allow: ["fs", "node"], because: "Restrict external imports." }],
+    order: [{ ...order, within: "domain" }, { ...order, within: "plane" }],
+    point: [{ from: { tags: ["role:app"] }, to: "src/other/**", because: "Do not reach other code directly." }],
+  };
+  const prover: Prover = async request => ({ answers: Object.fromEntries(Object.keys(request.questions)
+    .map(id => [id, answer("contradicts", 0.9)])) });
+  await project(async root => {
+    const findings = (await check(root, undefined, { prove: true, prover })).violations.filter(v => v.rule === "config-meaning");
+    expect(findings).toHaveLength(4);
+    expect(findings.map(v => v.config)).toEqual(expect.arrayContaining([
+      ["edges.allowDeny[0]", edges.allowDeny[0]], ["edges.order[0]", edges.order[0]],
+      ["edges.order[1]", edges.order[1]], ["edges.point[0]", edges.point[0]],
+    ].map(([pointer, value]) => expect.objectContaining({ path: join(root, "archstrict.config.ts"), pointer, value, role: "fired" }))));
+    const orderFindings = findings.filter(v => v.because === order.because);
+    expect(orderFindings).toHaveLength(2);
+    expect(orderFindings[0]!.evidence).not.toBe(orderFindings[1]!.evidence);
+    expect(orderFindings[0]!.do).not.toBe(orderFindings[1]!.do);
+  }, edges);
+});
 
 test("the built CLI accepts --prove in JSON and text and never blocks on a skip", async () => project(async root => {
   const cli = fileURLToPath(new URL("../dist/cli.js", import.meta.url));
@@ -185,13 +228,34 @@ test("the built CLI accepts --prove in JSON and text and never blocks on a skip"
   }
 }));
 
-
-test("an invalid answers container produces the exact skip", async () => {
-  const prover = vi.fn<Prover>().mockResolvedValue({ answers: null } as unknown as Awaited<ReturnType<Prover>>);
+test.each([
+  ["null answers", { answers: null }],
+  ["absent answers", {}],
+  ["text answers", { answers: "text" }],
+  ["numeric answers", { answers: 1 }],
+  ["array answers", { answers: [] }],
+  ["null response", null],
+  ["text response", "text"],
+])("an invalid answers container produces the exact skip: %s", async (_name, response) => {
+  const prover = vi.fn<Prover>().mockResolvedValue(response as unknown as Awaited<ReturnType<Prover>>);
   expect(await checkConfigMeaning(config, true, prover)).toEqual([{
     rule: "config-meaning", path: config.configPath, line: 1, column: 1,
     tier: "calibrated", skipped: true,
     evidence: "the Jev API request failed: invalid answers",
+    because: "a rule that checks nothing must not look like a pass",
+    do: "retry archstrict check --prove after checking the service response",
+  }]);
+});
+
+test.each([
+  ["a missing answer", { "allowDeny-0": answer("contradicts", 0.9), "point-0": answer("contradicts", 0.9) },
+    "the Jev API request failed: missing an expected answer"],
+  ["a malformed answer", { ...answers, "order-0": null }, "the Jev API request failed: invalid choice answer"],
+])("%s produces the exact skip", async (_name, response, evidence) => {
+  const prover = vi.fn<Prover>().mockResolvedValue({ answers: response } as unknown as Awaited<ReturnType<Prover>>);
+  expect(await checkConfigMeaning(config, true, prover)).toEqual([{
+    rule: "config-meaning", path: config.configPath, line: 1, column: 1,
+    tier: "calibrated", skipped: true, evidence,
     because: "a rule that checks nothing must not look like a pass",
     do: "retry archstrict check --prove after checking the service response",
   }]);

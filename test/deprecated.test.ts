@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { buildModuleGraph } from "../src/module-graph.js";
 import { checkDeprecatedEdges } from "../src/rules/deprecated.js";
 import { checkEmptyRuleSet } from "../src/rules/empty-rule.js";
+import { createConfigLocator, locateViolations } from "../src/config-pointer.js";
 import type { Config } from "../src/config.js";
 
 // c -> a has 2 edges (widget via public.ts, secret via internal.ts);
@@ -34,6 +35,22 @@ describe("checkDeprecatedEdges", () => {
     expect(violations[0]!.rule).toBe("deprecated-edge-increased");
     expect(violations[0]!.because).toBe("migrating off a");
     expect(suggestions).toHaveLength(0);
+  });
+
+  test("an increased count points at the exceeded count of its own entry, as the value that fired", () => {
+    const graph = buildModuleGraph({ projectRoot: FIXTURE, declaredModules });
+    const config = baseConfig([
+      { from: "c", to: "b", count: 1, because: "migrating off b" },
+      { from: "c", to: "a", count: 1, because: "migrating off a" },
+    ]);
+
+    const { violations } = checkDeprecatedEdges(graph, config);
+    expect(violations).toHaveLength(1);
+    const [located] = locateViolations(violations, config, createConfigLocator(config));
+    expect(located!.config).toMatchObject({ pointer: "deprecated[1].count", value: 1, role: "fired" });
+    expect(located!.do).toBe(
+      "reduce c -> a back to 1 edges, or raise count in archstrict.config.ts and record why the increase was accepted",
+    );
   });
 
   test("a decreased but nonzero count is a suggestion, not a violation", () => {

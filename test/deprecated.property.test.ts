@@ -50,4 +50,38 @@ describe("checkDeprecatedEdges (property)", () => {
       }
     });
   });
+
+  test("every report names its edge with both counts, and its do quotes the count to restore or record", () => {
+    const graph = buildModuleGraph({ projectRoot: FIXTURE, declaredModules });
+    const actual = 2;
+    const namesNumber = (text: string, n: number) => new RegExp(`\\b${n}\\b`).test(text);
+
+    hegel.test((tc) => {
+      const count = tc.draw(declaredCount);
+      const config: Config = {
+        configPath: "<test>",
+        deprecated: [{ from: "c", to: "a", count, because: "property test" }],
+        because: "test config",
+      };
+
+      const { violations, suggestions } = checkDeprecatedEdges(graph, config);
+
+      const expectedCounts = [[1, 0], [1, 0], [0, 0], [0, 1], [0, 1], [0, 1], [0, 1]];
+      assert.deepEqual([violations.length, suggestions.length], expectedCounts[count]);
+      for (const report of [...violations, ...suggestions]) {
+        assert.ok(report.evidence.includes("c -> a"), report.evidence);
+        assert.ok(namesNumber(report.evidence, count), report.evidence);
+        assert.ok(namesNumber(report.evidence, actual), report.evidence);
+      }
+      for (const violation of violations) {
+        assert.equal(
+          violation.do,
+          `reduce c -> a back to ${count} edges, or raise count in archstrict.config.ts and record why the increase was accepted`,
+        );
+      }
+      for (const suggestion of suggestions) {
+        assert.equal(suggestion.do, `update count to ${actual} for c -> a in archstrict.config.ts`);
+      }
+    });
+  });
 });

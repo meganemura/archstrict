@@ -70,6 +70,49 @@ describe("checkPublicSurfaceBypass", () => {
     ).toBe(false);
   });
 
+  test("a module with none of several surface files present asks for one of them, naming each", () => {
+    const graph = buildModuleGraph({ projectRoot: FIXTURE, declaredModules, surface: ["public.ts", "entry.ts"] });
+    expect(graph.unresolvedSpecifierCount).toBe(0);
+    expect(graph.modules.get("b")?.surfaceFiles).toEqual([]);
+
+    const gadgetViolation = checkPublicSurfaceBypass(graph).find((v) =>
+      v.evidence.includes("'../b/module.ts'"),
+    );
+    expect(gadgetViolation?.do).toBe("add one of public.ts, entry.ts to b/ naming what it exports");
+  });
+
+  test("a file-rooted module whose surface file exists sends the importer to that file", () => {
+    const root = mkdtempSync(join(tmpdir(), "archstrict-file-module-bypass-"));
+    try {
+      writeFileSync(join(root, "tsconfig.json"), JSON.stringify({
+        compilerOptions: { target: "esnext", module: "nodenext", moduleResolution: "nodenext", jsx: "preserve", strict: true, skipLibCheck: true, noEmit: true },
+      }));
+      mkdirSync(join(root, "src/app"), { recursive: true });
+      writeFileSync(join(root, "src/foo.ts"), "export const pub = 1;\n");
+      writeFileSync(join(root, "src/foo.tsx"), "export const extra = 2;\n");
+      writeFileSync(join(root, "src/app/main.ts"), 'import { extra } from "../foo.tsx";\nexport const y = extra;\n');
+      const graph = buildModuleGraph({
+        projectRoot: root,
+        declaredModules: [
+          { name: "foo", glob: "src/foo.ts*", surface: "foo.ts" },
+          { name: "app", glob: "src/app/**" },
+        ],
+      });
+      expect(graph.unresolvedSpecifierCount).toBe(0);
+      const foo = graph.modules.get("foo")!;
+      expect(foo.rootIsFile).toBe(true);
+      expect(foo.surfaceFiles.map((f) => graph.relativePath(f))).toEqual(["src/foo.ts"]);
+
+      const violations = checkPublicSurfaceBypass(graph);
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.evidence).toContain("'../foo.tsx'");
+      expect(violations[0]?.do).toContain("import from src/foo.ts");
+      expect(violations[0]?.do).not.toContain("set surface");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("modules missing entirely from the graph are counted, not silently absent", () => {
     const graph = buildModuleGraph({ projectRoot: FIXTURE, declaredModules });
     expect(graph.outsideFiles).toEqual([]);

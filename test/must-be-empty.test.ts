@@ -5,6 +5,7 @@ import { buildModuleGraph } from "../src/module-graph.js";
 import { runRules } from "../src/verbs/check.js";
 import { checkMustBeEmpty } from "../src/rules/must-be-empty.js";
 import type { Config } from "../src/config.js";
+import { createConfigLocator, locateViolation } from "../src/config-pointer.js";
 
 const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), "fixtures/public-surface");
 
@@ -40,6 +41,31 @@ describe("checkMustBeEmpty", () => {
     const violations = checkMustBeEmpty(files, config);
     expect(violations).toHaveLength(2);
     expect(violations.map((v) => v.path).sort()).toEqual(["src/app/services/a.ts", "src/app/services/b.ts"]);
+  });
+
+  test("each violation's do: names its own file and glob, and its config pointer is the entry that fired", () => {
+
+    const config: Config = {
+      configPath: "<test>",
+      because: "test config",
+      mustBeEmpty: [
+        { glob: "src/app/services/**", because: "rich models, no service objects" },
+        { glob: "src/app/jobs/**", because: "no background jobs" },
+      ],
+    };
+    const violations = checkMustBeEmpty(["src/app/jobs/sync.ts", "src/app/services/leftover.ts"], config);
+    expect(violations).toHaveLength(2);
+    const locator = createConfigLocator(config);
+    const byPath = new Map(violations.map((v) => [v.path, { do: v.do, config: locateViolation(v, config, locator).config }]));
+
+    expect(byPath.get("src/app/services/leftover.ts")).toMatchObject({
+      do: "move 'src/app/services/leftover.ts' out of 'src/app/services/**', or drop this mustBeEmpty entry in archstrict.config.ts if the restriction no longer applies",
+      config: { pointer: "mustBeEmpty[0]", value: config.mustBeEmpty![0], role: "fired" },
+    });
+    expect(byPath.get("src/app/jobs/sync.ts")).toMatchObject({
+      do: "move 'src/app/jobs/sync.ts' out of 'src/app/jobs/**', or drop this mustBeEmpty entry in archstrict.config.ts if the restriction no longer applies",
+      config: { pointer: "mustBeEmpty[1]", value: config.mustBeEmpty![1], role: "fired" },
+    });
   });
 });
 

@@ -5,6 +5,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { buildModuleGraph } from "../src/module-graph.js";
 import { checkEmptyRuleSet } from "../src/rules/empty-rule.js";
+import { createConfigLocator, locateViolations } from "../src/config-pointer.js";
 import type { Config } from "../src/config.js";
 
 const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), "fixtures/uncovered"); // a, b, c
@@ -12,6 +13,8 @@ const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), "fixtures/uncovere
 // b - real, resolvable cross-module edges to evaluate an edges rule
 // against, unlike fixtures/uncovered's own three isolated modules.
 const EDGES_FIXTURE = join(dirname(fileURLToPath(import.meta.url)), "fixtures/public-surface");
+
+const CYCLES_FIXTURE = join(dirname(fileURLToPath(import.meta.url)), "fixtures/cycles");
 
 describe("checkEmptyRuleSet", () => {
   test("a classify glob matching no real file is a violation", () => {
@@ -86,7 +89,7 @@ describe("checkEmptyRuleSet", () => {
     expect(checkEmptyRuleSet(graph, config)).toHaveLength(0);
   });
 
-  test("no modules at all is a violation, not silence", () => {
+  test("no modules at all is a violation that points at declaredModules, not silence", () => {
     const root = mkdtempSync(join(tmpdir(), "archstrict-empty-rule-"));
     try {
       mkdirSync(join(root, "src"), { recursive: true }); // src/ exists, but no declaredModules cover it
@@ -97,6 +100,11 @@ describe("checkEmptyRuleSet", () => {
       const violations = checkEmptyRuleSet(graph, config);
       expect(violations).toHaveLength(1);
       expect(violations[0]!.evidence).toContain("no modules declared in declaredModules");
+
+      const [located] = locateViolations(violations, config, createConfigLocator(config));
+      expect(located!.config).toMatchObject({ pointer: "declaredModules", role: "fired" });
+      expect(located!.do).toContain("declaredModules");
+      expect(located!.because).toMatch(/\S/);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -162,6 +170,48 @@ describe("checkEmptyRuleSet", () => {
     expect(findings[0]!.do).toContain("kind:c -> kind");
     expect(findings[0]!.do).toContain("narrow the allow list");
     expect(findings[0]!.do).toContain("remove the rule");
+
+    const [located] = locateViolations(findings, config, createConfigLocator(config));
+    expect(located!.config).toMatchObject({ pointer: "edges.allowDeny[0].allow", role: "fired" });
+  });
+});
+
+describe("checkEmptyRuleSet config pointers", () => {
+
+  test("each empty entry points at its own index, as the value that fired, with fix text naming it", () => {
+    const graph = buildModuleGraph({
+      projectRoot: CYCLES_FIXTURE,
+      declaredModules: ["a", "b", "c", "d"].map((name) => ({ name, glob: `src/${name}/**` })),
+    });
+    const unmatchedDeny = { source: "role:absent", targetNamespace: "role", deny: ["x"], because: "test" };
+    const config: Config = {
+      configPath: "<test>",
+      because: "test config",
+      classify: [{ glob: "src/ghost/**", tags: ["role:ghost"] }],
+
+      deprecated: [
+        { from: "a", to: "b", count: 1, because: "test" },
+        { from: "a", to: "c", count: 1, because: "test" },
+      ],
+      edges: { allowDeny: [unmatchedDeny, { ...unmatchedDeny }] },
+    };
+
+    const violations = checkEmptyRuleSet(graph, config);
+    const located = locateViolations(violations, config, createConfigLocator(config));
+    expect(located.map((v) => v.config)).toMatchObject([
+      { pointer: "classify[0]", role: "fired" },
+      { pointer: "deprecated[1]", role: "fired" },
+      { pointer: "edges.allowDeny[0]", role: "fired" },
+      { pointer: "edges.allowDeny[1]", role: "fired" },
+    ]);
+    expect(located[0]!.do).toContain("classify");
+    expect(located[1]!.do).toContain("'a -> c'");
+    expect(located[2]!.do).toContain("allowDeny");
+    expect(located[3]!.do).toContain("allowDeny");
+    for (const v of located) {
+      expect(v.rule).toBe("empty-rule-set");
+      expect(v.because).toMatch(/\S/);
+    }
   });
 });
 

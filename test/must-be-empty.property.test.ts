@@ -1,8 +1,9 @@
-// Property: for any glob and any set of generated file paths, a violation
+// Properties: for any glob and any set of generated file paths, a violation
 // occurs if and only if at least one path matches - checked against an
 // independent reference match (plain string prefix, since every generated
 // glob here is a literal directory prefix plus "**"), not against the
-// rule's own compileGlob.
+// rule's own compileGlob. And the violations come out in one order however
+// the caller orders its file list.
 import { describe, test } from "vitest";
 import assert from "node:assert/strict";
 import * as hegel from "@hegeldev/hegel";
@@ -29,5 +30,25 @@ describe("checkMustBeEmpty (property)", () => {
         [...expectedMatches].sort(),
       );
     });
+  });
+
+  test("the violations come out in the same order whatever order the file list is in", () => {
+
+    const shuffle = <T>(items: readonly T[], keys: readonly number[]): T[] =>
+      items.map((item, i) => ({ item, key: keys[i]! })).sort((x, y) => x.key - y.key).map(({ item }) => item);
+    hegel.test((tc) => {
+      const dir = tc.draw(segment);
+
+      const inside = tc.draw(gs.arrays(path, { minSize: 2, maxSize: 6 })).map((p) => `${dir}/${p}`);
+      const keys = tc.draw(gs.arrays(gs.integers({ minValue: 0, maxValue: 1000 }), { minSize: inside.length, maxSize: inside.length }));
+      const config = { mustBeEmpty: [{ glob: `${dir}/**`, because: "property test" }] };
+
+      const reference = [...inside].sort();
+      assert.deepEqual(checkMustBeEmpty(inside, config).map(v => v.path), reference);
+
+      for (const order of [shuffle(inside, keys), [...inside].reverse()]) {
+        assert.deepEqual(checkMustBeEmpty(order, config).map((v) => v.path), reference);
+      }
+    }, { testCases: 50 });
   });
 });
