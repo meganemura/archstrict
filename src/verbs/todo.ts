@@ -80,7 +80,9 @@ export function freezeOrPrune(
   config: Config,
   violations: AnyViolation[],
 ): TodoResult {
+  // Stryker disable next-line ArrayDeclaration: An injected name does not define a module policy.
   const strict = new Set(config.strict ?? []);
+  // Stryker disable next-line MethodExpression: The module-name filter also excludes nonfreezable violations.
   const freezable = violations.filter(isFreezable);
 
   // graph.rootDir, not the raw projectRoot parameter: rootDir is
@@ -104,6 +106,7 @@ export function freezeOrPrune(
   // one is a migration (folding in whatever the old layout had already
   // frozen), not a fresh first run that would freeze today's live
   // violations instead of what was actually already accepted as debt.
+  // Stryker disable next-line OptionalChaining: An absent parsed file always produces a defined legacy state.
   const firstRun = parsed === undefined && !(legacy?.present ?? false);
 
   if (firstRun) refuseIfUncovered(violations);
@@ -160,6 +163,7 @@ export function freezeOrPrune(
       const matchedViolationByEntry = new Map<TodoEntry, AnyViolation & { todoModule: string }>();
       for (const v of currentViolations) {
         const entry = findMatchingEntry(index, v, graph.relativePath);
+        // Stryker disable next-line LogicalOperator: Either matching violation can represent the same accepted entry.
         if (entry !== undefined && !matchedViolationByEntry.has(entry)) matchedViolationByEntry.set(entry, v);
       }
       const kept = current

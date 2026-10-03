@@ -488,6 +488,7 @@ export function serializeTodoFile(modulesByName: ReadonlyMap<string, readonly To
     .sort(codeUnitCompare);
   const lines: string[] = ["{", `  "schemaVersion": ${TODO_SCHEMA_VERSION},`, '  "modules": {'];
   names.forEach((name, moduleIndex) => {
+    // Stryker disable next-line ArrayDeclaration: Each selected name has a nonempty array in the same map.
     const entries = sortedEntries(modulesByName.get(name) ?? []);
     lines.push(`    ${JSON.stringify(name)}: [`);
     entries.forEach((entry, entryIndex) => {

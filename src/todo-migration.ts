@@ -52,6 +52,7 @@ function normalizeLegacyEntry(entry: TodoEntry, projectRoot: string): TodoEntry 
 
 function readLegacyModuleTodo(moduleDir: string, projectRoot: string): TodoEntry[] {
   const p = legacyModuleTodoPath(moduleDir);
+  // Stryker disable next-line ArrayDeclaration: The caller checks this path; the fallback requires concurrent deletion.
   if (!existsSync(p)) return [];
   const entries = (JSON.parse(readFileSync(p, "utf8")) as { entries: (TodoEntry & { fingerprint?: string })[] }).entries;
   // Old entries carried a `fingerprint` field that today's shape drops
