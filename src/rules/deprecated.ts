@@ -65,6 +65,7 @@ export function checkDeprecatedEdges(
   const violations: Violation[] = [];
   const suggestions: Suggestion[] = [];
 
+  // Stryker disable next-line ArrayDeclaration: The placeholder has no numeric count and produces no finding or suggestion.
   for (const [entryIndex, entry] of (config.deprecated ?? []).entries()) {
     const actual = countEdges(graph, entry.from, entry.to);
 

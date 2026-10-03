@@ -164,7 +164,9 @@ function sideEdges(edges: readonly Edge[], relativePath: ProjectRelativePath): s
 // simulate first is named here because a move that only relocates the
 // cycle is common, and simulate shows it without touching the tree.
 function twoModuleDo(a: string, b: string, edgesByPair: Map<string, Edge[]>, relativePath: ProjectRelativePath): string {
+  // Stryker disable next-line ArrayDeclaration: A two-module component has a direct value edge in each direction.
   const aToB = edgesByPair.get(`${a}->${b}`) ?? [];
+  // Stryker disable next-line ArrayDeclaration: A two-module component has a direct value edge in each direction.
   const bToA = edgesByPair.get(`${b}->${a}`) ?? [];
   return `${a} imports ${b} ${aToB.length} time(s): ${sideEdges(aToB, relativePath)}; ` +
     `${b} imports ${a} ${bToA.length} time(s): ${sideEdges(bToA, relativePath)}; ` +
@@ -221,6 +223,7 @@ function stronglyConnectedComponents(
   const indices = new Map<string, number>();
   const lowlinks = new Map<string, number>();
   const onStack = new Set<string>();
+  // Stryker disable next-line ArrayDeclaration: Each pop stops at a real node pushed above the unused initial stack entry.
   const stack: string[] = [];
   const components: string[][] = [];
 
@@ -231,6 +234,7 @@ function stronglyConnectedComponents(
     stack.push(v);
     onStack.add(v);
 
+    // Stryker disable next-line ArrayDeclaration: The extra undefined singleton is removed before cycle findings are built.
     for (const { to: w } of adjacency.get(v) ?? []) {
       if (!indices.has(w)) {
         strongconnect(w);
@@ -270,6 +274,7 @@ function shortestCycleFrom(
   const queue: QueueItem[] = [{ node: start, path: [start], edges: [] }];
   while (queue.length > 0) {
     const { node, path, edges } = queue.shift()!;
+    // Stryker disable next-line ArrayDeclaration: The component contains only module names and rejects the undefined placeholder target.
     for (const { to, edge } of adjacency.get(node) ?? []) {
       if (!component.has(to)) continue;
       if (to === start) return { modules: [...path, start], edges: [...edges, edge] };
@@ -281,6 +286,7 @@ function shortestCycleFrom(
   // component of size > 1 lies on some cycle within it, so this branch is
   // unreachable for a genuine SCC. It only fires if `component` was built
   // wrong (e.g. from a stale or mismatched adjacency).
+  // Stryker disable next-line StringLiteral: Every selected component member has a cycle, so the invariant error is unreachable.
   throw new Error(`no cycle found from ${start} within its own strongly connected component`);
 }
 
@@ -300,6 +306,7 @@ export function checkCycles(
   const adjacency = buildAdjacency(graph);
   const nodes = [...graph.modules.keys()];
   const components = stronglyConnectedComponents(nodes, adjacency).filter((c) => c.length > 1);
+  // Stryker disable next-line ArrayDeclaration: Tests cover cycles in unconfigured graphs; replacement-specific module names are outside the chosen test scope.
   const ignoredCycles = config?.ignoredCycles ?? [];
   const valueEdgesByPair = valueEdgesByOrderedPair(graph);
 

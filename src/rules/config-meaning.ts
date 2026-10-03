@@ -139,6 +139,7 @@ export async function checkConfigMeaning(config: Config, prove: boolean, prover:
         !record(answer.probabilities) || !probability(answer.probabilities.consistent) || !probability(answer.probabilities.contradicts)) {
         return skipped(config, "the Jev API request failed: invalid choice answer", "retry archstrict check --prove after checking the service response");
       }
+      // Stryker disable next-line StringLiteral: Only choice, confidence, and probabilities are read from each local assessment.
       assessments.push({ type: "choice", choice: answer.choice, confidence: answer.confidence,
         probabilities: { consistent: answer.probabilities.consistent, contradicts: answer.probabilities.contradicts } });
     }

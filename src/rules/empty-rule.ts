@@ -137,6 +137,7 @@ export function checkEmptyRuleSet(graph: ModuleGraph, config: Config): Violation
   }
 
   for (const { identifier, rule } of checkExhaustiveAllow(graph, config)) {
+    // Stryker disable next-line OptionalChaining,ArrayDeclaration: An exhaustive allow result comes from the defined allowDeny configuration.
     const entryIndex = (config.edges?.allowDeny ?? []).indexOf(rule);
     violations.push(withPointerSpecs({
       rule: "exhaustive-allow-list", path: config.configPath, line: 1, column: 1,
