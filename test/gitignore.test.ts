@@ -10,6 +10,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { isEligibleSourceFile, listAnalyzedFiles, prepareGraph, toProjectRelativePosix } from "../src/module-graph.js";
+import { forcedBasesOf, gitignoreStackAbove, isIgnoredBy, isPathGitignored, nextIgnoreState, withGitignoreFile } from "../src/gitignore.js";
 import { check } from "../src/verbs/check.js";
 import { init } from "../src/verbs/init.js";
 
@@ -54,6 +55,22 @@ test("a nested .gitignore applies to its own directory only", () => project((roo
   expect(analyzed(root)).toEqual(["src/a/index.ts", "src/b/scratch.ts"]);
 }));
 
+// A plain name matches at any depth, so only an anchored pattern shows where
+// a pattern's path starts. git starts it at the directory that holds the
+// pattern's own ignore file; for info/exclude, that is the repository root.
+// Every expected path is the answer `git check-ignore` gives for this tree.
+test("an anchored pattern is relative to the directory of its own ignore file", () => project((root, put) => {
+  put(".git/info/exclude", "/scratch.ts\nout/gen.ts\n");
+  put("src/a/.gitignore", "/scratch.ts\ngen/*.ts\n");
+  for (const file of [
+    "scratch.ts", "src/scratch.ts", "out/gen.ts", "src/out/gen.ts", "src/index.ts",
+    "src/a/scratch.ts", "src/a/b/scratch.ts", "src/a/gen/x.ts", "src/a/b/gen/x.ts", "src/a/index.ts",
+  ]) put(file);
+  expect(analyzed(root)).toEqual([
+    "src/a/b/gen/x.ts", "src/a/b/scratch.ts", "src/a/index.ts", "src/index.ts", "src/out/gen.ts", "src/scratch.ts",
+  ]);
+}));
+
 test("info/exclude and a .gitignore above the project root both apply", () => project((root, put) => {
   put(".git/info/exclude", "local-only/\n");
   put(".gitignore", "packages/web/tmp/\n");
@@ -62,6 +79,29 @@ test("info/exclude and a .gitignore above the project root both apply", () => pr
   put("packages/web/local-only/note.ts");
   const web = join(root, "packages/web");
   expect(analyzed(web)).toEqual(["src/index.ts"]);
+}));
+
+// A linked worktree's .git is a file that points at its own git directory,
+// and the info/exclude that git applies there lives in the main repository's
+// git directory. An agent that works in a worktree must see the same file set
+// that git sees there.
+test("info/exclude of the main repository applies inside a linked worktree", () => project((root, put) => {
+  // The global git config must not reach these commands: a signing key or a
+  // hook there would run on every commit this test makes.
+  const git = (cwd: string, ...args: string[]) => execFileSync("git",
+    ["-c", "user.name=archstrict", "-c", "user.email=archstrict@example.invalid", ...args],
+    { cwd, stdio: "ignore", env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" } });
+  const main = join(root, "main");
+  mkdirSync(main);
+  git(main, "init", "-q");
+  git(main, "commit", "-q", "--allow-empty", "-m", "init");
+  git(main, "worktree", "add", "-q", "../wt");
+  put("main/.git/info/exclude", "local-only/\n");
+  put("wt/src/index.ts");
+  put("wt/local-only/note.ts");
+  const worktree = join(root, "wt");
+  expect(gitCheckIgnore(worktree, ["local-only/note.ts", "src/index.ts"])).toEqual(["local-only/note.ts"]);
+  expect(analyzed(worktree)).toEqual(["src/index.ts"]);
 }));
 
 test("a project root inside an ignored directory is still analyzed", () => project((root, put) => {
@@ -133,4 +173,56 @@ test("the walk agrees with git check-ignore", async () => {
     const ignored = new Set(gitCheckIgnore(root, files));
     expect(analyzed(root)).toEqual(files.filter((f) => !ignored.has(f)).sort());
   }), { testCases: 40 });
+});
+
+test("empty ignore files preserve inherited ignore decisions", () => project((root, put) => {
+  put(".git/info/exclude", "# local comments\n");
+  expect(isIgnoredBy(gitignoreStackAbove(root), "src/index.ts", false)).toBe(false);
+  const stack = withGitignoreFile([], "", "*.log\n");
+  const nested = withGitignoreFile(stack, "src", "# comments\n\n");
+  expect(isIgnoredBy(nested, "src/build.log", false)).toBe(true);
+  expect(isIgnoredBy(nested, "src/index.ts", false)).toBe(false);
+}));
+
+test("a later patterned exception overrides an earlier literal directory rule", () => {
+  const stack = withGitignoreFile([], "", "cache/\n!ca*/\n");
+  expect(isIgnoredBy(stack, "cache", true)).toBe(false);
+  expect(isIgnoredBy(stack, "cache", false)).toBe(false);
+});
+
+test("declared bases force their descendants through ignored parents", () => {
+  const stack = withGitignoreFile([], "", "generated/\n*.ts\n");
+  const bases = new Set(["generated/api"]);
+  expect(nextIgnoreState("ignored", stack, "generated/api", true, bases)).toBe("forced");
+  expect(nextIgnoreState("forced", stack, "generated/api/client.ts", false, bases)).toBe("forced");
+  expect(nextIgnoreState("kept", [], "src", true, bases)).toBe("kept");
+});
+
+test("proposed files use nested ignore rules and distinguish files from directories", () => project((root, put) => {
+  put("src/.gitignore", "*.gen.ts\ncache/\n");
+  put("src/deep/.gitignore", "!keep.gen.ts\n");
+  expect(isPathGitignored(root, "src/deep/drop.gen.ts", new Set())).toBe(true);
+  expect(isPathGitignored(root, "src/deep/keep.gen.ts", new Set())).toBe(false);
+  expect(isPathGitignored(root, "src/cache", new Set())).toBe(false);
+  expect(isPathGitignored(root, "src/cache/new.ts", new Set())).toBe(true);
+}));
+
+test("nested exceptions cannot reinclude descendants of an ignored directory", () => project((root, put) => {
+  put(".gitignore", "hidden/\n");
+  put("hidden/.gitignore", "!new.ts\n");
+  expect(isPathGitignored(root, "hidden/new.ts", new Set())).toBe(true);
+  expect(isPathGitignored(root, "hidden/new.ts", new Set(["hidden"]))).toBe(false);
+}));
+
+test("directory rules preserve literal matches when a later directory name does not match", () => {
+  const stack = withGitignoreFile([], "", "cache\nother/\n");
+  expect(isIgnoredBy(stack, "cache", true)).toBe(true);
+  expect(isIgnoredBy(stack, "other", true)).toBe(true);
+  expect(isIgnoredBy(stack, "unlisted", true)).toBe(false);
+});
+
+test("declared bases omit the project-wide glob and expose strict parent paths", () => {
+  const forced = forcedBasesOf(["", "generated/api/client", "src/app", "src/app"]);
+  expect([...forced.bases].sort()).toEqual(["generated/api/client", "src/app"]);
+  expect([...forced.ancestors].sort()).toEqual(["generated", "generated/api", "src"]);
 });

@@ -13,18 +13,6 @@ import { buildModuleGraph } from "../src/module-graph.js";
 import { runRules } from "../src/verbs/check.js";
 
 const whitespace = gs.sampledFrom([" ", "  ", "\n  ", "\n    /* entry */ "]);
-
-function resolvePointer(config: Config, pointer: string): unknown {
-  let value: unknown = config;
-  for (const match of pointer.matchAll(/(?:^|\.)([^.\[\]]+)|\[(\d+)\]/g)) {
-    const part = match[2] === undefined ? match[1]! : Number(match[2]);
-    value = typeof part === "number"
-      ? Array.isArray(value) ? value[part] : undefined
-      : typeof value === "object" && value !== null ? (value as Record<string, unknown>)[part] : undefined;
-  }
-  return value ?? null;
-}
-
 function sourceOffset(source: string, line: number, column: number): number {
   const lines = source.split("\n");
   return lines.slice(0, line - 1).reduce((sum, text) => sum + text.length + 1, 0) + column - 1;
@@ -147,14 +135,12 @@ describe("createConfigLocator", () => {
         const expectedColumn = offset - prefix.lastIndexOf("\n");
         const modulePointer = Array.isArray(violations[0]!.config) ? violations[0]!.config[0]! : violations[0]!.config;
         const arrayPointer = Array.isArray(violations[1]!.config) ? violations[1]!.config[0]! : violations[1]!.config;
-
-        for (const violation of violations) {
-          const pointers = Array.isArray(violation.config) ? violation.config : [violation.config];
-          for (const pointer of pointers) {
-            const expectedValue = pointer.pointer === "declaredModules[1]" ? declaredModules[1] : declaredModules;
-            assert.deepEqual(pointer.value, expectedValue);
-          }
-        }
+        assert.equal(modulePointer.pointer, "declaredModules[1]");
+        assert.equal(modulePointer.role, "governs");
+        assert.deepEqual(modulePointer.value, declaredModules[1]);
+        assert.equal(arrayPointer.pointer, "declaredModules");
+        assert.equal(arrayPointer.role, "governs");
+        assert.deepEqual(arrayPointer.value, declaredModules);
         assert.deepEqual({ line: modulePointer.line, column: modulePointer.column },
           { line: expectedLine, column: expectedColumn });
         const arrayOffset = source.indexOf("[", source.indexOf("declaredModules"));
@@ -226,10 +212,47 @@ describe("createConfigLocator", () => {
           { ...base, rule: "config-meaning", evidence: "allowDeny rule (source 'layer:a')", because: "deny secret" },
         ];
         const locator = createConfigLocator(config);
+        const targetIndex = reverse ? 0 : 1;
+        const anchorIndex = reverse ? 1 : 0;
+        const expectedPointers: Record<string, string[]> = {
+          "public-surface-bypass": [`declaredModules[${targetIndex}]`],
+          "type-leak": [`declaredModules[${targetIndex}]`],
+          "uncovered-module": ["declaredModules"],
+          cycle: [`declaredModules[${anchorIndex}]`, "ignoredCycles"],
+          "stale-cycle-exception": ["ignoredCycles[0]"],
+          "must-be-empty": ["mustBeEmpty[0]"],
+          "deprecated-edge-increased": ["deprecated[0].count"],
+          "tag-boundary": ["edges.allowDeny[0].deny[0]", "edges.allowDeny[0].allow"],
+          "tag-order": ["edges.order[0].sequence"],
+          "point-rule": ["edges.point[0]"],
+          "empty-rule-set": ["classify[0]"],
+          "exhaustive-allow-list": ["edges.allowDeny[1].allow"],
+          "clean-module-has-todo": ["strict[0]"],
+          "stale-todo": ["declaredModules"],
+          "config-meaning": ["edges.allowDeny[0]"],
+        };
+        const expectedValues: Record<string, unknown> = {
+          [`declaredModules[${targetIndex}]`]: target,
+          [`declaredModules[${anchorIndex}]`]: declaredModules[anchorIndex],
+          declaredModules,
+          ignoredCycles: [["a", "b"]],
+          "ignoredCycles[0]": ["a", "b"],
+          "mustBeEmpty[0]": config.mustBeEmpty![0],
+          "deprecated[0].count": 2,
+          "edges.allowDeny[0].deny[0]": "secret",
+          "edges.allowDeny[0].allow": null,
+          "edges.order[0].sequence": { "": ["a", "b"] },
+          "edges.point[0]": config.edges!.point![0],
+          "classify[0]": config.classify![0],
+          "edges.allowDeny[1].allow": ["a"],
+          "strict[0]": "a",
+          "edges.allowDeny[0]": config.edges!.allowDeny![0],
+        };
         for (const violation of violations.map((item) => locateViolation(item, config, locator))) {
           const pointers = Array.isArray(violation.config) ? violation.config : [violation.config];
+          assert.deepEqual(pointers.map(pointer => pointer.pointer), expectedPointers[violation.rule], violation.rule);
           for (const pointer of pointers) {
-            assert.deepEqual(pointer.value, resolvePointer(config, pointer.pointer), `${violation.rule}: ${pointer.pointer}`);
+            assert.deepEqual(pointer.value, expectedValues[pointer.pointer], `${violation.rule}: ${pointer.pointer}`);
             assert.match(source[sourceOffset(source, pointer.line, pointer.column)]!, /\S/, violation.rule);
           }
         }
@@ -294,11 +317,39 @@ describe("createConfigLocator", () => {
         const locator = createConfigLocator(config);
         const result = runRules(graph, config, { skipTypeLeak: true, configLocator: locator });
         assert.ok(result.violations.length >= 8);
-
+        const targetIndex = reverse ? 0 : 1;
+        const denyIndex = reverse ? 1 : 0;
+        const allowIndex = reverse ? 0 : 1;
+        const ghostIndex = reverse ? 0 : 2;
+        const expectedPointers: Record<string, string[]> = {
+          "public-surface-bypass": [`declaredModules[${targetIndex}]`],
+          "stale-cycle-exception": ["ignoredCycles[0]"],
+          "must-be-empty": ["mustBeEmpty[0]"],
+          "deprecated-edge-increased": ["deprecated[0].count"],
+          "tag-boundary": [`edges.allowDeny[${denyIndex}].deny[0]`, `edges.allowDeny[${denyIndex}].allow`],
+          "tag-order": ["edges.order[0].sequence"],
+          "point-rule": ["edges.point[0]"],
+          "empty-rule-set": [`classify[${ghostIndex}]`],
+          "exhaustive-allow-list": [`edges.allowDeny[${allowIndex}].allow`],
+        };
+        const expectedValues: Record<string, unknown> = {
+          [`declaredModules[${targetIndex}]`]: modules[targetIndex],
+          "ignoredCycles[0]": ["a", "b"],
+          "mustBeEmpty[0]": raw.mustBeEmpty[0],
+          "deprecated[0].count": 0,
+          [`edges.allowDeny[${denyIndex}].deny[0]`]: "secret",
+          [`edges.allowDeny[${denyIndex}].allow`]: null,
+          "edges.order[0].sequence": { "": ["a", "secret"] },
+          "edges.point[0]": raw.edges.point[0],
+          [`classify[${ghostIndex}]`]: classify[ghostIndex],
+          [`edges.allowDeny[${allowIndex}].allow`]: ["secret"],
+        };
+        assert.deepEqual(result.violations.map(violation => violation.rule).sort(), Object.keys(expectedPointers).sort());
         for (const violation of result.violations) {
           const pointers = Array.isArray(violation.config) ? violation.config : [violation.config];
+          assert.deepEqual(pointers.map(pointer => pointer.pointer), expectedPointers[violation.rule], violation.rule);
           for (const pointer of pointers) {
-            assert.deepEqual(pointer.value, resolvePointer(config, pointer.pointer), `${violation.rule}: ${pointer.pointer}`);
+            assert.deepEqual(pointer.value, expectedValues[pointer.pointer], `${violation.rule}: ${pointer.pointer}`);
             const offset = sourceOffset(source, pointer.line, pointer.column);
             const expected = pointer.value === null
               ? JSON.stringify((config.edges?.allowDeny ?? []).find((entry) => entry.deny !== undefined))

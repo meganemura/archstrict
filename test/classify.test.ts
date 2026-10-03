@@ -8,7 +8,7 @@ import { describe, expect, test } from "vitest";
 import prismaShape from "./fixtures/prisma-shape/archstrict.config.js";
 import vscodeShape from "./fixtures/vscode-shape/archstrict.config.js";
 import nukadokoShape from "./fixtures/nukadoko-shape/archstrict.config.js";
-import { classifyByGlob, classifyByDirectoryName, classifyFile, AmbiguousClassifyError } from "../src/classify.js";
+import { classifyByGlob, classifyByDirectoryName, classifyFile, compileGlob, AmbiguousClassifyError } from "../src/classify.js";
 
 describe("design fixtures typecheck and load", () => {
   test("prisma-shape, vscode-shape, and nukadoko-shape all satisfy Config", () => {
@@ -19,6 +19,23 @@ describe("design fixtures typecheck and load", () => {
 });
 
 describe("classifyByGlob", () => {
+  test("a trailing double wildcard matches paths across directory segments", () => {
+    expect(compileGlob("src/**").test("src/a/x.ts")).toBe(true);
+  });
+
+  test("a longer literal prefix wins when both matching globs have the same wildcard count", () => {
+    const broad = { glob: "src/**", tags: ["broad"] };
+    const nested = { glob: "src/nested/**", tags: ["nested"] };
+    expect(classifyByGlob("src/nested/x.ts", [broad, nested])).toEqual(["nested"]);
+    expect(classifyByGlob("src/nested/x.ts", [nested, broad])).toEqual(["nested"]);
+  });
+
+  test("an exact path wins over a wildcard with the same literal prefix", () => {
+    const exact = { glob: "a", tags: ["exact"] };
+    const broad = { glob: "a*", tags: ["broad"] };
+    expect(classifyByGlob("a", [exact, broad])).toEqual(["exact"]);
+    expect(classifyByGlob("a", [broad, exact])).toEqual(["exact"]);
+  });
   test("the more specific entry wins regardless of declaration order", () => {
     const broad = { glob: "packages/1-core/**", tags: ["broad"] };
     const specific = { glob: "packages/1-core/exports/control.ts", tags: ["specific"] };
@@ -47,6 +64,37 @@ describe("classifyByGlob", () => {
     expect(() => classifyByGlob("packages/shared/x.ts", [tie1, tie2])).toThrow(AmbiguousClassifyError);
   });
 
+  test("the tie error names the file and both globs, in its message and in its do: command", () => {
+    const tie1 = { glob: "packages/shared/*", tags: ["one"] };
+    const tie2 = { glob: "packages/shared/*.ts", tags: ["two"] };
+    for (const entries of [[tie1, tie2], [tie2, tie1]]) {
+      let thrown: unknown;
+      try {
+        classifyByGlob("packages/shared/x.ts", entries);
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(AmbiguousClassifyError);
+      const error = thrown as AmbiguousClassifyError;
+      for (const part of ["packages/shared/x.ts", tie1.glob, tie2.glob]) expect(error.message).toContain(`'${part}'`);
+      for (const glob of [tie1.glob, tie2.glob]) expect(error.do).toContain(`'${glob}'`);
+    }
+  });
+
+  test("two equally-specific entries whose tag lists differ only partly still throw, in either order", () => {
+    const pairs: Array<[string[], string[]]> = [
+      [["layer:a"], ["layer:a", "env:node"]],
+      [["layer:a", "env:node"], ["layer:a", "env:browser"]],
+    ];
+    for (const [tags1, tags2] of pairs) {
+      const tie1 = { glob: "packages/shared/*", tags: tags1 };
+      const tie2 = { glob: "packages/shared/*.ts", tags: tags2 };
+      for (const entries of [[tie1, tie2], [tie2, tie1]]) {
+        expect(() => classifyByGlob("packages/shared/x.ts", entries), JSON.stringify(entries)).toThrow(AmbiguousClassifyError);
+      }
+    }
+  });
+
   test("the same entry repeated, or two entries that happen to agree, is not ambiguous", () => {
     const a = { glob: "packages/shared/*", tags: ["one"] };
     const b = { glob: "packages/shared/*.ts", tags: ["one"] };
@@ -61,6 +109,10 @@ describe("classifyByDirectoryName", () => {
     expect(classifyByDirectoryName("src/vs/platform/node/thing.ts", config)).toEqual(["env:node"]);
     expect(classifyByDirectoryName("src/vs/platform/thing.ts", config)).toEqual([]);
   });
+
+  test("a matching directory at the project root tags the file", () => {
+    expect(classifyByDirectoryName("browser/thing.ts", { tagNamespace: "env", names: ["browser"] })).toEqual(["env:browser"]);
+  });
 });
 
 describe("classifyFile", () => {
@@ -70,5 +122,10 @@ describe("classifyFile", () => {
       classifyByDirectoryName: { tagNamespace: "env", names: ["5-runtime"] },
     });
     expect([...tags].sort()).toEqual(["domain:sql", "env:5-runtime"]);
+  });
+
+  test("without classifyByDirectoryName, a file carries only its classify tags", () => {
+    expect([...classifyFile("packages/core/x.ts", { classify: [{ glob: "packages/core/**", tags: ["domain:core"] }] })]).toEqual(["domain:core"]);
+    expect(classifyFile("packages/core/x.ts", {}).size).toBe(0);
   });
 });
