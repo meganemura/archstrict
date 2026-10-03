@@ -3,6 +3,12 @@
 The format follows Keep a Changelog, and the versions follow SemVer. Before 1.0, a minor version
 may change commands, flags, config, or output shape. The version entry will describe each change.
 
+## Unreleased
+
+### Fixed
+
+- On Windows, `archstrict check` reported every import into a module as `public-surface-bypass`. This included imports of the module's own surface file. Walk paths used backslashes. TypeScript's resolved paths use forward slashes. Every path in the graph now uses the TypeScript spelling. CI runs the check on Windows.
+
 ## 0.2.0 (2026-10-01)
 
 ### Added

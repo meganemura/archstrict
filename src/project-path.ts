@@ -1,16 +1,43 @@
 // Responsibility: convert between absolute file paths and the normalized,
-// project-relative POSIX paths used by configuration and persistent caches.
-// Boundary: callers own path validation and filesystem access.
-import { relative, sep } from "node:path";
+// project-relative POSIX paths used by configuration and persistent caches,
+// and the absolute path spelling used by TypeScript.
+// Boundary: only compilerRealpath accesses the filesystem to resolve identity.
+// Callers own path validation and all other filesystem access.
+import { realpathSync } from "node:fs";
+import { dirname, join, relative, resolve, sep } from "node:path";
 
 export type ProjectRelativePath = (filePath: string) => string;
+
+// TypeScript resolves Windows files with forward slashes. Native walk
+// paths must use that spelling before they become graph identities.
+export function toTypeScriptPath(path: string, separator: string = sep): string {
+  return separator === "/" ? path : path.split(separator).join("/");
+}
+
+export function compilerJoin(...paths: string[]): string {
+  return toTypeScriptPath(join(...paths));
+}
+
+export function compilerDirname(path: string): string {
+  return toTypeScriptPath(dirname(path));
+}
+
+export function compilerRealpath(path: string): string {
+  return toTypeScriptPath(realpathSync(path));
+}
+
+export function compilerResolve(...paths: string[]): string {
+  return toTypeScriptPath(resolve(...paths));
+}
 
 // A graph asks for the same file through membership and rule checks. Keep
 // one spelling so those checks do not repeat native path parsing.
 export function makeProjectRelativePosix(projectRoot: string): ProjectRelativePath {
   const cache = new Map<string, string>();
-  const rootPrefix = projectRoot.endsWith(sep) ? projectRoot : `${projectRoot}${sep}`;
+  projectRoot = toTypeScriptPath(projectRoot);
+  const rootPrefix = projectRoot.endsWith("/") ? projectRoot : `${projectRoot}/`;
   return (filePath: string): string => {
+    filePath = toTypeScriptPath(filePath);
     const cached = cache.get(filePath);
     if (cached !== undefined) return cached;
     // The project walk produces descendants of one absolute root. Prefix
@@ -18,7 +45,7 @@ export function makeProjectRelativePosix(projectRoot: string): ProjectRelativePa
     const nativeResult = filePath === projectRoot ? ""
       : filePath.startsWith(rootPrefix) ? filePath.slice(rootPrefix.length)
       : relative(projectRoot, filePath);
-    const result = sep === "/" ? nativeResult : nativeResult.split(sep).join("/");
+    const result = toTypeScriptPath(nativeResult);
     cache.set(filePath, result);
     return result;
   };

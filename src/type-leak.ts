@@ -24,6 +24,7 @@
 // would make that call a cycle with every other rule that reads the graph.
 import ts from "typescript";
 import { relative } from "node:path";
+import { toTypeScriptPath } from "./project-path.js";
 import { declarationKey, sourceFileKey } from "./type-closure.js";
 
 export type Via = "inferred-return" | "generic-parameter" | "structural";
@@ -249,13 +250,11 @@ export function detectTypeLeaks(
       // because it rebuilds the all-surface closure that focus avoids.
       return externallyNamedDeclarationKeys.has(namedDeclarationKey(d));
     })) return undefined;
-    // TS file names are always forward-slash; boundaryRoot comes from
-    // node:path's own join/dirname, which uses the platform separator on
-    // Windows - a plain startsWith would then read every declaration as
-    // outside the boundary there (the same class of bug module-graph.ts's
-    // own isWorkspaceSiblingResolution already hit and fixed with the same
-    // relative() check). This also closes a prefix hole a plain startsWith
-    // has even on one platform: "src-other" starts with "src" as a string.
+    // startsWith has a prefix hole: "src-other" starts with "src".
+    // Windows native backslashes also differ from compiler forward slashes.
+    // relative() distinguishes those directories and different drives.
+    // A different-drive result is absolute and uses native separators;
+    // keep the compiler's spelling so equality can detect that result.
     //
     // Under declared modules, "internal" means inside SOME declared
     // module's own directory - not the whole project root. A single,
@@ -284,7 +283,7 @@ export function detectTypeLeaks(
     // root is still internal to it, since nothing in the path AFTER the
     // root names a nested node_modules of its own.
     const isInsideAnyBoundary = boundaryRoots.some((root) => {
-      const rel = relative(root, file);
+      const rel = toTypeScriptPath(relative(root, file));
       if (rel.startsWith("..") || rel === file) return false; // rel === file: outside entirely (relative() returns the input unchanged across drives on Windows)
       return !rel.split(/[\\/]/).includes("node_modules");
     });
@@ -689,7 +688,7 @@ export function checkTypeLeaks(graph: {
     }
 
     for (const group of groups.values()) {
-      const relativeInternalFile = relative(graph.rootDir, group.file);
+      const relativeInternalFile = toTypeScriptPath(relative(graph.rootDir, group.file));
       const names = [...group.exportedAs].sort();
       const shown = names.slice(0, MAX_NAMED_EXPORTS).map((n) => `'${n}'`).join(", ");
       const more = names.length > MAX_NAMED_EXPORTS ? ` (and ${names.length - MAX_NAMED_EXPORTS} more)` : "";

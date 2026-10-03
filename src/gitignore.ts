@@ -12,7 +12,8 @@
 // git: a copy of a checkout with no .git directory, or a machine with no git
 // binary, still skips what the checkout's own .gitignore files name.
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
+import { compilerDirname } from "./project-path.js";
 
 // `literal` is set for an unanchored pattern with no wildcard or escape
 // (`node_modules/`, `Thumbs.db`): it matches a basename exactly.
@@ -169,7 +170,7 @@ function findRepository(projectRoot: string): { root: string; commonDir: string 
       const commonDir = commonDirText === undefined ? gitDir : resolve(gitDir, commonDirText.trim());
       return { root: dir, commonDir };
     }
-    const parent = dirname(dir);
+    const parent = compilerDirname(dir);
     if (parent === dir) return undefined;
     dir = parent;
   }
@@ -193,8 +194,8 @@ export function gitignoreStackAbove(projectRoot: string): GitignoreStack {
   };
   add(repository.root, readText(join(repository.commonDir, "info", "exclude")));
   const between: string[] = [];
-  for (let dir = projectRoot; dir !== repository.root; dir = dirname(dir)) {
-    const parent = dirname(dir);
+  for (let dir = projectRoot; dir !== repository.root; dir = compilerDirname(dir)) {
+    const parent = compilerDirname(dir);
     if (parent === dir) break;
     between.unshift(parent);
   }

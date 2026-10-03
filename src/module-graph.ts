@@ -51,13 +51,13 @@ import { createHash } from "node:crypto";
 import { readEdgeCache, writeEdgeCache, resolutionKey, type EdgeCache, type CachedFileEntry, type CachedResolution } from "./edge-cache.js";
 import { readAugmentationCache, writeAugmentationCache, type CachedAugmentationEntry } from "./augmentation-cache.js";
 import { existsSync, readFileSync, readdirSync, realpathSync, statSync, type Dirent } from "node:fs";
-import { dirname, join, relative, sep } from "node:path";
+import { join, relative } from "node:path";
 import { builtinModules } from "node:module";
 import { compileGlob, mostSpecificMatch } from "./classify.js";
 import { ReportError } from "./report-error.js";
 import { buildTypeClosure, computeSyntacticNamedDeclarations, type TypeClosureInputs } from "./type-closure.js";
 import { checkTypeLeaks, type Violation as TypeLeakViolation } from "./type-leak.js";
-import { makeProjectRelativePosix, type ProjectRelativePath } from "./project-path.js";
+import { compilerJoin, compilerDirname, compilerRealpath, makeProjectRelativePosix, toTypeScriptPath, type ProjectRelativePath } from "./project-path.js";
 import { forcedBasesOf, gitignoreStackAbove, isPathGitignored, nextIgnoreState, withGitignoreFile,
   type GitignoreStack, type IgnoreState } from "./gitignore.js";
 
@@ -423,7 +423,7 @@ function pathIsFile(path: string): boolean {
 // surface that was never computed at all.
 function moduleRelativeDir(projectRoot: string, glob: string, fileExists: (path: string) => boolean = pathIsFile): string {
   const base = moduleGlobBaseDir(glob);
-  if (!fileExists(join(projectRoot, base))) return base;
+  if (!fileExists(compilerJoin(projectRoot, base))) return base;
   const slash = base.lastIndexOf("/");
   return slash === -1 ? "" : base.slice(0, slash);
 }
@@ -440,7 +440,7 @@ function moduleRelativeGlob(
 }
 
 export function toProjectRelativePosix(filePath: string, projectRoot: string): string {
-  return relative(projectRoot, filePath).split(sep).join("/");
+  return toTypeScriptPath(relative(projectRoot, filePath));
 }
 
 // Recursively lists every .ts file under `projectRoot`, excluding
@@ -465,8 +465,8 @@ export function toProjectRelativePosix(filePath: string, projectRoot: string): s
 // node_modules segment and lands inside this project's own root -> a
 // workspace sibling, not an external target.
 function isWorkspaceSiblingResolution(resolvedFile: string, rootDir: string): boolean {
-  if (resolvedFile.split(sep).includes("node_modules")) return false;
-  const rel = relative(rootDir, resolvedFile);
+  if (resolvedFile.split("/").includes("node_modules")) return false;
+  const rel = toTypeScriptPath(relative(rootDir, resolvedFile));
   return !(rel.startsWith("..") || rel === resolvedFile);
 }
 
@@ -504,7 +504,7 @@ export function surfaceGlobsFor(
     const entries = Array.isArray(surface) ? surface : [surface as string];
     return entries.map((s) => joinPosix(shape.dir, s));
   }
-  const moduleDir = join(projectRoot, moduleGlobBaseDir(shape.glob));
+  const moduleDir = compilerJoin(projectRoot, moduleGlobBaseDir(shape.glob));
   const surface = effectiveSurface(dm, moduleDir, globalDefaultSurface);
   const entries = Array.isArray(surface) ? surface : [surface as string];
   return entries.map((s) => moduleRelativeGlob(projectRoot, shape.glob, s, fileExists));
@@ -704,7 +704,7 @@ export type ProjectTreeWalk = {
 // (invisible to this walk, the same as an unreadable file is).
 function realDirOf(path: string): string | undefined {
   try {
-    return realpathSync(path);
+    return compilerRealpath(path);
   } catch {
     return undefined;
   }
@@ -739,7 +739,7 @@ function readDirEntries(dir: string): { files: Dirent[]; dirs: { entry: Dirent; 
   const files: Dirent[] = [];
   const dirs: { entry: Dirent; real: string }[] = [];
   for (const entry of entries) {
-    const full = join(dir, entry.name);
+    const full = compilerJoin(dir, entry.name);
     let isDir = entry.isDirectory();
     let isFile = entry.isFile();
     if (entry.isSymbolicLink()) {
@@ -855,7 +855,7 @@ function walkProjectTree(
     }
 
     for (const entry of files) {
-      const full = join(dir, entry.name);
+      const full = compilerJoin(dir, entry.name);
       if (entry.name === "package.json" && !analysisOnly) packageJsonFiles.push(full);
       if (!analysisOnly && isResolvableFile(entry.name)) resolvableFiles.push(full);
       const rel = relativePath(full);
@@ -872,7 +872,7 @@ function walkProjectTree(
     }
 
     for (const { entry, real } of dirs) {
-      const full = join(dir, entry.name);
+      const full = compilerJoin(dir, entry.name);
       if (entry.name === "node_modules") {
         if (!analysisOnly) nodeModulesDirs.push(full);
         continue;
@@ -908,12 +908,12 @@ function walkProjectTree(
     function visitDist(dir: string): void {
       const { files, dirs } = readDirEntries(dir);
       for (const entry of files) {
-        const full = join(dir, entry.name);
+        const full = compilerJoin(dir, entry.name);
         if (entry.name === "package.json") packageJsonFiles.push(full);
         if (isResolvableFile(entry.name)) resolvableFiles.push(full);
       }
       for (const { entry, real } of dirs) {
-        const full = join(dir, entry.name);
+        const full = compilerJoin(dir, entry.name);
         if (entry.name === "node_modules") {
           nodeModulesDirs.push(full);
           continue;
@@ -1032,10 +1032,10 @@ function buildDeclaredModules(
   const modules = new Map<string, Module>(
     declaredModules.map((dm): [string, Module] => {
       const shape = moduleGlobShape(dm);
-      const dir = join(projectRoot, shape.kind === "single" ? moduleGlobBaseDir(shape.glob) : shape.dir);
+      const dir = compilerJoin(projectRoot, shape.kind === "single" ? moduleGlobBaseDir(shape.glob) : shape.dir);
       const boundaryRoots = shape.kind === "single"
         ? [dir]
-        : shape.globs.map((glob) => join(projectRoot, moduleGlobBaseDir(glob)));
+        : shape.globs.map((glob) => compilerJoin(projectRoot, moduleGlobBaseDir(glob)));
       return [
         dm.name,
         {
@@ -1135,7 +1135,7 @@ function readCompilerOptions(configPath: string): ts.CompilerOptions {
   // `pathsBasePath` from it. Hand-merging option objects instead of
   // reusing this real TypeScript call would resolve `paths` against the
   // wrong root and produce a different wrong answer, not a correct one.
-  return ts.parseJsonConfigFileContent(config, noExpandParseConfigHost, dirname(configPath)).options;
+  return ts.parseJsonConfigFileContent(config, noExpandParseConfigHost, compilerDirname(configPath)).options;
 }
 
 function loadCompilerOptions(startDir: string): { configPath: string | undefined; options: ts.CompilerOptions } {
@@ -1195,7 +1195,7 @@ function makeCompilerOptionsForFile(
   // directory's own walk into one lookup after its first caller.
   const configPathByDir = new Map<string, string | undefined>();
   return (filePath: string): ts.CompilerOptions => {
-    const dir = dirname(filePath);
+    const dir = compilerDirname(filePath);
     let configPath = configPathByDir.get(dir);
     if (configPath === undefined && !configPathByDir.has(dir)) {
       configPath = ts.findConfigFile(dir, ts.sys.fileExists.bind(ts.sys));
@@ -1221,7 +1221,7 @@ export function prepareGraph(options: BuildOptions) {
   // declaredModules glob matching, exclude glob matching) silently
   // disagree with the paths TypeScript itself already resolved to.
   const { declaredModules, surface = DEFAULT_SURFACE, exclude = [] } = options;
-  const projectRoot = realpathSync(options.projectRoot);
+  const projectRoot = compilerRealpath(options.projectRoot);
   const relativePath = makeProjectRelativePosix(projectRoot);
   const { configPath: rootConfigPath, options: compilerOptions } = loadCompilerOptions(projectRoot);
   const compilerOptionsForFile = makeCompilerOptionsForFile(compilerOptions, rootConfigPath);
@@ -1236,9 +1236,9 @@ export function prepareGraph(options: BuildOptions) {
   const dtsSurfaceGlobs = surfaceGlobsAllowingDts(declaredModules, projectRoot, surface);
   const tree = walkProjectTree(projectRoot, exclude, dtsSurfaceGlobs, false, relativePath, declaredBasesOf(declaredModules));
   let rootNames = tree.analyzedFiles;
-  if (options.fileListOverride) rootNames = options.fileListOverride(rootNames);
+  if (options.fileListOverride) rootNames = options.fileListOverride(rootNames).map((path) => toTypeScriptPath(path));
   let resolvableFiles = tree.resolvableFiles;
-  if (options.resolvableFileListOverride) resolvableFiles = options.resolvableFileListOverride(resolvableFiles);
+  if (options.resolvableFileListOverride) resolvableFiles = options.resolvableFileListOverride(resolvableFiles).map((path) => toTypeScriptPath(path));
   const modules = buildDeclaredModules(projectRoot, declaredModules, rootNames, surface, relativePath);
   // Cached by absolute file path: buildPreparedGraph calls this once per
   // source file AND once per edge's resolvedFile, and a widely-imported
@@ -1747,7 +1747,7 @@ function scanNonAnalyzedModuleAugmentations(
   commons: GraphCommons,
   overrides: GraphBuildOverrides,
 ): Map<string, ModuleAugmentationSpecifier[]> {
-  const path = join(prepared.projectRoot, "node_modules/.cache/archstrict/augmentations.json");
+  const path = compilerJoin(prepared.projectRoot, "node_modules/.cache/archstrict/augmentations.json");
   const cached = readAugmentationCache(path, ARCHSTRICT_VERSION);
   const candidates = nonAnalyzedAugmentationCandidates(prepared.resolvableFiles, commons.analyzedSet);
   const files: Record<string, CachedAugmentationEntry> = {};
@@ -2239,10 +2239,10 @@ const CODE_VERSION_HASH: string = (() => {
 const TYPESCRIPT_VERSION: string = ts.version;
 
 function cacheMetadata(projectRoot: string, options: BuildOptions): Record<string, number | null> {
-  const packages = [join(projectRoot, "package.json"), ...options.declaredModules
-    .flatMap((dm) => moduleGlobList(dm.glob).map((glob) => join(projectRoot, moduleGlobBaseDir(glob), "package.json")))];
+  const packages = [compilerJoin(projectRoot, "package.json"), ...options.declaredModules
+    .flatMap((dm) => moduleGlobList(dm.glob).map((glob) => compilerJoin(projectRoot, moduleGlobBaseDir(glob), "package.json")))];
   const lock = ["package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lock"]
-    .map((name) => join(projectRoot, name)).find((path) => existsSync(path));
+    .map((name) => compilerJoin(projectRoot, name)).find((path) => existsSync(path));
   if (lock !== undefined) packages.push(lock);
   return Object.fromEntries([...new Set(packages)].sort().map((path) => [path, existsSync(path) ? statSync(path).mtimeMs : null]));
 }
@@ -2300,10 +2300,10 @@ function findNearestLockfile(startDir: string): string | undefined {
   let dir = startDir;
   for (;;) {
     for (const name of LOCKFILE_NAMES) {
-      const candidate = join(dir, name);
+      const candidate = compilerJoin(dir, name);
       if (existsSync(candidate)) return candidate;
     }
-    const parent = dirname(dir);
+    const parent = compilerDirname(dir);
     if (parent === dir) return undefined;
     dir = parent;
   }
@@ -2391,8 +2391,8 @@ function ancestorNodeModulesDirs(projectRoot: string): string[] {
   const dirs: string[] = [];
   let dir = projectRoot;
   for (;;) {
-    dirs.push(join(dir, "node_modules"));
-    const parent = dirname(dir);
+    dirs.push(compilerJoin(dir, "node_modules"));
+    const parent = compilerDirname(dir);
     if (parent === dir) break;
     dir = parent;
   }
@@ -2464,7 +2464,7 @@ export function buildModuleGraphForRules(options: BuildOptions, overrides: Graph
   const prepared = prepareGraph(options);
   const commons = makeGraphCommons(prepared, overrides);
   const { projectRoot, rootNames, modules, resolveModuleForFile, compilerOptionsForFile, resolvableFiles, packageJsonFiles, nodeModulesDirs } = prepared;
-  const path = join(projectRoot, "node_modules/.cache/archstrict/edges.json");
+  const path = compilerJoin(projectRoot, "node_modules/.cache/archstrict/edges.json");
   const cached = readEdgeCache(path, projectRoot);
   // A package version or code-version mismatch drops the whole cache -
   // modeled here as "no old entry for any file", which the per-file logic

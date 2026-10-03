@@ -1,12 +1,13 @@
 // Responsibility: compare proposed source and config changes with the current project through the full rule pipeline.
 // Boundary: all changes stay in memory; the baseline and archstrict.todo.json remain inputs from disk.
 import { existsSync, realpathSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename } from "node:path";
 import ts from "typescript";
 import { buildModuleGraphForRules, DEFAULT_SURFACE, isEligibleSourceFile, isResolvableFile, prepareGraph, type ModuleGraph } from "../module-graph.js";
 import { fingerprintOf, relativizeForTodo } from "../todo-store.js";
 import { applyTodo, formatText, loadConfig, runRules, type AnyViolation, type CheckResult } from "./check.js";
 import { createConfigLocator } from "../config-pointer.js";
+import { compilerDirname, compilerJoin, compilerResolve } from "../project-path.js";
 
 export type Change = { path: string; content: string | null };
 export type SimulateMode = "scoped" | "whole-project";
@@ -18,16 +19,16 @@ export type SimulateOptions = { wholeProject?: boolean };
 // nearest existing ancestor, then append the missing segments to preserve
 // canonical paths through existing symlinks.
 function canonicalChangePath(projectRoot: string, path: string): string {
-  const absolute = resolve(projectRoot, path);
+  const absolute = compilerResolve(projectRoot, path);
   const missing = [basename(absolute)];
-  let ancestor = dirname(absolute);
+  let ancestor = compilerDirname(absolute);
   while (!existsSync(ancestor)) {
     missing.unshift(basename(ancestor));
-    const parent = dirname(ancestor);
+    const parent = compilerDirname(ancestor);
     if (parent === ancestor) throw new Error(`cannot resolve change path: ${path}`);
     ancestor = parent;
   }
-  return join(realpathSync(ancestor), ...missing);
+  return compilerJoin(realpathSync(ancestor), ...missing);
 }
 
 function overlayHost(options: ts.CompilerOptions, changes: ReadonlyMap<string, string | null>): ts.CompilerHost {
@@ -44,33 +45,33 @@ function overlayHost(options: ts.CompilerOptions, changes: ReadonlyMap<string, s
   const directories = new Map<string, Set<string>>();
   for (const [file, content] of changes) {
     if (content === null) continue;
-    let directory = dirname(file);
+    let directory = compilerDirname(file);
     if (!directories.has(directory)) directories.set(directory, new Set());
-    while (dirname(directory) !== directory) {
-      const parent = dirname(directory);
+    while (compilerDirname(directory) !== directory) {
+      const parent = compilerDirname(directory);
       if (!directories.has(parent)) directories.set(parent, new Set());
       directories.get(parent)!.add(basename(directory));
       directory = parent;
     }
   }
   host.getSourceFile = (file, languageVersion, onError, shouldCreateNewSourceFile) => {
-    const content = changes.get(resolve(file));
+    const content = changes.get(compilerResolve(file));
     if (content === null) return undefined;
     if (content !== undefined) return ts.createSourceFile(file, content, languageVersion);
     return getSourceFile(file, languageVersion, onError, shouldCreateNewSourceFile);
   };
   host.readFile = file => {
-    const content = changes.get(resolve(file));
+    const content = changes.get(compilerResolve(file));
     return content === null ? undefined : content ?? readFile(file);
   };
   host.fileExists = file => {
-    const content = changes.get(resolve(file));
+    const content = changes.get(compilerResolve(file));
     return content === undefined ? fileExists(file) : content !== null;
   };
-  host.directoryExists = directory => directories.has(resolve(directory)) || directoryExists(directory);
+  host.directoryExists = directory => directories.has(compilerResolve(directory)) || directoryExists(directory);
   host.getDirectories = directory => [...new Set([
     ...(directoryExists(directory) ? getDirectories(directory) : []),
-    ...(directories.get(resolve(directory)) ?? []),
+    ...(directories.get(compilerResolve(directory)) ?? []),
   ])];
   return host;
 }

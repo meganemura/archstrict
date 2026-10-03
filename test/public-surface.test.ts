@@ -1,15 +1,38 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { buildModuleGraph } from "../src/module-graph.js";
 import { checkPublicSurfaceBypass } from "../src/rules/public-surface.js";
+import * as projectPath from "../src/project-path.js";
 
 const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), "fixtures/public-surface");
 const declaredModules = ["a", "b", "c"].map((name) => ({ name, glob: `src/${name}/**` }));
 
 describe("checkPublicSurfaceBypass", () => {
+  test("walk paths with Windows separators share the compiler's surface identity", () => {
+    const normalize = projectPath.toTypeScriptPath;
+    // Separator injection preserves real host I/O while reproducing Windows
+    // file-list identities at the graph's input boundary.
+    const conversion = vi.spyOn(projectPath, "toTypeScriptPath")
+      .mockImplementation(path => normalize(path, "\\"));
+    try {
+      const graph = buildModuleGraph({
+        projectRoot: FIXTURE, declaredModules, surface: "public.ts",
+        fileListOverride: files => files.map(file => file.replace(/\//g, "\\")),
+        resolvableFileListOverride: files => files.map(file => file.replace(/\//g, "\\")),
+      });
+      expect(graph.unresolvedSpecifierCount).toBe(0);
+      expect(graph.crossModuleEdges).toHaveLength(3);
+      const publicEdge = graph.crossModuleEdges.find(edge => edge.specifier === "../a/public.ts")!;
+      expect(graph.modules.get("a")!.surfaceFiles).toContain(publicEdge.resolvedFile);
+      expect(checkPublicSurfaceBypass(graph)).toHaveLength(2);
+    } finally {
+      conversion.mockRestore();
+    }
+  });
+
   test("flags a bypass of a's public.ts, and every import into b (no public.ts)", () => {
     // This fixture's own surface convention is "public.ts", not the
     // tool's default ("index.ts") - the surface file name is configurable

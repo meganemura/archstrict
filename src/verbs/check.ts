@@ -4,8 +4,8 @@
 // Boundary: this is where the six rules' differing return shapes get
 // normalized to one — `deprecated`'s two arrays (violations/suggestions)
 // flatten in here, not in each rule.
-import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { resolve, sep } from "node:path";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { compilerRealpath, compilerResolve } from "../project-path.js";
 import ts from "typescript";
 import { buildModuleGraphForRules, globResolutionDir, type ModuleGraph, type BuildOptions } from "../module-graph.js";
 import { dominantBypassModule, dominantBypassSentence } from "./map-shape.js";
@@ -449,7 +449,7 @@ export type RunRulesOptions = {
 // `process.cwd()`, the same as `filterToFile` resolves the `file` a
 // caller named.
 function reportedAtFocus(path: string, focus: string): boolean {
-  return resolve(path) === focus;
+  return compilerResolve(path) === focus;
 }
 
 export function runRules(graph: ModuleGraph, config: Config, options: RunRulesOptions = {}): CheckResult {
@@ -565,24 +565,24 @@ export function runRules(graph: ModuleGraph, config: Config, options: RunRulesOp
 // frozen violation - the file (or, for `check <dir>`, any file under the
 // directory) the STALE ENTRY ITSELF is about, not the file the report
 // happens to be written into. A directory target matches an `entryPath`
-// equal to it or nested under it (`target + sep` prefix); a file target
+// equal to it or nested under it (`target + "/"` prefix); a file target
 // only ever matches by equality, since a file has no children to nest
 // anything under.
 export function filterToFile(result: CheckResult, file: string): CheckResult {
-  const resolved = resolve(file);
+  const resolved = compilerResolve(file);
   if (!existsSync(resolved)) {
     throw new ReportError(`check ${file}: no such file`, "archstrict check");
   }
-  const target = realpathSync(resolved);
-  const targetWithSep = target + sep;
+  const target = compilerRealpath(resolved);
+  const targetWithSep = target + "/";
   return {
     ...result,
     violations: result.violations.filter((v) => {
       if (v.rule === "stale-todo") {
-        const entryPath = resolve(v.entryPath);
+        const entryPath = compilerResolve(v.entryPath);
         return entryPath === target || entryPath.startsWith(targetWithSep);
       }
-      return resolve(v.path) === target;
+      return compilerResolve(v.path) === target;
     }),
   };
 }
@@ -640,7 +640,7 @@ export type ApplyTodoOptions = {
 // own comment) - so this can differ from M's own directory even when M
 // itself is the file being checked.
 function entryReportedAtFocus(entry: TodoEntry, rootDir: string, focus: string): boolean {
-  return resolve(rootDir, entry.path) === focus;
+  return compilerResolve(rootDir, entry.path) === focus;
 }
 
 // Where a stale-todo/clean-module-has-todo violation points: at the exact
@@ -821,7 +821,7 @@ export function applyTodo(graph: ModuleGraph, config: Config, result: CheckResul
         evidence: `todo entry (${entry.rule}) no longer matches any violation`,
         because: "an unmatched todo entry hides nothing real; it must be pruned, not left behind",
         do: "archstrict todo",
-        entryPath: resolve(graph.rootDir, entry.path),
+        entryPath: compilerResolve(graph.rootDir, entry.path),
       }, config, locator, [{ pointer: declaredModulePointerForName(config, name), role: "governs" }]));
     }
   }
@@ -964,7 +964,7 @@ function applyFilters(result: CheckResult, options: CheckOptions): CheckResult {
 // where it always was.
 function tryRealpath(file: string): string | undefined {
   try {
-    const target = realpathSync(resolve(file));
+    const target = compilerRealpath(compilerResolve(file));
     return statSync(target).isFile() ? target : undefined;
   } catch {
     return undefined;
@@ -976,7 +976,7 @@ function tryRealpath(file: string): string | undefined {
 function surfaceModuleForFocus(graph: ModuleGraph, file: string): string | undefined {
   let target: string;
   try {
-    target = realpathSync(resolve(file));
+    target = compilerRealpath(compilerResolve(file));
   } catch {
     // Missing and non-resolvable paths must keep the existing unscoped error path.
     // Guessing a module is refused because `filterToFile` owns the missing-path error.
@@ -987,7 +987,7 @@ function surfaceModuleForFocus(graph: ModuleGraph, file: string): string | undef
       try {
         // The module name selects the scoped closure. Returning a boolean is
         // refused because the rule would then need to repeat the path lookup.
-        if (realpathSync(surfacePath) === target) return module.name;
+        if (compilerRealpath(surfacePath) === target) return module.name;
       } catch {
         // A configured surface glob can name a path that doesn't exist yet; not a match either way.
       }
@@ -999,7 +999,7 @@ function surfaceModuleForFocus(graph: ModuleGraph, file: string): string | undef
 }
 
 export async function check(projectRoot: string, focusFile?: string, options: CheckOptions = {}): Promise<CheckResult> {
-  const configPath = resolve(projectRoot, "archstrict.config.ts");
+  const configPath = compilerResolve(projectRoot, "archstrict.config.ts");
   const config = await loadConfig(configPath);
   // `config.configPath` (a config-meaning violation's own `path`) is
   // realpath'd once, here, after a successful load - `filterToFile`
@@ -1012,7 +1012,7 @@ export async function check(projectRoot: string, focusFile?: string, options: Ch
   // Done after loadConfig, not before: every error loadConfig itself can
   // throw (a missing file, a bad default export, ...) still names the
   // exact path the caller gave, not a form it never used.
-  config.configPath = realpathSync(configPath);
+  config.configPath = compilerRealpath(configPath);
   const configLocator = createConfigLocator(config);
   // declaredModules is the only source of scope now - loadConfig already
   // guarantees a loaded config has it, as an array of well-shaped entries
