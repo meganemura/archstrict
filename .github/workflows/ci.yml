@@ -30,7 +30,7 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: node dist/cli.js check
-      - run: npx vitest run test/project-path.test.ts test/public-surface.test.ts
+      - run: npx vitest run test/project-path.test.ts test/public-surface.test.ts test/package-files.test.ts
 
   ts7-probe:
     name: probe typescript 7's unstable surface (never fails the workflow)
