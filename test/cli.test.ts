@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -23,9 +23,100 @@ function compilerSpelling(path: string): string {
 // files a build produces. Measured: `node src/cli.ts init` failed with
 // ERR_MODULE_NOT_FOUND for "./verbs/init.js" before this fix.
 
+const CLI_VERBS = [
+  "init",
+  "check",
+  "todo",
+  "rules",
+  "agents",
+  "recommend",
+  "fix",
+  "simulate",
+  "search",
+  "hotspots",
+  "mcp",
+] as const;
+
+const WRITING_VERBS = new Set<string>(["init", "todo", "fix", "agents"]);
+
+function projectFiles(root: string): string[] {
+  const found: string[] = [];
+  const walk = (dir: string): void => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) walk(path);
+      else found.push(path.slice(root.length));
+    }
+  };
+  walk(root);
+  return found.sort();
+}
+
 describe("cli", () => {
   test("prints usage with no arguments", () => {
     expect(() => execFileSync("node", [CLI_PATH], { encoding: "utf8" })).toThrow();
+  });
+
+  test("help prints each verb's usage and writes no file", () => {
+    const root = mkdtempSync(join(tmpdir(), "archstrict-cli-help-"));
+    try {
+      mkdirSync(join(root, "src"), { recursive: true });
+      writeFileSync(join(root, "src", "app.ts"), "export const app = 1;\n");
+      const before = projectFiles(root);
+      const run = (args: string[]) =>
+        execFileSync("node", [CLI_PATH, ...args], { cwd: root, encoding: "utf8", timeout: 5000 });
+
+      const table = run(["--help"]);
+      expect(projectFiles(root)).toEqual(before);
+      expect(run(["-h"])).toBe(table);
+      expect(run(["help"])).toBe(table);
+      for (const verb of CLI_VERBS) {
+        const line = table.split("\n").find((item) => item.includes(`archstrict ${verb}`));
+        expect(line, verb).toBeDefined();
+        expect(line!.includes("[writes files]"), verb).toBe(WRITING_VERBS.has(verb));
+        expect(run([verb, "--help"]).trim()).toBe(line!.trim());
+        expect(run(["help", verb]).trim()).toBe(line!.trim());
+        expect(run(["--help", verb]).trim()).toBe(line!.trim());
+        expect(run([verb, "-h"]).trim()).toBe(line!.trim());
+        expect(run([verb, "src/app.ts", "--help"]).trim()).toBe(line!.trim());
+        expect(projectFiles(root)).toEqual(before);
+      }
+      const checkLine = table.split("\n").find((item) => item.includes("archstrict check "));
+      expect(run(["check", "--module", "init", "--help"]).trim()).toBe(checkLine!.trim());
+      expect(projectFiles(root)).toEqual(before);
+
+      let exitCode = 0;
+      let stderr = "";
+      try {
+        run(["chek"]);
+      } catch (error) {
+        const err = error as { status: number; stderr: string };
+        exitCode = err.status;
+        stderr = err.stderr;
+      }
+      expect(exitCode).toBe(1);
+      expect(stderr).toContain("unknown verb 'chek'");
+      for (const verb of CLI_VERBS) expect(stderr).toContain(`archstrict ${verb}`);
+      expect(projectFiles(root)).toEqual(before);
+
+      let searchCode = 0;
+      let searchStdout = "";
+      let searchStderr = "";
+      try {
+        searchStdout = run(["search", "help"]);
+      } catch (error) {
+        const err = error as { status: number; stdout: string; stderr: string };
+        searchCode = err.status;
+        searchStdout = err.stdout;
+        searchStderr = err.stderr;
+      }
+      expect(searchCode).not.toBe(0);
+      expect(searchStdout).not.toContain("Rank names exported");
+      expect(searchStderr).not.toContain("usage:");
+      expect(projectFiles(root)).toEqual(before);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   test("init writes the two files and prints a do: line", () => {
@@ -347,20 +438,21 @@ describe("cli", () => {
       execFileSync("node", [CLI_PATH, "init"], { cwd: root });
 
       let exitCode = 0;
-      let stderr = "";
+      let stdout = "";
       try {
-        execFileSync("node", [CLI_PATH, "todo", "--help"], { cwd: root, encoding: "utf8" });
+        stdout = execFileSync("node", [CLI_PATH, "todo", "--help"], { cwd: root, encoding: "utf8" });
       } catch (e) {
-        const err = e as { status: number; stderr: string };
+        const err = e as { status: number; stdout: string };
         exitCode = err.status;
-        stderr = err.stderr;
+        stdout = err.stdout;
       }
-      expect(exitCode).toBe(1);
-      expect(stderr).toBe("archstrict: unknown option '--help'\ndo: archstrict todo [--json]\n");
+      expect(exitCode).toBe(0);
+      expect(stdout).toContain("archstrict todo [--json]:");
+      expect(stdout).toContain("[writes files]");
       expect(existsSync(join(root, "archstrict.todo.json"))).toBe(false);
 
       exitCode = 0;
-      stderr = "";
+      let stderr = "";
       try {
         execFileSync("node", [CLI_PATH, "todo", "--dry-run"], { cwd: root, encoding: "utf8" });
       } catch (e) {
@@ -376,7 +468,10 @@ describe("cli", () => {
       expect(first).toEqual({ firstRun: true, added: 1, pruned: 0 });
       const todoPath = join(root, "archstrict.todo.json");
       const frozen = readFileSync(todoPath, "utf8");
-      for (const args of [["--help"], ["--dry-run"], ["--json", "--dry-run"], ["unexpected.ts"]]) {
+      const helpAgain = execFileSync("node", [CLI_PATH, "todo", "--help"], { cwd: root, encoding: "utf8" });
+      expect(helpAgain).toContain("archstrict todo [--json]:");
+      expect(readFileSync(todoPath, "utf8")).toBe(frozen);
+      for (const args of [["--dry-run"], ["--json", "--dry-run"], ["unexpected.ts"]]) {
         expect(() => execFileSync("node", [CLI_PATH, "todo", ...args], { cwd: root, stdio: "pipe" })).toThrow();
         expect(readFileSync(todoPath, "utf8")).toBe(frozen);
       }

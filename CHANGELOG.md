@@ -5,6 +5,10 @@ may change commands, flags, config, or output shape. The version entry will desc
 
 ## Unreleased
 
+### Added
+
+- `archstrict --help`, `-h`, and `help` print one usage table and exit 0 without running a verb. `archstrict <verb> --help` prints that verb's line. `init`, `todo`, `fix`, and `agents` are marked `[writes files]`. An unknown verb prints the table and exits 1. A failure without its own `do` uses `archstrict <verb> --help`.
+
 ### Changed
 
 - Run `archstrict init` again after upgrading archstrict. `archstrict.types.ts` says to do that after an upgrade, and after adding, removing, or renaming a `declaredModules` entry.
@@ -16,7 +20,7 @@ may change commands, flags, config, or output shape. The version entry will desc
 
 ### Fixed
 
-- `archstrict todo` accepted any argument and ran its first-run freeze for `todo --help` or `todo --dry-run`, writing `archstrict.todo.json`. An argument other than `--json` is now an error (`unknown option`), and nothing is written.
+- `archstrict todo` accepted any argument and ran its first-run freeze for `todo --dry-run`, writing `archstrict.todo.json`. An argument other than `--json` is now an error (`unknown option`), and nothing is written.
 
 ## 0.3.0 (2026-10-10)
 

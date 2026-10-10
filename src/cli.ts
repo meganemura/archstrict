@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-// Responsibility: parse argv and dispatch to a verb (init, check, todo, rules, agents, recommend, fix, simulate, search, hotspots).
+// Responsibility: parse argv and dispatch to a verb (init, check, todo, rules, agents, recommend, fix, simulate, search, hotspots, mcp).
 // Boundary: no rule logic here; verbs live in their own modules.
+// Help is printed from the usage table before dispatch. A help flag must not reach a verb that writes files.
 import { startArchstrictMcpServer } from "./mcp-server.js";
 import { search, formatSearchText } from "./verbs/search.js";
 import { simulate, formatSimulateText, type Change } from "./verbs/simulate.js";
@@ -15,12 +16,109 @@ import { hotspots, formatHotspotsText } from "./verbs/hotspots.js";
 import { ReportError } from "./report-error.js";
 import { parseCheckArgv } from "./check-options.js";
 
+// One table, keyed by verb. Help and an unknown verb both print it, so a second usage string cannot drift.
+// `writes` marks the verbs that create or edit project files. Help returns before those verbs run.
+const usage = {
+  init: {
+    args: "[dir] [--json]",
+    sentence: "Declare one module per top-level source directory and write archstrict.config.ts and archstrict.types.ts.",
+    writes: true,
+  },
+  check: {
+    args: "[file] [--json] [--rule <id>] [--module <name>] [--frozen] [--prove]",
+    sentence: "Report module-boundary violations for the project, or for one file.",
+    writes: false,
+  },
+  todo: {
+    args: "[--json]",
+    sentence: "Freeze current freezable violations on the first run, then only prune.",
+    writes: true,
+  },
+  rules: {
+    args: "<path> [--json]",
+    sentence: "Report the module, tags, and constraints that govern a path.",
+    writes: false,
+  },
+  agents: {
+    args: "[--remove] [--json]",
+    sentence: "Add or remove the archstrict section in AGENTS.md.",
+    writes: true,
+  },
+  recommend: {
+    args: "[dir] [--json]",
+    sentence: "Propose map notes, boundary patterns, and surfaces from the project graph.",
+    writes: false,
+  },
+  fix: {
+    args: "[file] [--dry-run] [--json]",
+    sentence: "Re-export a leaked type whose declaring file already exports that name.",
+    writes: true,
+  },
+  simulate: {
+    args: "[--json] [--whole-project]",
+    sentence: "Preview a JSON change set from stdin without writing it.",
+    writes: false,
+  },
+  search: {
+    args: "<query> [--json]",
+    sentence: "Rank names exported from public surfaces by token overlap with the query.",
+    writes: false,
+  },
+  hotspots: {
+    args: "[--since <git ref or date>] [--json]",
+    sentence: "Rank modules by git change frequency, fan-in, and violations.",
+    writes: false,
+  },
+  mcp: {
+    args: "",
+    sentence: "Start the stdio MCP server for check, rules, search, and simulate.",
+    writes: false,
+  },
+} as const;
+
+type VerbName = keyof typeof usage;
+
+const verbNames = Object.keys(usage) as VerbName[];
+
+function isVerbName(value: string): value is VerbName {
+  return Object.hasOwn(usage, value);
+}
+
+function usageLine(verb: VerbName): string {
+  const entry = usage[verb];
+  const invocation = entry.args.length === 0 ? `archstrict ${verb}` : `archstrict ${verb} ${entry.args}`;
+  const mark = entry.writes ? " [writes files]" : "";
+  return `${invocation}: ${entry.sentence}${mark}`;
+}
+
+function usageTable(): string {
+  return `usage:\n${verbNames.map((verb) => `  ${usageLine(verb)}`).join("\n")}\n`;
+}
+
+// `--help` and `-h` count anywhere. `help` counts only as the verb, so `search help` still searches.
+function isHelpRequest(argv: readonly string[]): boolean {
+  return argv[0] === "help" || argv.some((arg) => arg === "--help" || arg === "-h");
+}
+
+// The first token is the verb when it names one, so a later value that
+// happens to be a verb (`check --module init --help`) still selects that line.
+// `help`, `--help`, or `-h` in front looks at the remaining tokens.
+function helpVerb(argv: readonly string[]): VerbName | undefined {
+  const head = argv[0];
+  if (head !== undefined && isVerbName(head)) return head;
+  const rest = head === "help" || head === "--help" || head === "-h" ? argv.slice(1) : argv;
+  const named = rest.filter(isVerbName);
+  return named.length === 1 ? named[0] : undefined;
+}
+
 // Text and JSON share one shape: the message, then the one command to run.
 // A violation already carries `do`; a thrown config or missing-file
 // failure goes through here so it does too.
 function reportFailure(error: unknown, verb: string, asJson: boolean): void {
   const message = error instanceof Error ? error.message : String(error);
-  const doText = error instanceof ReportError ? error.do : `archstrict ${verb}`;
+  // A ReportError already names the next command. A plain Error does not,
+  // and repeating the verb that just failed leaves the reader on that same command.
+  const doText = error instanceof ReportError ? error.do : `archstrict ${verb} --help`;
   if (asJson) {
     process.stdout.write(`${JSON.stringify({ error: message, do: doText })}\n`);
   } else {
@@ -105,9 +203,10 @@ async function runCheck(args: string[]): Promise<number> {
 }
 
 async function runTodo(args: string[]): Promise<number> {
+  // main answers --help before dispatch, so this function never sees it.
   // The first run is the only run that writes new entries. Any argument
-  // other than `--json` fails before that write, so a help probe or a
-  // dry run cannot spend the one freeze. There is no help table here.
+  // other than `--json` fails before that write, so a dry run cannot
+  // spend the one freeze.
   for (const arg of args) {
     if (arg !== "--json") throw new ReportError(`unknown option '${arg}'`, "archstrict todo [--json]");
   }
@@ -218,9 +317,18 @@ async function runMcp(): Promise<number> {
 }
 
 async function main(argv: string[]): Promise<number> {
+  if (isHelpRequest(argv)) {
+    const verb = helpVerb(argv);
+    process.stdout.write(verb === undefined ? usageTable() : `${usageLine(verb)}\n`);
+    return 0;
+  }
   const [verb, ...rest] = argv;
   if (verb === undefined) {
-    process.stderr.write("usage: archstrict <init|check|todo|rules|agents|recommend|fix|simulate|search|hotspots|mcp> [args]\n");
+    process.stderr.write(usageTable());
+    return 1;
+  }
+  if (!isVerbName(verb)) {
+    process.stderr.write(`archstrict: unknown verb '${verb}'\n${usageTable()}`);
     return 1;
   }
   try {
@@ -235,8 +343,8 @@ async function main(argv: string[]): Promise<number> {
     if (verb === "todo") return await runTodo(rest);
     if (verb === "rules") return await runRules(rest);
     if (verb === "agents") return runAgents(rest);
-    process.stderr.write(`archstrict: '${verb}' is not implemented yet\ndo: archstrict init\n`);
-    return 1;
+    const unexpected: never = verb;
+    throw new Error(`usage: ${usageLine(unexpected)}`);
   } catch (error) {
     // A config or missing-file error throws before any real output.
     // reportFailure prints the message and a do: line — the same pair
