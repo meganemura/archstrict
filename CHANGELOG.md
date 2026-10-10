@@ -8,6 +8,7 @@ may change commands, flags, config, or output shape. The version entry will desc
 ### Changed
 
 - A `cycle` violation's `config` pointer names the declared module that governs the cycle. It no longer points at `ignoredCycles`. That field is a suppression, and the cycle `do:` does not edit it.
+- A `type-leak` `do:` ends with `or run archstrict fix` when the leaked type is already exported from the file that declares it. That is the leak `archstrict fix` re-exports in one step. A declaration that file does not export keeps the earlier text.
 - `archstrict recommend` prints each pattern proposal's config fragment in text output, under that proposal's evidence. The `do:` line says to paste the fragment into `archstrict.config.ts` before `archstrict simulate`.
 - The MCP check tool appends a ReportError `do:` line to the tool error.
 - Each MCP input property has one sentence. Simulate content is the full file text, or null to delete the file. Check and rules paths are project-relative, and rules accepts a path that does not exist yet.

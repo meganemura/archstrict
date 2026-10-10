@@ -582,10 +582,21 @@ function groupByInternalType(findings: readonly LeakFinding[], surfacePath: stri
 
 // Two leaks look alike in evidence but need different fixes. A type this
 // module owns needs only a name on this surface. A type owned by a module
-// with no surface cannot get a public name from this surface at all: that
-// module needs a surface, or this surface must stop exposing the type.
-// Any other owner (a module with a surface that does not name the type,
-// or a file no module declares) keeps the general three-way advice.
+// with no surface is told to give that module a surface, or to stop
+// exposing the type. Any other owner (a module with a surface that does
+// not name the type, or a file no module declares) keeps the general
+// three-way advice.
+// `archstrict fix` re-exports the leaked type onto the surface that
+// exposed it, in one step, only when that type's own file already exports
+// it. That includes a type owned by a module with no surface. A file-local
+// type needs a hand edit first, and naming the command there would point
+// at a refusal.
+function exportedFromOwnFile(program: ts.Program, checker: ts.TypeChecker, file: string, typeName: string): boolean {
+  const source = program.getSourceFile(file);
+  const symbol = source === undefined ? undefined : checker.getSymbolAtLocation(source);
+  return symbol !== undefined && checker.getExportsOfModule(symbol).some((entry) => entry.name === typeName);
+}
+
 function leakDo(
   moduleName: string,
   group: LeakGroup,
@@ -692,6 +703,7 @@ export function checkTypeLeaks(graph: {
       const names = [...group.exportedAs].sort();
       const shown = names.slice(0, MAX_NAMED_EXPORTS).map((n) => `'${n}'`).join(", ");
       const more = names.length > MAX_NAMED_EXPORTS ? ` (and ${names.length - MAX_NAMED_EXPORTS} more)` : "";
+      const advice = leakDo(name, group, relativeInternalFile, ownerOf.get(group.file), graph.modules, shown + more);
       violations.push({
         rule: "type-leak",
         path: group.path,
@@ -699,7 +711,9 @@ export function checkTypeLeaks(graph: {
         column: group.column,
         evidence: `'${group.type}', declared in '${relativeInternalFile}', is never exported by name from module '${name}'${REFERENCED_BY_MARKER}${shown}${more}`,
         because: BECAUSE,
-        do: leakDo(name, group, relativeInternalFile, ownerOf.get(group.file), graph.modules, shown + more),
+        do: exportedFromOwnFile(graph.program, graph.checker, group.file, group.type)
+          ? `${advice} or run archstrict fix`
+          : advice,
         todoModule: name,
         leak: { internalType: group.type, internalFile: group.file, exportedAs: names },
       });

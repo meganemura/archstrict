@@ -184,8 +184,29 @@ test("a non-surface declaration still leaks beside a public sibling type", () =>
     const leak = leaks[0]!;
     expect(leak.leak?.internalType).toBe("Hidden");
     const internalFile = join("src", "m", "internal.ts");
-    expect(leak.do).toBe(`'Hidden' belongs to module 'm': export 'Hidden' by name from ${leak.path} (it's declared in ${internalFile})`);
+    expect(leak.do).toBe(`'Hidden' belongs to module 'm': export 'Hidden' by name from ${leak.path} (it's declared in ${internalFile}) or run archstrict fix`);
   }));
+
+test("a type its own file does not export keeps the hand-edit do text", async () => {
+  const root = mkdtempSync(join(tmpdir(), "archstrict-leak-unexported-"));
+  try {
+    mkdirSync(join(root, "src/m"), { recursive: true });
+    writeFileSync(join(root, "tsconfig.json"), JSON.stringify({ compilerOptions: { noLib: true, types: [] } }));
+    writeFileSync(join(root, "archstrict.config.ts"), `export default ${JSON.stringify({
+      declaredModules: [{ name: "m", glob: "src/m/**", surface: "index.ts" }], exclude: ["*.ts"], because: "Expose the named public files.",
+    })};`);
+    writeFileSync(join(root, "src/m/internal.ts"), 'interface Hidden { value: string }\nexport function make() { return { value: "ok" } as Hidden; }\n');
+    writeFileSync(join(root, "src/m/index.ts"), 'export { make } from "./internal.js";\n');
+    const leaks = checkTypeLeaks(buildModuleGraph({
+      projectRoot: root,
+      declaredModules: [{ name: "m", glob: "src/m/**", surface: "index.ts" }],
+      exclude: ["*.ts"],
+    }));
+    expect(leaks).toHaveLength(1);
+    const internalFile = join("src", "m", "internal.ts");
+    expect(leaks[0]!.do).toBe(`'Hidden' belongs to module 'm': export 'Hidden' by name from ${leaks[0]!.path} (it's declared in ${internalFile})`);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
 
 describe("checkTypeLeaks (a consumer already has a name from another declared module's surface)", () => {
   const CROSS_MODULE_FIXTURE = join(
@@ -271,8 +292,9 @@ describe("checkTypeLeaks (a dependency's own type, real node_modules on disk)", 
   });
 });
 
-// The do: line tells apart a leak this module can fix by naming the type
-// from one it cannot: a type owned by another module with no surface.
+// The do: line names the owner module and the two hand edits. The leaked
+// type is exported from its own file, so the line also names archstrict
+// fix, which re-exports it onto the surface that exposed it.
 test("a type owned by a module with no surface names that module and the two fixes, in exact text", async () => {
   const root = mkdtempSync(join(tmpdir(), "archstrict-leak-owner-"));
   try {
@@ -289,7 +311,7 @@ test("a type owned by a module with no surface names that module and the two fix
     const leaks = checkTypeLeaks(graph);
     expect(leaks).toHaveLength(1);
     expect(leaks[0]!.do).toBe(
-      "'Leaky' reaches 'Hidden', owned by module 'z', which has no surface: give 'z' a surface that exports 'Hidden', or drop 'Leaky' from this surface",
+      "'Leaky' reaches 'Hidden', owned by module 'z', which has no surface: give 'z' a surface that exports 'Hidden', or drop 'Leaky' from this surface or run archstrict fix",
     );
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
