@@ -62,7 +62,7 @@ added: 0; resolved: 0; unchanged: 1
 
 The text then lists added and resolved violations when present.
 The command exits with code 1 when `added` is nonempty, and 0 otherwise.
-Input or config errors also exit with code 1; `--json` reports them as `{ "error": "<message>" }`.
+Input or config errors also exit with code 1; `--json` reports them as `{ "error": "<message>", "do": "<command>" }`.
 
 ## Proposed config
 

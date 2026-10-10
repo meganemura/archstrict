@@ -105,12 +105,8 @@ directory argument on a re-run is still validated (the same syntax rules
 apply), then ignored: it only ever chose a container for a config `init`
 is about to write.
 
-## What stays out of this change
-
-A re-run does not yet print the paste-ready `declare:`/`exclude:` lines
-for a file that has since fallen outside every declared module (only the
-`ModuleName` regeneration lands here); rule 3's own suggested fix text and
-`check`'s own footer are unchanged for the same reason.
+A re-run lists each uncovered file with its paste-ready `declare:` and
+`exclude:` entry.
 
 `init --json` and `recommend`'s own directory argument landed in a later
 change: `recommend [dir]` without a config now runs this same walk in

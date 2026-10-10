@@ -50,6 +50,7 @@ Install the skill once for the user (`gh skill install meganemura/archstrict arc
 [public-surface-bypass] .../src/app/importer.ts:1:24
   '../shared/module.ts' resolved to module 'shared', which has no index.ts, index.tsx, index.mts, index.cts
   because: a module's public surface is its only public surface; everything else is private
+  config: .../archstrict.config.ts:8:3 declaredModules[1] (governs)
   do: add one of index.ts, index.tsx, index.mts, index.cts to shared/ naming what it exports
 ```
 

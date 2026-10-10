@@ -77,3 +77,9 @@ describe("npm pack", () => {
     expect(forbidden).toEqual([]);
   });
 });
+
+test("plugin.json version matches package.json", () => {
+  const packageJson = JSON.parse(readFileSync(join(REPO_ROOT, "package.json"), "utf8")) as { version: string };
+  const pluginJson = JSON.parse(readFileSync(join(REPO_ROOT, ".agents/plugin.json"), "utf8")) as { version: string };
+  expect(pluginJson.version).toBe(packageJson.version);
+});

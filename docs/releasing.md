@@ -36,7 +36,7 @@ to work.
 ## Each version
 
 1. Replace `(unreleased)` in `CHANGELOG.md` with the release date. Set the same version in
-   `package.json` and `package-lock.json`.
+   `package.json`, `package-lock.json`, and `.agents/plugin.json`.
 2. Run `npm run build`, `npm run typecheck`, and `npm test`.
 3. Run `npm pack --dry-run`. Read its file list. It must contain `dist/`, `docs/`, `skills/`, both
    READMEs, the changelog, `AGENTS.md`, `llms.txt`, `.agents/`, and the license. It must not contain

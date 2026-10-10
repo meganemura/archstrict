@@ -36,4 +36,4 @@ JSON output has `state` and `path`, where `path` names the resolved target:
 | `already-absent` | The target does not exist; no change. |
 | `no-markers` | The target has no section; no change. |
 
-Successful commands exit 0. Errors exit 1 and use `{ "error": "<message>" }` with `--json`.
+Successful commands exit 0. Errors exit 1 and use `{ "error": "<message>", "do": "<command>" }` with `--json`.
