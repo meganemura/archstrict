@@ -34,7 +34,7 @@ friend stays clean and a non-friend importer of the same file gets
 
 ## How common is each pattern
 
-[docs/boundary-patterns.md](../../../docs/boundary-patterns.md) records two
+[docs/boundary-patterns.md](https://github.com/meganemura/archstrict/blob/main/docs/boundary-patterns.md) records two
 surveys: one that found repositories through code search for a dedicated
 boundary tool's own vocabulary (82 repositories with a project-chosen rule),
 and one that sampled the 200 most-starred public TypeScript repositories by
@@ -69,7 +69,7 @@ read both counts below, not just one, before calling a pattern rare.
 A third measurement, done directly against the real import graph of 50
 repositories rather than against declared configs, gives the fourth column
 above (see
-[docs/boundary-patterns.md](../../../docs/boundary-patterns.md) for its
+[docs/boundary-patterns.md](https://github.com/meganemura/archstrict/blob/main/docs/boundary-patterns.md) for its
 method and limits). It flips the public-entry-only result: the pattern most
 projects declare (22 of 48) is one the graph itself keeps in only 2 of 50
 repositories - declaring it is enforcing something real, not writing down
