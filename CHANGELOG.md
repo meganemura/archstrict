@@ -17,6 +17,7 @@ may change commands, flags, config, or output shape. The version entry will desc
 
 ### Fixed
 
+- Both edit hooks find the project by walking up from the edited file to the nearest `archstrict.config.ts`, and run that directory's `node_modules/.bin/archstrict` from that directory. A hook `cwd` inside the project, including after `cd` and inside a git worktree, still reports the edited file. A nested package is checked with its own config. No config, or a missing binary beside that config, prints `{}`. PostToolUse also prints `{}` and exits 0 when the binary's output is not JSON.
 - A change set that contains `archstrict.config.ts` previews in whole-project mode without `--whole-project`. A source-only change stays scoped. The MCP simulate tool uses the same choice. `archstrict.config.ts` matches the PreToolUse hook's extension filter, so that preview runs inside the hook's existing time budget.
 - The Prisma and VS Code config converters now start when an absolute path reaches them through a symlink. `fileURLToPath(import.meta.url)` names the real file, and `process.argv[1]` can keep the symlink path. The check still accepts an argv string that already equals that file, and it also accepts `realpath` of argv.
 - `archstrict check <dir>` reports a type leak at a surface file inside that directory, and exits 1 when that leak blocks. `archstrict check <file>` still reports a type leak only when that file is a module surface.

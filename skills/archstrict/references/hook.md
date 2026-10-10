@@ -10,7 +10,7 @@ On a TypeScript source file (`.ts`, `.tsx`, `.mts`, `.cts`) edited with Edit, Wr
 - Edit reads the file's current text and applies `old_string` -> `new_string`, honoring `replace_all`.
 - MultiEdit applies each edit in `tool_input.edits` in order, on top of the file's current text.
 
-It then runs `node_modules/.bin/archstrict simulate --json` with that one change on stdin, under a time budget (10 s by default; set `ARCHSTRICT_PRETOOLUSE_TIMEOUT_MS` to change it, in milliseconds). When the change adds a violation, the default hook returns `hookEventName` and the added violations as `hookSpecificOutput.additionalContext`. It does not set `permissionDecision`. The agent reads that preview next to the tool result. The text uses the same compact form the PostToolUse hook prints (rule, `path:line:col`, evidence, `because:`, the violation's `config:` pointer line, and `do:`), bounded to a few violations with a count of the rest. A resolved violation, if any, is mentioned in one summary line.
+It then runs `archstrict simulate --json` from the directory that holds the nearest `archstrict.config.ts`, starting at the edited file's own directory and walking up, with that one change on stdin, under a time budget (10 s by default; set `ARCHSTRICT_PRETOOLUSE_TIMEOUT_MS` to change it, in milliseconds). When the change adds a violation, the default hook returns `hookEventName` and the added violations as `hookSpecificOutput.additionalContext`. It does not set `permissionDecision`. The agent reads that preview next to the tool result. The text uses the same compact form the PostToolUse hook prints (rule, `path:line:col`, evidence, `because:`, the violation's `config:` pointer line, and `do:`), bounded to a few violations with a count of the rest. A resolved violation, if any, is mentioned in one summary line.
 
 Set `ARCHSTRICT_PRETOOLUSE=deny` to deny the tool call before the write, with the same text as `permissionDecisionReason`. The default leaves the normal permission prompt in place. An agent mid-refactor may write an intermediate state on purpose, and a hard deny would block that.
 
@@ -22,8 +22,9 @@ Every one of these is silent by design, not a failure:
 
 - The edited file isn't `.ts`, or the tool wasn't an Edit/Write/MultiEdit.
 - An `old_string` in the Edit or MultiEdit call isn't found in the file's current text - the tool call itself will report that failure, so the hook doesn't guess at it.
-- The project has no `node_modules/.bin/archstrict` at all.
-- `simulate --json` times out, crashes, or reports a config or input error (`{ "error": "..." }`) - unlike the PostToolUse hook, a broken project config stays silent here rather than being reported, because this hook runs before every edit; reporting it would interrupt every tool call instead of just the one edit that caused it.
+- The walk from the edited file finds no `archstrict.config.ts`.
+- The directory that holds that config has no `node_modules/.bin/archstrict`.
+- `simulate --json` times out, crashes, prints output that is not JSON, or reports a config or input error (`{ "error": "..." }`). Unlike the PostToolUse hook, a broken project config stays silent here rather than being reported, because this hook runs before every edit. Reporting it would interrupt every tool call instead of just the one edit that caused it.
 - The change adds no violation, even when it resolves one.
 
 ### Double reporting
@@ -32,14 +33,16 @@ When the PreToolUse hook reports a violation for a file, the PostToolUse hook fo
 
 ## PostToolUse: confirmation after the write
 
-On a TypeScript source file, this hook shells out to `node_modules/.bin/archstrict check <file> --json` and returns any violation into the agent's own context via `hookSpecificOutput.additionalContext`, the same moment a human editor's red squiggly would appear.
+On a TypeScript source file, this hook shells out to `archstrict check <file> --json` in the directory that holds the nearest `archstrict.config.ts`, starting at the edited file's own directory and walking up, and returns any violation into the agent's own context via `hookSpecificOutput.additionalContext`, the same moment a human editor's red squiggly would appear.
 
 ### Why it might say nothing
 
 Every one of these is silent by design, not a failure:
 
 - The edited file isn't `.ts`, or the tool wasn't an Edit/Write/MultiEdit.
-- The project has no `node_modules/.bin/archstrict` at all - most edits happen in files or projects that never adopted this tool. `archstrict init` does not produce this file (it only writes `archstrict.config.ts`/`archstrict.types.ts`); see the [README](https://github.com/meganemura/archstrict#install) for how to actually install the package into that project.
+- The walk from the edited file finds no `archstrict.config.ts`. The hook does not run a binary that happens to sit in `cwd`, and it does not print an `archstrict init` hint. `archstrict init` writes the config. It does not install the package. See the [README](https://github.com/meganemura/archstrict#install) for how to install the package into that project.
+- The directory that holds that config has no `node_modules/.bin/archstrict`. Most edits happen in files or projects that never adopted this tool.
+- `check --json` prints output that is not JSON.
 - `check <file>` found no violation in the edited file. Analysis still covers the whole project (resolving an edge needs every file), but the report is scoped to the one file that changed.
 
 For a module surface, `check <file>` builds rule 6 from that surface's type closure, and `typeLeaks` counts only leaks reported at that file.
@@ -50,10 +53,14 @@ For a module surface, `check <file>` builds rule 6 from that surface's type clos
 
 ### Why it might report "check did not run"
 
-When `archstrict check --json` reports `{ "error": "...", "do": "..." }` instead of a real result, or exits with no output at all - `check` exiting 1 with violations present is expected, normal output, read as data, not this case. A config error (`archstrict.config.ts` missing a required field, a `schemaVersion` other than `1`, a `deprecated` entry naming a module that doesn't exist, `check <file>` naming a file that doesn't exist) reports this way; the message names which one, and `do` names the command to run. The hook includes that `do` line in the context it returns.
+This report happens only after the walk has found an `archstrict.config.ts` and run that project's binary. A missing config file is silent, listed above. When `archstrict check --json` reports `{ "error": "...", "do": "..." }` instead of a real result, or exits with no output at all, the hook reports it. `check` exiting 1 with violations present is expected, normal output, read as data, not this case. A config error (`archstrict.config.ts` missing a required field, a `schemaVersion` other than `1`, a `deprecated` entry naming a module that doesn't exist, `check <file>` naming a file that doesn't exist) reports this way; the message names which one, and `do` names the command to run. The hook includes that `do` line in the context it returns.
 
 `archstrict init` itself, not the hook, reports its own errors when a project has no analyzed TypeScript source file to declare at all (`init` writes neither file and exits 1), or its own directory argument names something init won't open (a glob character, a nested path, a hidden name, `node_modules`, `dist`, or an explicit directory that doesn't exist or holds no TypeScript source) - each names what's wrong and the one command to run next.
 
 ## Path resolution
 
-Both hooks use the hook payload's own `cwd` (the session's project directory), joined with `node_modules/.bin/archstrict` - matching how npm itself installs a package's binary. Neither searches `PATH`, a global install, or a parent directory's `node_modules`.
+Both hooks walk up from the edited file's directory to the nearest directory that holds `archstrict.config.ts`. They run that directory's `node_modules/.bin/archstrict`, with that directory as the working directory. `check` and `simulate` read the config from the working directory, so the working directory is the directory that holds the config.
+
+The hook payload's `cwd` is not that directory. `cwd` follows `cd`. `CLAUDE_PROJECT_DIR` stays at the main checkout when the edited file is in a git worktree. A nested package with its own `archstrict.config.ts` is checked with that package's config and binary.
+
+When the walk finds no `archstrict.config.ts`, or that directory has no `node_modules/.bin/archstrict`, the hook prints `{}`. Neither hook searches `PATH` or a global install. The binary is the one beside the config, not a binary in the hook `cwd` and not a binary in a parent of that config.

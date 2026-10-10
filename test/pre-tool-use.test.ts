@@ -20,8 +20,13 @@ type FakeBehavior = "clean" | "added" | "added-with-resolved" | "error" | "timeo
 // itself creates - here a small node script standing in for `archstrict
 // simulate --json`. It records the stdin it received to `stdinMarkerPath`
 // so a test can assert the hook built the proposed file text correctly,
-// not merely that it invoked the binary at all.
-function installFakeArchstrict(projectRoot: string, behavior: FakeBehavior): void {
+// not merely that it invoked the binary at all. The hook finds the project
+// by walking up from the edited file to archstrict.config.ts, so the
+// stand-in writes that file too unless the test passes `{ config: false }`.
+function installFakeArchstrict(projectRoot: string, behavior: FakeBehavior, options: { config?: boolean } = {}): void {
+  if (options.config !== false) {
+    writeFileSync(join(projectRoot, "archstrict.config.ts"), "export default { because: \"test\" };\n");
+  }
   const binDir = join(projectRoot, "node_modules", ".bin");
   mkdirSync(binDir, { recursive: true });
   const script = `#!/usr/bin/env node
@@ -289,6 +294,91 @@ describe("pre-tool-use hook", () => {
     expect(JSON.parse(stdout)).toEqual({});
   });
 
+  test("finds the project by walking up from the file when cwd is a subdirectory", () => {
+    withTempProject((root) => {
+      installFakeArchstrict(root, "added");
+      const filePath = join(root, "src", "app", "new.ts");
+      const output = runHook({
+        tool_name: "Write",
+        tool_input: { file_path: filePath, content: "export const x = 1;\n" },
+        cwd: join(root, "src"),
+      });
+
+      expect(JSON.parse(readFileSync(stdinMarkerPath(root), "utf8"))).toEqual({
+        changes: [{ path: filePath, content: "export const x = 1;\n" }],
+      });
+      expect(Object.keys(output.hookSpecificOutput ?? {}).sort()).toEqual(["additionalContext", "hookEventName"]);
+      expect(output.hookSpecificOutput?.permissionDecision).toBeUndefined();
+      expect(output.hookSpecificOutput?.additionalContext).toContain("public-surface-bypass");
+    });
+  });
+
+  test("uses the nearest config when a nested package has its own", () => {
+    withTempProject((root) => {
+      installFakeArchstrict(root, "added");
+      const pkg = join(root, "pkg");
+      mkdirSync(pkg, { recursive: true });
+      installFakeArchstrict(pkg, "clean");
+      const filePath = join(pkg, "src", "new.ts");
+      const output = runHook({
+        tool_name: "Write",
+        tool_input: { file_path: filePath, content: "export const x = 1;\n" },
+        cwd: root,
+      });
+
+      expect(existsSync(stdinMarkerPath(pkg))).toBe(true);
+      expect(existsSync(stdinMarkerPath(root))).toBe(false);
+      expect(output.hookSpecificOutput).toBeUndefined();
+    });
+  });
+
+  test("prints an empty result when the file is outside any config, and does not run the cwd binary", () => {
+    withTempProject((root) => {
+      installFakeArchstrict(root, "added");
+      withTempProject((outside) => {
+        const filePath = join(outside, "src", "alone.ts");
+        const output = runHook({
+          tool_name: "Write",
+          tool_input: { file_path: filePath, content: "export const x = 1;\n" },
+          cwd: root,
+        });
+        expect(output).toEqual({});
+        expect(existsSync(stdinMarkerPath(root))).toBe(false);
+      });
+    });
+  });
+
+  test("prints an empty result when a binary is present and no config exists", () => {
+    withTempProject((root) => {
+      installFakeArchstrict(root, "added", { config: false });
+      const filePath = join(root, "src", "new.ts");
+      const output = runHook({
+        tool_name: "Write",
+        tool_input: { file_path: filePath, content: "export const x = 1;\n" },
+        cwd: root,
+      });
+      expect(output).toEqual({});
+      expect(existsSync(stdinMarkerPath(root))).toBe(false);
+    });
+  });
+
+  test("prints an empty result when the config directory has no binary", () => {
+    withTempProject((root) => {
+      installFakeArchstrict(root, "added", { config: false });
+      const pkg = join(root, "pkg");
+      mkdirSync(join(pkg, "src"), { recursive: true });
+      writeFileSync(join(pkg, "archstrict.config.ts"), "export default { because: \"test\" };\n");
+      const filePath = join(pkg, "src", "new.ts");
+      const output = runHook({
+        tool_name: "Write",
+        tool_input: { file_path: filePath, content: "export const x = 1;\n" },
+        cwd: root,
+      });
+      expect(output).toEqual({});
+      expect(existsSync(stdinMarkerPath(root))).toBe(false);
+    });
+  });
+
   test("integration: a real violation is previewed against the real built CLI, and the file on disk is unchanged", () => {
     withTempProject((root) => {
       mkdirSync(join(root, "src", "app"), { recursive: true });
@@ -323,6 +413,40 @@ describe("pre-tool-use hook", () => {
       expect(output.hookSpecificOutput?.additionalContext).toContain("do:");
       // The Edit call must never actually happen - the file on disk keeps its old text.
       expect(readFileSync(importer, "utf8")).toBe("export const x = 1;\n");
+    });
+  });
+
+  test("integration: a subdirectory cwd still previews a real bypass, with no permission decision", () => {
+    withTempProject((root) => {
+      mkdirSync(join(root, "src", "app"), { recursive: true });
+      mkdirSync(join(root, "src", "shared"), { recursive: true });
+      writeFileSync(join(root, "src", "shared", "module.ts"), "export const shared = 1;\n");
+      const importer = join(root, "src", "app", "importer.ts");
+      writeFileSync(importer, "export const x = 1;\n");
+      writeFileSync(
+        join(root, "archstrict.types.ts"),
+        "export type ModuleName = \"app\" | \"shared\";\nexport type Config = { surface?: string; declaredModules: readonly { name: string; glob: string; surface: string }[]; because: string };\n",
+      );
+      writeFileSync(
+        join(root, "archstrict.config.ts"),
+        "import type { Config } from \"./archstrict.types.js\";\nexport default { declaredModules: [{ name: \"app\", glob: \"src/app/**\", surface: \"index.ts\" }, { name: \"shared\", glob: \"src/shared/**\", surface: \"index.ts\" }], because: \"test\" } satisfies Config;\n",
+      );
+      installRealArchstrictBin(root);
+
+      const output = runHook({
+        tool_name: "Edit",
+        tool_input: {
+          file_path: importer,
+          old_string: "export const x = 1;\n",
+          new_string: "import { shared } from \"../shared/module.ts\";\nexport const x = shared;\n",
+        },
+        cwd: join(root, "src"),
+      });
+
+      expect(Object.keys(output.hookSpecificOutput ?? {}).sort()).toEqual(["additionalContext", "hookEventName"]);
+      expect(output.hookSpecificOutput?.permissionDecision).toBeUndefined();
+      expect(output.hookSpecificOutput?.additionalContext).toContain("public-surface-bypass");
+      expect(output.hookSpecificOutput?.additionalContext).toContain(importer);
     });
   });
 });

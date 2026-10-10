@@ -13,7 +13,7 @@
 // projects, each with its own installed archstrict.
 import { existsSync, readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 // 10s covers simulate's own measured cost (about twice `check <file>`,
 // which reads the edge cache) on a real project; configurable because a
@@ -32,6 +32,22 @@ function emit(decision) {
       ? {}
       : { hookSpecificOutput: { hookEventName: "PreToolUse", ...decision } };
   process.stdout.write(`${JSON.stringify(output)}\n`);
+}
+
+// `check` and `simulate` read archstrict.config.ts from their own working
+// directory. The hook payload's cwd follows `cd`, and CLAUDE_PROJECT_DIR
+// stays at the main checkout inside a git worktree, so neither names the
+// edited file's project. Walk from the file. The nearest config wins, so
+// a nested package is checked against its own config. This file ships
+// alone and does not import the other hook; the same walk is copied there.
+function projectDirectory(filePath) {
+  let dir = resolve(dirname(filePath));
+  for (;;) {
+    if (existsSync(join(dir, "archstrict.config.ts"))) return dir;
+    const parent = dirname(dir);
+    if (parent === dir) return undefined;
+    dir = parent;
+  }
 }
 
 // Applies one old_string -> new_string replacement the same way Edit and
@@ -125,10 +141,15 @@ function main() {
     return;
   }
 
-  // The edited project's own cwd, matching the PostToolUse hook's own
-  // resolution: never this plugin's own install location.
-  const cwd = typeof input.cwd === "string" ? input.cwd : process.cwd();
-  const binPath = join(cwd, "node_modules", ".bin", "archstrict");
+  // No config means this edit is outside an archstrict project, so there
+  // is nothing to preview. The binary is the one next to the config, not
+  // a binary that happens to sit in the hook cwd.
+  const projectDir = projectDirectory(filePath);
+  if (projectDir === undefined) {
+    emit();
+    return;
+  }
+  const binPath = join(projectDir, "node_modules", ".bin", "archstrict");
   if (!existsSync(binPath)) {
     emit();
     return;
@@ -139,7 +160,7 @@ function main() {
 
   let stdout;
   try {
-    stdout = execFileSync(binPath, ["simulate", "--json"], { cwd, encoding: "utf8", input: stdinBody, timeout: timeoutMs });
+    stdout = execFileSync(binPath, ["simulate", "--json"], { cwd: projectDir, encoding: "utf8", input: stdinBody, timeout: timeoutMs });
   } catch (error) {
     // simulate exits 1 both when `added` is nonempty (real data, read from
     // stdout below) and on an input/config error ({ error, do } json) - a

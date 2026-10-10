@@ -170,4 +170,144 @@ describe("post-tool-use hook", () => {
     const stdout = execFileSync("node", [HOOK_PATH], { input: "not json", encoding: "utf8" });
     expect(JSON.parse(stdout)).toEqual({});
   });
+
+  test("reports a bypass when cwd is a subdirectory of the project", () => {
+    withTempProject((root) => {
+      mkdirSync(join(root, "src", "app"), { recursive: true });
+      mkdirSync(join(root, "src", "shared"), { recursive: true });
+      writeFileSync(join(root, "src", "shared", "module.ts"), "export const shared = 1;\n");
+      const importer = join(root, "src", "app", "importer.ts");
+      writeFileSync(importer, "import { shared } from \"../shared/module.ts\";\nexport const x = shared;\n");
+      writeFileSync(
+        join(root, "archstrict.types.ts"),
+        "export type ModuleName = \"app\" | \"shared\";\nexport type Config = { surface?: string; declaredModules: readonly { name: string; glob: string; surface: string }[]; because: string };\n",
+      );
+      writeFileSync(
+        join(root, "archstrict.config.ts"),
+        "import type { Config } from \"./archstrict.types.js\";\nexport default { declaredModules: [{ name: \"app\", glob: \"src/app/**\", surface: \"index.ts\" }, { name: \"shared\", glob: \"src/shared/**\", surface: \"index.ts\" }], because: \"test\" } satisfies Config;\n",
+      );
+      installArchstrictBin(root);
+
+      const output = runHook({
+        tool_name: "Edit",
+        tool_input: { file_path: importer },
+        cwd: join(root, "src"),
+      });
+
+      expect(output.hookSpecificOutput?.hookEventName).toBe("PostToolUse");
+      expect(output.hookSpecificOutput?.additionalContext).toContain("public-surface-bypass");
+      expect(output.hookSpecificOutput?.additionalContext).toContain(importer);
+    });
+  });
+
+  test("prints an empty result when the edited file is outside any config, and does not run the cwd binary", () => {
+    withTempProject((root) => {
+      mkdirSync(join(root, "src", "app"), { recursive: true });
+      writeFileSync(join(root, "src", "app", "module.ts"), "export const app = 1;\n");
+      writeFileSync(
+        join(root, "archstrict.config.ts"),
+        "export default { declaredModules: [{ name: \"app\", glob: \"src/app/**\", surface: \"index.ts\" }], because: \"test\" };\n",
+      );
+      installArchstrictBin(root);
+      withTempProject((outside) => {
+        const file = join(outside, "src", "alone.ts");
+        mkdirSync(join(outside, "src"), { recursive: true });
+        writeFileSync(file, "export const x = 1;\n");
+        const output = runHook({ tool_name: "Edit", tool_input: { file_path: file }, cwd: root });
+        expect(output).toEqual({});
+        expect(existsSync(invokedMarkerPath(root))).toBe(false);
+      });
+    });
+  });
+
+  test("prints an empty result when a binary is present and no config exists", () => {
+    withTempProject((root) => {
+      mkdirSync(join(root, "src"), { recursive: true });
+      const file = join(root, "src", "a.ts");
+      writeFileSync(file, "export const x = 1;\n");
+      installArchstrictBin(root);
+
+      const output = runHook({ tool_name: "Edit", tool_input: { file_path: file }, cwd: root });
+      expect(output).toEqual({});
+      expect(existsSync(invokedMarkerPath(root))).toBe(false);
+    });
+  });
+
+  test("prints an empty result when the config directory has no binary", () => {
+    withTempProject((root) => {
+      installArchstrictBin(root);
+      const pkg = join(root, "pkg");
+      mkdirSync(join(pkg, "src"), { recursive: true });
+      writeFileSync(join(pkg, "archstrict.config.ts"), "export default { because: \"test\" };\n");
+      const file = join(pkg, "src", "a.ts");
+      writeFileSync(file, "export const x = 1;\n");
+
+      const output = runHook({ tool_name: "Edit", tool_input: { file_path: file }, cwd: root });
+      expect(output).toEqual({});
+      expect(existsSync(invokedMarkerPath(root))).toBe(false);
+    });
+  });
+
+  test("uses the nearest config when a nested package has its own", () => {
+    withTempProject((root) => {
+      writeFileSync(join(root, "archstrict.config.ts"), "export default { because: \"outer\" };\n");
+      installArchstrictBin(root);
+      const pkg = join(root, "pkg");
+      mkdirSync(join(pkg, "src", "app"), { recursive: true });
+      mkdirSync(join(pkg, "src", "shared"), { recursive: true });
+      writeFileSync(join(pkg, "src", "shared", "module.ts"), "export const shared = 1;\n");
+      const importer = join(pkg, "src", "app", "importer.ts");
+      writeFileSync(importer, "import { shared } from \"../shared/module.ts\";\nexport const x = shared;\n");
+      writeFileSync(
+        join(pkg, "archstrict.config.ts"),
+        "export default { declaredModules: [{ name: \"app\", glob: \"src/app/**\", surface: \"index.ts\" }, { name: \"shared\", glob: \"src/shared/**\", surface: \"index.ts\" }], because: \"inner\" };\n",
+      );
+      installArchstrictBin(pkg);
+
+      const output = runHook({ tool_name: "Edit", tool_input: { file_path: importer }, cwd: root });
+      expect(output.hookSpecificOutput?.additionalContext).toContain("public-surface-bypass");
+      expect(output.hookSpecificOutput?.additionalContext).toContain(importer);
+      expect(existsSync(invokedMarkerPath(pkg))).toBe(true);
+      expect(existsSync(invokedMarkerPath(root))).toBe(false);
+    });
+  });
+
+  test("prints one JSON line and exits 0 when the binary output is not JSON", () => {
+    withTempProject((root) => {
+      mkdirSync(join(root, "src"), { recursive: true });
+      writeFileSync(join(root, "archstrict.config.ts"), "export default { because: \"test\" };\n");
+      const file = join(root, "src", "a.ts");
+      writeFileSync(file, "export const x = 1;\n");
+      const binDir = join(root, "node_modules", ".bin");
+      mkdirSync(binDir, { recursive: true });
+      writeFileSync(join(binDir, "archstrict"), `#!/bin/sh\ntouch "${invokedMarkerPath(root)}"\necho 'not json'\n`);
+      chmodSync(join(binDir, "archstrict"), 0o755);
+
+      const stdout = execFileSync("node", [HOOK_PATH], {
+        input: JSON.stringify({ tool_name: "Edit", tool_input: { file_path: file }, cwd: root }),
+        encoding: "utf8",
+      });
+      expect(stdout).toBe("{}\n");
+      expect(existsSync(invokedMarkerPath(root))).toBe(true);
+    });
+  });
+
+  test("prints one JSON line and exits 0 when a failing binary prints text", () => {
+    withTempProject((root) => {
+      mkdirSync(join(root, "src"), { recursive: true });
+      writeFileSync(join(root, "archstrict.config.ts"), "export default { because: \"test\" };\n");
+      const file = join(root, "src", "a.ts");
+      writeFileSync(file, "export const x = 1;\n");
+      const binDir = join(root, "node_modules", ".bin");
+      mkdirSync(binDir, { recursive: true });
+      writeFileSync(join(binDir, "archstrict"), "#!/bin/sh\necho 'not json'\nexit 1\n");
+      chmodSync(join(binDir, "archstrict"), 0o755);
+
+      const stdout = execFileSync("node", [HOOK_PATH], {
+        input: JSON.stringify({ tool_name: "Edit", tool_input: { file_path: file }, cwd: root }),
+        encoding: "utf8",
+      });
+      expect(stdout).toBe("{}\n");
+    });
+  });
 });

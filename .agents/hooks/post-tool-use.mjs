@@ -10,7 +10,7 @@
 // with its own installed archstrict and its own archstrict.config.ts.
 import { existsSync, readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 function readStdin() {
   return JSON.parse(readFileSync(0, "utf8"));
@@ -26,6 +26,22 @@ function emit(additionalContext) {
       ? {}
       : { hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext } };
   process.stdout.write(`${JSON.stringify(output)}\n`);
+}
+
+// `check` reads archstrict.config.ts from its own working directory. The
+// hook payload's cwd follows `cd`, and CLAUDE_PROJECT_DIR stays at the
+// main checkout inside a git worktree, so neither names the edited file's
+// project. Walk from the file. The nearest config wins, so a nested
+// package is checked against its own config. This file ships alone and
+// does not import the other hook; the same walk is copied there.
+function projectDirectory(filePath) {
+  let dir = resolve(dirname(filePath));
+  for (;;) {
+    if (existsSync(join(dir, "archstrict.config.ts"))) return dir;
+    const parent = dirname(dir);
+    if (parent === dir) return undefined;
+    dir = parent;
+  }
 }
 
 function main() {
@@ -49,23 +65,29 @@ function main() {
     return;
   }
 
-  // The edited project's own cwd, not this plugin's own install
-  // location: check <file> resolves archstrict.config.ts from cwd, and a
-  // project checked with this hook is never this repository itself.
-  const cwd = typeof input.cwd === "string" ? input.cwd : process.cwd();
-  const binPath = join(cwd, "node_modules", ".bin", "archstrict");
+  // No config means this edit is outside an archstrict project. Stay
+  // silent even when a binary sits in the hook cwd: that binary's check
+  // would print `do: archstrict init` on every TypeScript edit, and the
+  // agents guidance says to skip archstrict when no config exists. The
+  // binary is the one next to the config, not one in a parent or in cwd.
+  const projectDir = projectDirectory(filePath);
+  if (projectDir === undefined) {
+    emit();
+    return;
+  }
+  const binPath = join(projectDir, "node_modules", ".bin", "archstrict");
   if (!existsSync(binPath)) {
     // Not an error: most edits happen in files or projects with no
-    // archstrict installed at all. Said once, not raised as a failure -
-    // the hook's job is to add context when there is real feedback to
-    // add, not to insist a project adopt this tool.
+    // archstrict installed at all. Said once, not raised as a failure.
+    // The hook adds context when there is real feedback, and does not
+    // insist a project adopt this tool.
     emit();
     return;
   }
 
   let stdout;
   try {
-    stdout = execFileSync(binPath, ["check", filePath, "--json"], { cwd, encoding: "utf8" });
+    stdout = execFileSync(binPath, ["check", filePath, "--json"], { cwd: projectDir, encoding: "utf8" });
   } catch (error) {
     // check exits 1 exactly when violations exist (module-graph.ts's own
     // documented contract) - that is real data on stderr's sibling
@@ -79,7 +101,16 @@ function main() {
     stdout = execError.stdout;
   }
 
-  const result = JSON.parse(stdout);
+  let result;
+  try {
+    result = JSON.parse(stdout);
+  } catch {
+    // Same guard as pre-tool-use.mjs. Text on stdout is not a check
+    // result. Throwing here would exit 1 and block the edit this hook
+    // only comments on.
+    emit();
+    return;
+  }
   // A config or missing-file error (a required field absent, an
   // unsupported edges shape) reports as { error, do } instead of a
   // real CheckResult, exit 1, no stdout-less failure - so the branch
@@ -87,13 +118,19 @@ function main() {
   // has archstrict installed but something about its own setup is broken,
   // which the agent editing it needs to know, the same as a real
   // violation would. `do` is the command to run; older binaries that
-  // omit it still surface the error text.
+  // omit it still surface the error text. Output that parses and is
+  // still not a check result stays silent, same as text that does not
+  // parse: there is no violations list to report.
+  if (result === null || typeof result !== "object" || Array.isArray(result)) {
+    emit();
+    return;
+  }
   if (typeof result.error === "string") {
     const doText = typeof result.do === "string" && result.do.length > 0 ? `\ndo: ${result.do}` : "";
     emit(`archstrict: check did not run (${result.error}).${doText}`);
     return;
   }
-  if (result.violations.length === 0) {
+  if (!Array.isArray(result.violations) || result.violations.length === 0) {
     emit();
     return;
   }
