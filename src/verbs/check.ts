@@ -47,7 +47,6 @@ import {
   type TodoEntry,
   type TodoIndex,
 } from "../todo-store.js";
-import { readLegacyTodoState } from "../todo-migration.js";
 import {
   createConfigLocator,
   declaredModulePointerForName,
@@ -739,8 +738,8 @@ export type ApplyTodoOptions = {
 
 // An entry's own stored `path` (todo-store.ts's own TodoEntry, always
 // present, always project-relative to `rootDir` - todo.ts's own
-// freezeOrPrune writes it that way, and both readTodoFile and the legacy
-// reader normalize an old absolute one into the same form) resolved back
+// freezeOrPrune writes it that way, and readTodoFile normalizes an
+// absolute one into the same form) resolved back
 // to the real, absolute file it names, compared against `focus`. A
 // public-surface-bypass or constraint-engine entry frozen under module M's
 // own name records the IMPORTER's path, not M's own - the same reason
@@ -751,76 +750,38 @@ function entryReportedAtFocus(entry: TodoEntry, rootDir: string, focus: string):
   return compilerResolve(rootDir, entry.path) === focus;
 }
 
-// Where a stale-todo/clean-module-has-todo violation points: at the exact
-// line inside the single archstrict.todo.json when the project has
-// already migrated to it (parsed !== undefined - todo-store.ts's own
-// ParsedTodoFile keeps each entry's and each module key's own real
-// position), or at the module's own directory (line 1, column 1, the
-// pre-migration shape) while a project is still being read through the
-// old per-module layout - which never has more than one entry's worth of
-// position to offer anyway, since todo-migration.ts's own reader doesn't
-// track positions at all (that layout is going away, not worth building
-// position-tracking for).
+// Where a stale-todo or clean-module-has-todo violation points: the exact
+// line inside archstrict.todo.json. ParsedTodoFile keeps each entry's and
+// each module key's own position.
 type TodoLocation = { path: string; line: number; column: number };
 
-function moduleTodoLocation(parsed: ParsedTodoFile | undefined, moduleDir: string | undefined, name: string): TodoLocation {
-  if (parsed !== undefined) {
-    const at = parsed.moduleKeyLocation.get(name);
-    return { path: parsed.path, line: at?.line ?? 1, column: at?.column ?? 1 };
-  }
-  // Only reached on the pre-migration layout, where moduleDir is always
-  // defined - readLegacyTodoState only ever reads a name the live graph
-  // already declares, so it never produces an orphan entry.
-  return { path: moduleDir!, line: 1, column: 1 };
+function moduleTodoLocation(parsed: ParsedTodoFile, name: string): TodoLocation {
+  const at = parsed.moduleKeyLocation.get(name);
+  return { path: parsed.path, line: at?.line ?? 1, column: at?.column ?? 1 };
 }
 
-function entryTodoLocation(parsed: ParsedTodoFile | undefined, moduleDir: string | undefined, entry: TodoEntry): TodoLocation {
-  if (parsed !== undefined) {
-    const at = parsed.entryLocation.get(entry);
-    return { path: parsed.path, line: at?.line ?? 1, column: at?.column ?? 1 };
-  }
-  return { path: moduleDir!, line: 1, column: 1 };
+function entryTodoLocation(parsed: ParsedTodoFile, entry: TodoEntry): TodoLocation {
+  const at = parsed.entryLocation.get(entry);
+  return { path: parsed.path, line: at?.line ?? 1, column: at?.column ?? 1 };
 }
 
 // One read of the whole file, shared by every caller that needs current
 // frozen debt (applyTodo below; hotspots.ts's own per-module debt count):
 // todo-store.ts's own readTodoFile parses it once, and a per-violation or
 // per-module read would reparse the same file that many times on a
-// project with tens of thousands of violations. `parsed` is the new
-// single-file layout; `legacy` is consulted only when it's absent, and
-// only for the module directories this run's own graph actually declares
-// (readLegacyTodoState's own comment covers why a renamed module's old
-// entries are unreachable by name alone either way).
+// project with tens of thousands of violations.
 export type CurrentTodo = {
   parsed: ParsedTodoFile | undefined;
   entriesByModule: ReadonlyMap<string, TodoEntry[]>;
-  // Set when the new file is absent but the old per-module layout (or its
-  // marker) was found - a project adopted under that layout, not migrated
-  // since. Undefined once the new file exists, even if a stray legacy file
-  // somehow still sits on disk (todo.ts's own freezeOrPrune is the only
-  // thing that deletes them, and only after writing the new file first).
-  migrationNote: string | undefined;
 };
 
 export function readCurrentTodo(graph: ModuleGraph): CurrentTodo {
   const parsed = readTodoFile(graph.rootDir);
-  const moduleDirs = new Map<string, string>([...graph.modules].map(([name, m]) => [name, m.dir]));
-  const legacy = parsed === undefined ? readLegacyTodoState(graph.rootDir, moduleDirs) : undefined;
   const entriesByModule = new Map<string, TodoEntry[]>();
   if (parsed !== undefined) {
     for (const [name, entries] of parsed.modules) entriesByModule.set(name, entries);
-  } else if (legacy !== undefined) {
-    for (const [name, entries] of legacy.entriesByModule) entriesByModule.set(name, entries);
   }
-  // Prompts a one-line migration nudge in the report (result.notes, always
-  // printed - check.ts's own formatText loop) instead of check silently
-  // reading debt off a layout that's going away: an adopted project stays
-  // green under the old layout until someone actually runs the new
-  // `archstrict todo`, which folds it in and deletes the old files.
-  const migrationNote = legacy?.present === true
-    ? "reading frozen debt from the old per-module todo layout - run archstrict todo to migrate it into one archstrict.todo.json"
-    : undefined;
-  return { parsed, entriesByModule, migrationNote };
+  return { parsed, entriesByModule };
 }
 
 export function applyTodo(graph: ModuleGraph, config: Config, result: CheckResult, options: ApplyTodoOptions = {}): CheckResult {
@@ -840,8 +801,7 @@ export function applyTodo(graph: ModuleGraph, config: Config, result: CheckResul
   const matchedByModule = new Map<string, Set<string>>();
   let suppressed = 0;
 
-  const { parsed, entriesByModule, migrationNote } = readCurrentTodo(graph);
-  const moduleDirs = new Map<string, string>([...graph.modules].map(([name, m]) => [name, m.dir]));
+  const { parsed, entriesByModule } = readCurrentTodo(graph);
 
   const todoIndexByModule = new Map<string, TodoIndex>();
   function todoIndexFor(name: string): TodoIndex {
@@ -879,23 +839,22 @@ export function applyTodo(graph: ModuleGraph, config: Config, result: CheckResul
     }
   }
 
-  // Every module name this file (or the old layout) has entries under -
-  // a currently declared module, or an ORPHAN name a config no longer
-  // declares (the module was renamed or removed since it was frozen).
-  // An orphan can never match any current violation (nothing this run's
-  // rules produced even claims that name), so every one of its entries is
-  // unconditionally stale - reported the same as any other unmatched
-  // entry below, just outside the `graph.modules` loop that also has to
-  // decide strict-vs-not for a still-declared name.
+  // Every module name this file has entries under - a currently declared
+  // module, or an orphan name a config no longer declares (the module was
+  // renamed or removed since it was frozen). An orphan can never match
+  // any current violation (nothing this run's rules produced even claims
+  // that name), so every one of its entries is unconditionally stale -
+  // reported the same as any other unmatched entry below, just outside
+  // the `graph.modules` loop that also has to decide strict-vs-not for a
+  // still-declared name.
   const allModuleNames = new Set<string>([...graph.modules.keys(), ...entriesByModule.keys()]);
 
   for (const name of allModuleNames) {
     const entries = entriesByModule.get(name) ?? [];
-    if (entries.length === 0) continue;
-    const moduleDir = moduleDirs.get(name);
+    if (entries.length === 0 || parsed === undefined) continue;
 
-    if (moduleDir !== undefined && strict.has(name)) {
-      const at = moduleTodoLocation(parsed, moduleDir, name);
+    if (graph.modules.has(name) && strict.has(name)) {
+      const at = moduleTodoLocation(parsed, name);
       remaining.push(locateViolation({
         rule: "clean-module-has-todo",
         path: at.path,
@@ -910,7 +869,7 @@ export function applyTodo(graph: ModuleGraph, config: Config, result: CheckResul
 
     const matched = matchedByModule.get(name) ?? new Set<string>();
     for (const entry of entries) {
-      const at = entryTodoLocation(parsed, moduleDir, entry);
+      const at = entryTodoLocation(parsed, entry);
       // On a `check <file>` run, an entry recorded at some OTHER path was
       // never evaluated this run - runRules never built (or scoped away)
       // whatever violation would have matched it, so whether it's still
@@ -942,7 +901,6 @@ export function applyTodo(graph: ModuleGraph, config: Config, result: CheckResul
     ...result,
     violations: remaining,
     todo: suppressed,
-    notes: migrationNote === undefined ? result.notes : [...(result.notes ?? []), migrationNote],
   };
 }
 

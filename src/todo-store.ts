@@ -7,8 +7,7 @@
 // on this instead.
 // Boundary: file I/O, the single-file shape, and the fingerprint's own
 // definition only. No rule logic, no freeze/prune policy (that's todo.ts's
-// job), no migration policy (that's todo-migration.ts's job, kept out of
-// this file so it can be deleted whole after the first release).
+// job).
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { isAbsolute, join } from "node:path";
@@ -195,19 +194,16 @@ export function buildTodoIndex(entries: readonly TodoEntry[]): TodoIndex {
     // string: this file's own entries carry no such field at all - a
     // stored copy could only ever drift from what matching actually needs
     // (today's recompute), and a reader wanting to name an entry uses its
-    // own line in the file (ParsedTodoFile.entryLocation) instead. A value
-    // read from an entry migrated off the old per-module layout would
-    // anyway be a hash of whatever formula was current when it was
-    // frozen, not today's. A rule whose formula hasn't changed recomputes
-    // to the exact same value it always had; a rule whose formula changed
-    // (type-leak's own path exclusion, tag-order's own sequence-display
-    // exclusion) recomputes to the value it always should have had, with
-    // no rule-specific migration needed at all - stableEvidence is a pure
-    // function of the evidence text alone, unaffected by which archstrict
-    // version produced it. Only public-surface-bypass has a real
-    // pre-migration format (no stored specifier/target at all, not just a
-    // different formula over the same fields), which is what
-    // byLegacyBypassKey is for.
+    // own line in the file (ParsedTodoFile.entryLocation) instead. A rule
+    // whose formula hasn't changed recomputes to the exact same value it
+    // always had; a rule whose formula changed (type-leak's own path
+    // exclusion, tag-order's own sequence-display exclusion) recomputes
+    // to the value it always should have had, with no rule-specific
+    // rewrite needed at all - stableEvidence is a pure function of the
+    // evidence text alone, unaffected by which archstrict version produced
+    // it. Only public-surface-bypass has an older stored shape (no stored
+    // specifier/target at all, not just a different formula over the same
+    // fields), which is what byLegacyBypassKey is for.
     byFingerprint.set(fingerprintOf(entry), entry);
     if (entry.rule === "public-surface-bypass" && entry.specifier === undefined) {
       const specifier = parseSpecifierFromLegacyBypassEvidence(entry.evidence);
@@ -223,8 +219,8 @@ export const EMPTY_TODO_INDEX: TodoIndex = { byFingerprint: new Map(), byLegacyB
 // name this live violation" - a fingerprint lookup first (covers every
 // rule, recomputed identically on both sides - see buildTodoIndex's own
 // comment), falling back to the legacy (path, specifier) index only for a
-// public-surface-bypass violation, since that's the only rule with a
-// recorded pre-migration format at all. `relativePath` puts `v`'s own
+// public-surface-bypass violation, since that's the only rule with an
+// older stored shape at all. `relativePath` puts `v`'s own
 // (absolute) path/target into the same project-relative form entries are
 // always stored in, for BOTH branches - the primary lookup needs this
 // exactly as much as the fallback does (fingerprintOf never relativizes
@@ -310,9 +306,8 @@ const ENTRY_STRING_FIELDS = ["rule", "path", "evidence", "specifier", "target"] 
 // `projectRoot`, when given, normalizes a raw absolute `path`/`target`
 // (a hand-written fixture, or a file from before entries were always
 // stored relative) into the project-relative POSIX form buildTodoEntry
-// always writes today - the same normalization the pre-single-file
-// readTodo already applied on every read, kept here so a caller never has
-// to special-case an absolute entry itself.
+// always writes today, so a caller never has to special-case an absolute
+// entry itself.
 function entryFromObjectLiteral(el: ts.ObjectLiteralExpression, projectRoot: string | undefined): TodoEntry | undefined {
   const fields: Record<string, string> = {};
   for (const prop of el.properties) {
@@ -412,24 +407,9 @@ export function readTodoFile(projectRoot: string): ParsedTodoFile | undefined {
   } catch {
     throw malformed(p);
   }
-  // Undefined (not thrown) ONLY for the one shape a legacy file at this
-  // exact path can actually have: { entries: [...] }, no schemaVersion at
-  // all - a module whose own glob covers the project root itself (e.g.
-  // "**") has its legacy per-module path equal to this new file's own
-  // path (todo-store.ts's own todoFilePath and todo-migration.ts's own
-  // legacy path collide there). The caller (todo.ts, check.ts's own
-  // readCurrentTodo) then falls back to todo-migration.ts's own reader,
-  // which recognizes that shape. Anything else missing schemaVersion - a
-  // hand-edited `{ "modules": {...} }` that lost its version, a bare `{}`,
-  // any other malformed object - is NOT silently read as "absent": that
-  // would make the next `todo` run treat it as a genuine first run and
-  // overwrite it, discarding whatever was really there.
-  if (
-    typeof raw === "object" && raw !== null && !("schemaVersion" in raw)
-    && Array.isArray((raw as { entries?: unknown }).entries)
-  ) {
-    return undefined;
-  }
+  // An object without schemaVersion is malformed, not absent. Reading it
+  // as absent would make the next `todo` run treat it as a first run and
+  // overwrite it.
   if (typeof raw !== "object" || raw === null || !("schemaVersion" in raw)) throw malformed(p);
   return parseTodoFileText(p, text, projectRoot);
 }
@@ -503,11 +483,8 @@ export function serializeTodoFile(modulesByName: ReadonlyMap<string, readonly To
 // Always writes the file, even with an empty module map (a project with
 // no debt after its first run still gets one, so the ratchet's own state
 // - "todo has run" - stays visible on disk instead of looking identical
-// to "todo has never run"). Never deletes it: unlike the old per-module
-// file (which vanished the moment a module's own debt hit zero),
-// existence of the single root file IS the "first run happened" signal
-// now - see todo.ts's own firstRun check, which replaces the old
-// `.archstrict-todo-initialized` marker with this file's own existence.
+// to "todo has never run"). Never deletes it: the file's own existence
+// is the "first run happened" signal. See todo.ts's own firstRun check.
 export function writeTodoFile(projectRoot: string, modulesByName: ReadonlyMap<string, readonly TodoEntry[]>): void {
   writeFileSync(todoFilePath(projectRoot), serializeTodoFile(modulesByName));
 }

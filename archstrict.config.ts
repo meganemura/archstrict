@@ -117,7 +117,6 @@ export default {
         "module-graph.ts",
         "project-path.ts",
         "report-error.ts",
-        "todo-migration.ts",
         "todo-store.ts",
         "type-closure.ts",
         "type-leak.ts",

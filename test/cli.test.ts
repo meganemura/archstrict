@@ -672,7 +672,6 @@ describe("cli", () => {
         "archstrict: todo's first run refuses: 1 file matches no declared module: src/extra.ts\n" +
           "do: archstrict check --rule uncovered-module\n",
       );
-      expect(existsSync(join(root, ".archstrict-todo-initialized"))).toBe(false);
 
       let jsonOut = "";
       try {
@@ -684,7 +683,6 @@ describe("cli", () => {
         error: "todo's first run refuses: 1 file matches no declared module: src/extra.ts",
         do: "archstrict check --rule uncovered-module",
       });
-      expect(existsSync(join(root, ".archstrict-todo-initialized"))).toBe(false);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

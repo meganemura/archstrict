@@ -593,26 +593,6 @@ describe("parseTodoFileText", () => {
 
 describe("readTodoFile's schemaVersion guard", () => {
 
-  test("returns undefined only for the legacy { entries: [...] } shape, with no schemaVersion", () => {
-    const root = mkdtempSync(join(tmpdir(), "archstrict-todo-schema-guard-"));
-    try {
-      writeFileSync(join(root, "archstrict.todo.json"), JSON.stringify({ entries: [{ rule: "cycle", path: "src/a.ts", evidence: "e" }] }));
-      expect(readTodoFile(root)).toBeUndefined();
-
-      const current = { rule: "cycle", path: "src/m/a.ts", evidence: "a -> b -> a" };
-      const legacy = { rule: "cycle", path: "src/legacy.ts", evidence: "x -> y -> x" };
-      writeFileSync(
-        join(root, "archstrict.todo.json"),
-        JSON.stringify({ schemaVersion: 1, entries: [legacy], modules: { m: [current] } }),
-      );
-      const parsed = readTodoFile(root);
-      expect(parsed).toBeDefined();
-      expect([...parsed!.modules]).toEqual([["m", [current]]]);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
   test("throws a malformed-file error on a file whose text holds no object", () => {
     const root = mkdtempSync(join(tmpdir(), "archstrict-todo-schema-guard-"));
     try {
@@ -625,11 +605,16 @@ describe("readTodoFile's schemaVersion guard", () => {
     }
   });
 
-  test("throws on a schemaVersion-less object that isn't the legacy shape either, rather than silently reading as absent", () => {
+  test("throws on an object with no schemaVersion, rather than silently reading as absent", () => {
     const root = mkdtempSync(join(tmpdir(), "archstrict-todo-schema-guard-"));
     try {
-      writeFileSync(join(root, "archstrict.todo.json"), JSON.stringify({ modules: { shared: [] } }));
-      expectTodoFileError(() => readTodoFile(root), MALFORMED);
+      for (const text of [
+        JSON.stringify({ modules: { shared: [] } }),
+        JSON.stringify({ entries: [{ rule: "cycle", path: "src/a.ts", evidence: "e" }] }),
+      ]) {
+        writeFileSync(join(root, "archstrict.todo.json"), text);
+        expectTodoFileError(() => readTodoFile(root), MALFORMED);
+      }
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

@@ -87,22 +87,6 @@ describe("todo", () => {
     });
   });
 
-  test("an existing root todo file takes precedence over leftover legacy files", async () => {
-    await withTempProject(async (root) => {
-      writeBypassProject(root);
-      await init(root);
-      expect(await todo(root)).toEqual({ firstRun: true, added: 1, pruned: 0 });
-      const rootTodo = readFileSync(join(root, "archstrict.todo.json"), "utf8");
-      const legacyFile = join(root, "src", "shared", "archstrict.todo.json");
-      writeFileSync(legacyFile, "unfinished legacy JSON");
-      writeFileSync(join(root, ".archstrict-todo-initialized"), "");
-      expect(await todo(root)).toEqual({ firstRun: false, added: 0, pruned: 0 });
-      expect(readFileSync(join(root, "archstrict.todo.json"), "utf8")).toBe(rootTodo);
-      expect(readFileSync(legacyFile, "utf8")).toBe("unfinished legacy JSON");
-      expect(existsSync(join(root, ".archstrict-todo-initialized"))).toBe(true);
-    });
-  });
-
   test("pruning counts every entry under a module that the current graph no longer declares", async () => {
     await withTempProject(async (root) => {
       writeBypassProject(root);
@@ -455,7 +439,7 @@ describe("todo", () => {
     });
   });
 
-  test("a single-file module with no matching surface freezes its todo beside the file", async () => {
+  test("a single-file module with no matching surface freezes its bypasses in the root todo file", async () => {
     await withTempProject(async (root) => {
       mkdirSync(join(root, "src", "app"), { recursive: true });
       writeFileSync(join(root, "src", "secret.ts"), "export const secret = 1;\n");
@@ -772,8 +756,7 @@ describe("todo", () => {
       expect(frozen.modules.b).toHaveLength(1);
       expect(frozen.modules.b[0].specifier).toBeDefined();
 
-      // Roll that one entry back to the legacy, pre-migration shape: no
-      // specifier/target at all.
+      // Roll that one entry back to the older shape: no specifier or target.
       const legacy = {
         rule: frozen.modules.b[0].rule,
         path: frozen.modules.b[0].path,
@@ -825,9 +808,12 @@ describe("todo", () => {
         .update(`type-leak\n${leak!.path}\n${leak!.evidence}`)
         .digest("hex").slice(0, 12);
       writeFileSync(
-        join(root, "src", "m", "archstrict.todo.json"),
+        join(root, "archstrict.todo.json"),
         JSON.stringify({
-          entries: [{ fingerprint: preFixFingerprint, rule: "type-leak", path: "src/m/public.ts", evidence: leak!.evidence }],
+          schemaVersion: 1,
+          modules: {
+            m: [{ fingerprint: preFixFingerprint, rule: "type-leak", path: "src/m/public.ts", evidence: leak!.evidence }],
+          },
         }, null, 2),
       );
 
@@ -859,9 +845,12 @@ describe("todo", () => {
         .update(`tag-order\n${violation!.path}\n${violation!.evidence}`)
         .digest("hex").slice(0, 12);
       writeFileSync(
-        join(root, "src", "archstrict.todo.json"),
+        join(root, "archstrict.todo.json"),
         JSON.stringify({
-          entries: [{ fingerprint: preFixFingerprint, rule: "tag-order", path: "src/core/a.ts", evidence: violation!.evidence }],
+          schemaVersion: 1,
+          modules: {
+            all: [{ fingerprint: preFixFingerprint, rule: "tag-order", path: "src/core/a.ts", evidence: violation!.evidence }],
+          },
         }, null, 2),
       );
 
