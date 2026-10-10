@@ -1,11 +1,9 @@
-// Only the committed generated fixtures are imported here (never the
-// .mjs converter scripts themselves - scripts/ is deliberately outside
-// tsconfig's own `include`, same convention probe-typescript7.test.ts
-// already established: a script is a subprocess to run, not a module to
-// import into a typechecked file). Importing them here forces tsc to
-// check them despite test/fixtures/ itself being excluded (see
-// test/classify.test.ts's own header for why an explicit import from an
-// included file still pulls an excluded one into the program).
+// The converter scripts stay .mjs subprocesses, the same shape
+// probe-typescript7.test.ts runs. scripts/ is in the typecheck include,
+// and tsc still skips .mjs, so these tests spawn the scripts instead of
+// importing them. The generated fixtures are imported so tsc checks them
+// even though test/fixtures/ is excluded: an import from an included file
+// still pulls an excluded file into the program (see test/classify.test.ts).
 import { describe, expect, test } from "vitest";
 import { execFileSync, spawnSync } from "node:child_process";
 import { copyFileSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync } from "node:fs";

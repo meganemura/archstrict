@@ -11,6 +11,7 @@ may change commands, flags, config, or output shape. The version entry will desc
 
 ### Changed
 
+- `npm run typecheck` includes `src`, `test`, `scripts`, `features`, and root `*.ts`. It checks TypeScript files in those paths. `scripts` holds `.mjs` files only, which `tsc` skips. `test/fixtures` is excluded, except a fixture a test imports.
 - The CI test job runs `npm run dogfood:nukadoko` after `npm test`.
 - CI pins `actions/checkout` at v7.0.1 and `actions/setup-node` at v7.0.0, the same commits as the publish workflow. Each `setup-node` step sets `package-manager-cache: false`, so the job does not write an npm cache.
 - The TypeScript 7 probe job sets `continue-on-error: true`. A failed install or a version guard in that job stays visible on the job, and the workflow run stays successful.

@@ -49,7 +49,7 @@ For working on archstrict itself:
 
 - `npm run build` — compile `src/` to `dist/`. `npm test` runs that build from `test/global-setup.ts` before every Vitest run.
 - `node dist/cli.js check` — checks this repository against the root `archstrict.config.ts`. `node dist/cli.js todo` prunes `archstrict.todo.json` after the first run and does not add debt again.
-- `npm run typecheck` — `tsc --noEmit` over the whole project.
+- `npm run typecheck` — `tsc --noEmit` includes `src`, `test`, `scripts`, `features`, and root `*.ts`. It checks TypeScript files in those paths. `scripts` holds `.mjs` files only, which `tsc` skips. `test/fixtures` is excluded, except a fixture a test imports.
 - `npm test` — the Vitest suite.
 - `npx depug <verb> -- <command>` measures what a function received and returned during a test run; use it when a test's expected value is unclear instead of guessing from source.
 - `npm run dogfood:nukadoko` — a nukadoko (Gherkin) scenario that runs the built CLI's full init/check/todo/edit/check round trip against nukadoko's own published `src/` (a real, unrelated codebase with no public-surface convention), copied into a disposable scratch directory. Never modifies the real nukadoko package or a checkout of it.
