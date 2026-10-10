@@ -23,7 +23,7 @@ A violation report always carries a rule id, `path:line:col`, the evidence, the 
 
 - `src/` is the library and CLI. The root `archstrict.config.ts` checks that tree: `core` is the analysis engine, `rules` and `verbs` are where a new rule or verb lands, and `cli`, `mcp`, and `check-options` sit above them. `archstrict.todo.json` is the ratchet. `skills/archstrict/` is the product skill shipped to consumers, not a second config.
 - `test/` is the Vitest suite; `features/` is the nukadoko (Gherkin) dogfood scenario.
-- `.agents/` is the canonical Claude Code plugin: the manifest, the PreToolUse and PostToolUse hooks, and the MCP server. `.claude-plugin/plugin.json` symlinks to `.agents/plugin.json`, and repo-root `hooks/` and `mcp/` symlink to `.agents/hooks` and `.agents/mcp`. `${CLAUDE_PLUGIN_ROOT}` is the directory that contains `.claude-plugin/`, so those plugin-root paths still resolve. `.claude-plugin/` stays a real directory holding only the manifest symlink: Claude loads `hooks/` from the plugin root, and a directory symlink onto `.agents/` would place `hooks/` and `mcp/` inside `.claude-plugin/`.
+- `.agents/` is the canonical Claude Code plugin: the manifest, the PreToolUse and PostToolUse hooks, and the MCP server. `.claude-plugin/plugin.json` symlinks to `.agents/plugin.json`, and repo-root `hooks/` and `mcp/` symlink to `.agents/hooks` and `.agents/mcp`. `${CLAUDE_PLUGIN_ROOT}` is the directory that contains `.claude-plugin/`, so those plugin-root paths still resolve. `.claude-plugin/` stays a real directory that holds `marketplace.json` and the `plugin.json` symlink: Claude loads `hooks/` from the plugin root, and a directory symlink onto `.agents/` would place `hooks/` and `mcp/` inside `.claude-plugin/`.
 - `skills/archstrict/` (and root `llms.txt`) is the agent-facing skill (`SKILL.md` plus `references/`).
 - `scripts/` holds standalone scripts (not part of the shipped library): the typescript 7 probe, two narrow config converters (Prisma's architecture.config.json, VS Code's code-layering table) to archstrict.config.ts's own shape, and the two runners that re-run the Prisma/VS Code oracle comparisons through the real CLI against a real clone (see Commands below). `.github/workflows/` is CI.
 - `.claude-team/` holds the task spec, the report, and their working artifacts. It is gitignored; do not reference it from committed content.
@@ -47,7 +47,7 @@ If you want to cite an internal document, write its substance in place instead.
 
 For working on archstrict itself:
 
-- `npm run build` — compile `src/` to `dist/`. The CLI's own tests spawn the built `dist/cli.js`, so run this before `npm test` if `dist/` is missing or stale.
+- `npm run build` — compile `src/` to `dist/`. `npm test` runs that build from `test/global-setup.ts` before every Vitest run.
 - `node dist/cli.js check` — checks this repository against the root `archstrict.config.ts`. `node dist/cli.js todo` prunes `archstrict.todo.json` after the first run and does not add debt again.
 - `npm run typecheck` — `tsc --noEmit` over the whole project.
 - `npm test` — the Vitest suite.

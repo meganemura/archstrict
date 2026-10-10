@@ -1,52 +1,8 @@
 # Maintenance
 
-## Checks
+The checks, the dependency rule, and release ownership are in [AGENTS.md](../AGENTS.md).
 
-Run the main checks before a release or after a code change:
-
-```sh
-npm run build
-npm run typecheck
-npm test
-```
-
-Run the dogfood scenario and the oracle comparisons separately:
-
-```sh
-npm run dogfood:nukadoko
-node scripts/run-prisma-oracle.mjs <path-to-a-real-prisma/prisma-clone>
-node scripts/run-vscode-oracle.mjs <path-to-a-real-microsoft/vscode-clone>
-```
-
-`dogfood:nukadoko` runs the built CLI's full init/check/todo/edit/check round trip against a real,
-unrelated published `src/` copied into a disposable scratch directory. The two oracle scripts
-re-run the Prisma and VS Code boundary-config comparisons through the real, built CLI against a
-scratch copy of a local clone, converting each project's own real config with the existing
-`scripts/convert-*` converters. Neither writes into the clone itself. See
-[AGENTS.md](../AGENTS.md)'s Commands section for what each requires (a local clone, `pnpm install`
-for the Prisma one) and what each prints.
-
-After `npm run build`, `node dist/cli.js check` analyzes this repository's own `src/` with the root
-`archstrict.config.ts`. A clean run exits 0. `node dist/cli.js todo` creates `archstrict.todo.json`
-on the first run and only prunes it afterward. Modules named in that config's `strict` list cannot
-take on frozen debt. The skill under `skills/archstrict/` is what the package ships; it is not a
-second copy of this config.
-
-`npm run ci:ts7-probe` measures which of the operations rule 6 needs work on whatever typescript 7
-happens to be installed. It never fails; an unsupported operation is the measurement, not an error.
-archstrict itself always analyzes with its own pinned `typescript` dependency, independent of this
-probe.
-
-`npm run mutation` runs Stryker (`stryker run`) with the Vitest runner. It mutates `src/**/*.ts`
-except `src/cli.ts` and `src/mcp-server.ts` — those two are process entry points, and several tests
-drive the built `dist/cli.js` rather than the source file Stryker rewrites. The full set is large
-(the suite is serial, and many tests build a real TypeScript program). A bounded look is
-`npx stryker run --mutate src/<file>.ts`. `coverageAnalysis` stays `perTest`.
-
-That bounded form is the one to use. The full mutate set is thousands of mutants, and the
-Vitest `related` filter still selects most of the suite for a single source file, because tests
-reach that file through other imports. The time goes to the suite — synchronous CLI spawns and
-TypeScript startup — rather than to Stryker's instrumenter.
+`npm run mutation` is the entry point. [mutation-runner.md](mutation-runner.md) describes the runner.
 
 Stryker copies the project into a sandbox with `copyFile`. That call throws on the directory
 symlinks `hooks` and `mcp`, and it would replace `.claude-plugin/plugin.json` with a regular file.
@@ -58,18 +14,13 @@ The instrumenter's update-operator mutator rebuilds `++`/`--` with Babel's `upda
 and Babel 8 rejects a non-null assertion as that argument. Excluding the mutator does not help:
 the mutator still runs, and the throw aborts the run before any mutant is tested.
 
-## Dependencies and Node.js
-
-Do not add a dependency without the owner's approval. Pin every dependency to an exact version.
-Wait at least seven days after a version is released before adding it, and check that no newer
-security release replaces it. Prefer language-official packages, then vendor packages, and avoid
-single-maintainer packages.
+## Node.js
 
 archstrict analyzes with `typescript` pinned at `6.0.3`. CI (`.github/workflows/ci.yml`) runs the
-main job on Node.js 22 and separately probes typescript 7 (`ci:ts7-probe`) without changing the
-pinned dependency. The publish workflow (`.github/workflows/publish.yml`) requires Node.js 24.10
-and npm 11.5.1 or newer before it runs `npm publish`. `package.json` currently declares no
-`engines` field; adding one, and which Node.js versions it should name, is the owner's call.
+`test` job and the `windows-paths` job on Node.js 22, and it probes typescript 7 (`ci:ts7-probe`)
+without changing the pinned dependency. The publish workflow (`.github/workflows/publish.yml`)
+requires Node.js 24.10 and npm 11.5.1 or newer before it runs `npm publish`. `package.json` sets
+`engines.node` to `>=22`.
 
 ## Add a rule or a verb
 
