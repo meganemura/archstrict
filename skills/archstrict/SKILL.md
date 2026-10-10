@@ -49,7 +49,7 @@ Install the skill once for the user (`gh skill install meganemura/archstrict arc
   '../shared/module.ts' resolved to module 'shared', which has no index.ts, index.tsx, index.mts, index.cts
   because: a module's public surface is its only public surface; everything else is private
   config: .../archstrict.config.ts:8:3 declaredModules[1] (governs)
-  do: add one of index.ts, index.tsx, index.mts, index.cts to shared/ naming what it exports
+  do: add src/shared/index.ts that re-exports what other modules use and import it instead of src/shared/module.ts, or set surface: "module.ts" on 'shared' in archstrict.config.ts
 ```
 
 `evidence` says what was found; `do` says the one thing to do about it. Do the thing `do` says, not a broader refactor - a rule flags exactly the edge, property, or entry it names, nothing implied beyond it.
