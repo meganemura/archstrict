@@ -988,6 +988,9 @@ export type CheckOptions = {
   // module's frozen debt through the same --rule/--module filters as a
   // live violation, without opening its todo JSON by hand.
   frozen?: boolean;
+  // Unused by analysis. An unknown filter's `do` repeats the invocation,
+  // and `--json` is part of that invocation.
+  json?: boolean;
 };
 
 // A frozen violation is real but already accepted as debt; it must never
@@ -996,21 +999,40 @@ export function hasBlockingViolations(result: CheckResult): boolean {
   return result.violations.some((v) => v.rule !== "config-meaning" && !v.frozen);
 }
 
+// The error already lists the valid values. Substituting the first id, or
+// the first module name, names an arbitrary target. The next command is
+// this same check without the unknown filter.
+function checkCommandWithoutBadFilter(
+  focusFile: string | undefined,
+  options: CheckOptions,
+  bad: { rule?: string; moduleName?: string },
+): string {
+  const parts = ["archstrict", "check"];
+  if (focusFile !== undefined) parts.push(focusFile);
+  if (options.json === true) parts.push("--json");
+  if (options.frozen === true) parts.push("--frozen");
+  if (options.prove === true) parts.push("--prove");
+  for (const rule of options.rules ?? []) {
+    if (rule !== bad.rule) parts.push("--rule", rule);
+  }
+  for (const moduleName of options.modules ?? []) {
+    if (moduleName !== bad.moduleName) parts.push("--module", moduleName);
+  }
+  return parts.join(" ");
+}
+
 // Runs after the graph is built (module names depend on it) and before
 // applyFilters, so a typo'd `--rule`/`--module` reports its own error
 // instead of silently returning zero violations - the same distinction
 // an empty, but genuinely correctly filtered, result must keep (see
 // applyFilters's own comment on the empty case exiting 0).
-function validateFilters(graph: ModuleGraph, options: CheckOptions): void {
+function validateFilters(graph: ModuleGraph, focusFile: string | undefined, options: CheckOptions): void {
   const validRules = new Set<string>(CHECK_RULE_IDS);
   for (const rule of options.rules ?? []) {
     if (!validRules.has(rule)) {
-      // The `do:` is a real, runnable example (a valid id substituted in),
-      // not `check --json` - that would print the whole, unbounded project
-      // report, the exact shape bounded text exists to avoid.
       throw new ReportError(
         `unknown rule id '${rule}' - valid rule ids: ${CHECK_RULE_IDS.join(", ")}`,
-        `archstrict check --rule ${CHECK_RULE_IDS[0]}`,
+        checkCommandWithoutBadFilter(focusFile, options, { rule }),
       );
     }
   }
@@ -1020,7 +1042,7 @@ function validateFilters(graph: ModuleGraph, options: CheckOptions): void {
     if (!validModuleSet.has(moduleName)) {
       throw new ReportError(
         `unknown module name '${moduleName}' - valid module names: ${validModules.join(", ")}`,
-        validModules.length > 0 ? `archstrict check --module ${validModules[0]}` : "archstrict check",
+        checkCommandWithoutBadFilter(focusFile, options, { moduleName }),
       );
     }
   }
@@ -1168,7 +1190,7 @@ export async function check(projectRoot: string, focusFile?: string, options: Ch
     exclude: config.exclude,
     surface: config.surface,
   });
-  validateFilters(graph, options);
+  validateFilters(graph, focusFile, options);
   // A `check <file>` scoped to a file that isn't any module's own
   // surface can never surface a rule-6 violation (filterToFile below
   // would filter it out regardless) - skip the rule so a whole-project

@@ -353,19 +353,41 @@ describe("check filters", () => {
     });
   }));
 
-  test("unknown filters list every valid value in the error message, with a runnable example do command", () => filteredProject((root) => {
+  test("unknown filters list every valid value and repeat the command without the bad filter", () => filteredProject((root) => {
     const rule = failedCli(root, ["check", "--rule", "unknown"]);
     expect(rule).toEqual({
       status: 1,
       stdout: "",
-      stderr: `archstrict: unknown rule id 'unknown' - valid rule ids: ${CHECK_RULE_IDS.join(", ")}\ndo: archstrict check --rule ${CHECK_RULE_IDS[0]}\n`,
+      stderr: `archstrict: unknown rule id 'unknown' - valid rule ids: ${CHECK_RULE_IDS.join(", ")}\ndo: archstrict check\n`,
     });
 
     const moduleName = failedCli(root, ["check", "--module", "unknown"]);
     expect(moduleName).toEqual({
       status: 1,
       stdout: "",
-      stderr: "archstrict: unknown module name 'unknown' - valid module names: app, other, shared\ndo: archstrict check --module app\n",
+      stderr: "archstrict: unknown module name 'unknown' - valid module names: app, other, shared\ndo: archstrict check\n",
+    });
+
+    const kept = failedCli(root, ["check", "src/app/main.ts", "--frozen", "--module", "app", "--rule", "nope"]);
+    expect(kept).toEqual({
+      status: 1,
+      stdout: "",
+      stderr: `archstrict: unknown rule id 'nope' - valid rule ids: ${CHECK_RULE_IDS.join(", ")}\ndo: archstrict check src/app/main.ts --frozen --module app\n`,
+    });
+
+    const keptRule = failedCli(root, ["check", "--rule", "cycle", "--module", "payments"]);
+    expect(keptRule).toEqual({
+      status: 1,
+      stdout: "",
+      stderr: "archstrict: unknown module name 'payments' - valid module names: app, other, shared\ndo: archstrict check --rule cycle\n",
+    });
+
+    const json = failedCli(root, ["check", "--json", "--rule", "unknown"]);
+    expect(json.status).toBe(1);
+    expect(json.stderr).toBe("");
+    expect(JSON.parse(json.stdout)).toEqual({
+      error: `unknown rule id 'unknown' - valid rule ids: ${CHECK_RULE_IDS.join(", ")}`,
+      do: "archstrict check --json",
     });
   }));
 });

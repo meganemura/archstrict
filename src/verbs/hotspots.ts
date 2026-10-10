@@ -264,6 +264,36 @@ export async function hotspots(projectRoot: string, since?: string): Promise<Hot
   };
 }
 
+function activeViolationTotal(counts: RuleCounts): number {
+  return Object.values(counts).reduce((sum, count) => sum + count, 0);
+}
+
+// With no commits, every score is 0 and name order is an arbitrary target.
+// The next command is the module that already has the most active
+// violations. When none do, checking a module does not use the missing history.
+function moduleWithMostActiveViolations(modules: readonly HotspotModule[]): HotspotModule | undefined {
+  let best: HotspotModule | undefined;
+  let bestCount = 0;
+  for (const module of modules) {
+    const count = activeViolationTotal(module.activeViolationsByRule);
+    if (count === 0) continue;
+    if (best === undefined || count > bestCount || (count === bestCount && module.name.localeCompare(best.name) < 0)) {
+      best = module;
+      bestCount = count;
+    }
+  }
+  return best;
+}
+
+const RUN_INSIDE_GIT = "run archstrict hotspots inside a git repository";
+
+function leadingDo(result: HotspotsResult): string | undefined {
+  if (!result.history.available) {
+    return moduleWithMostActiveViolations(result.modules)?.do ?? RUN_INSIDE_GIT;
+  }
+  return result.modules[0]?.do;
+}
+
 function percentage(share: number): string {
   return `${Math.round(share * 100)}%`;
 }
@@ -290,12 +320,14 @@ export function formatHotspotsText(result: HotspotsResult): string {
     lines.push(`  ${pair.moduleA} <-> ${pair.moduleB}: ${pair.coChanges} commits; ${percentage(pair.shareOfA)} of ${pair.moduleA}; ${percentage(pair.shareOfB)} of ${pair.moduleB}; ${marker}`);
   }
   lines.push("", `Excluded from history: ${result.exclusions.join(", ")}.`);
-  // At most two lines: the top module (the score's own drill-down), and, when
-  // one exists, the top boundary-hotspot pair. `check --frozen` now reads a
-  // pair's frozen debt through the same rule/module filters as a live
-  // violation, so the drill-down names that command instead of the todo
-  // JSON files it used to send the reader to open by hand.
-  if (result.modules.length > 0) lines.push(`do: ${result.modules[0]!.do}`);
+  // At most two lines: the leading drill-down, and, when one exists, the
+  // top boundary-hotspot pair. With git history the leading line is the
+  // highest score. Without it every score is 0, so that line names the
+  // module with the most active violations, or says to run inside a git
+  // repository. `check --frozen` reads a pair's frozen debt through the
+  // same filters as a live violation.
+  const leading = leadingDo(result);
+  if (leading !== undefined) lines.push(`do: ${leading}`);
   const pair = result.pairs.find((candidate) => candidate.hotspot);
   if (pair !== undefined) {
     lines.push(

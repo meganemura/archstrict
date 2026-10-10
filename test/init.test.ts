@@ -147,7 +147,7 @@ describe("init", () => {
 
       const second = await init(root);
       expect(second.doText).toBe(
-        "add each declare line above to declaredModules in archstrict.config.ts, or its exclude line to exclude if that path is not module content; then run archstrict init",
+        "add each declare line to declaredModules in archstrict.config.ts, or its exclude line to exclude if that path is not module content; then run archstrict init",
       );
       expect(second.messageLines).toEqual([
         `${join(root, "archstrict.config.ts")} already exists, left untouched`,
@@ -1302,7 +1302,7 @@ export default {
             { path: "tools", kind: "dir", files: 1, declare: { name: "tools", glob: "tools/**" }, exclude: "tools/**" },
           ],
           notes: [],
-          do: "add each declare line above to declaredModules in archstrict.config.ts, or its exclude line to exclude if that path is not module content; then run archstrict init",
+          do: "add each declare line to declaredModules in archstrict.config.ts, or its exclude line to exclude if that path is not module content; then run archstrict init",
         });
       });
     });

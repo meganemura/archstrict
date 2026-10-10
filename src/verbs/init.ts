@@ -592,8 +592,10 @@ export async function init(projectRoot: string, rawDir?: string): Promise<InitRe
         messageLines.push(`    declare: ${declaredModuleEntryText(g.entry)},`);
         messageLines.push(`    or exclude: ${JSON.stringify(g.excludeGlob)},`);
       }
+      // "above" is false in --json: the declare entries are fields, not lines
+      // printed above this sentence. Text already lists those lines first.
       doText =
-        "add each declare line above to declaredModules in archstrict.config.ts, or its exclude line to exclude if that path is not module content; then run archstrict init";
+        "add each declare line to declaredModules in archstrict.config.ts, or its exclude line to exclude if that path is not module content; then run archstrict init";
     }
     return {
       configPath,

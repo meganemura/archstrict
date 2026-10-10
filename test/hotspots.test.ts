@@ -142,6 +142,39 @@ describe("hotspots", () => {
         ["alpha", 0, 1],
         ["beta", 1, 0],
       ]);
+      expect(formatHotspotsText(result).match(/^do: .*$/gm)).toEqual([
+        "do: run archstrict hotspots inside a git repository",
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("without git history, do: names the module with the most active violations", async () => {
+    const root = mkdtempSync(join(tmpdir(), "archstrict-hotspots-no-git-violations-"));
+    try {
+      mkdirSync(join(root, "src", "alpha"), { recursive: true });
+      mkdirSync(join(root, "src", "zeta"), { recursive: true });
+      writeFileSync(join(root, "src", "alpha", "index.ts"), 'import { hidden } from "../zeta/hidden.js";\nexport const alpha = hidden;\n');
+      writeFileSync(join(root, "src", "zeta", "hidden.ts"), "export const hidden = 1;\n");
+      writeFileSync(join(root, "archstrict.config.ts"), `export default {
+  schemaVersion: 1,
+  surface: "index.ts",
+  exclude: ["archstrict.config.ts", "archstrict.types.ts"],
+  declaredModules: [
+    { name: "alpha", glob: "src/alpha/**" },
+    { name: "zeta", glob: "src/zeta/**" },
+  ],
+  because: "the fixture gives the later module the active violation",
+};\n`);
+      const result = await hotspots(root);
+      expect(result.history.available).toBe(false);
+      expect(result.modules.map((module) => module.name)).toEqual(["alpha", "zeta"]);
+      expect(result.modules[0]?.activeViolationsByRule).toEqual({});
+      expect(result.modules[1]?.activeViolationsByRule).toEqual({ "public-surface-bypass": 1 });
+      expect(formatHotspotsText(result).match(/^do: .*$/gm)).toEqual([
+        "do: archstrict check --frozen --module zeta",
+      ]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -168,6 +201,49 @@ describe("hotspots", () => {
     }
   });
 });
+
+test("without git history the leading do names the busiest module, or a git repository", () =>
+  hegel.test((tc) => {
+    const size = tc.draw(gs.integers({ minValue: 0, maxValue: 8 }));
+    const modules = Array.from({ length: size }, (_, index) => {
+      const violations = tc.draw(gs.integers({ minValue: 0, maxValue: 4 }));
+      const activeViolationsByRule: Record<string, number> = {};
+      if (violations > 0) activeViolationsByRule["public-surface-bypass"] = violations;
+      return {
+        name: `m${index}`,
+        commits: 0,
+        changedLines: 0,
+        fanIn: 0,
+        fanOut: 0,
+        frozenDebtByRule: {},
+        activeViolationsByRule,
+        score: 0,
+        do: `archstrict check --frozen --module m${index}`,
+      };
+    });
+    const result: HotspotsResult = {
+      history: { available: false, shallow: false, commits: 0, since: null, note: "Git history is unavailable because this project is not in a Git repository." },
+      units: { commits: "commits", changedLines: "added plus deleted lines", shares: "fraction of module commits" },
+      exclusions: ["paths outside analysis", "archstrict todo files", "archstrict.types.ts"],
+      modules,
+      pairs: [],
+    };
+    const doLine = formatHotspotsText(result).match(/^do: .*$/m)?.[0];
+    const best = modules.reduce<{ name: string; count: number } | undefined>((winner, module) => {
+      const count = Object.values(module.activeViolationsByRule).reduce((sum, value) => sum + value, 0);
+      if (count === 0) return winner;
+      if (winner === undefined || count > winner.count || (count === winner.count && module.name.localeCompare(winner.name) < 0)) {
+        return { name: module.name, count };
+      }
+      return winner;
+    }, undefined);
+    assert.equal(
+      doLine,
+      best === undefined
+        ? "do: run archstrict hotspots inside a git repository"
+        : `do: archstrict check --frozen --module ${best.name}`,
+    );
+  }));
 
 test("co-change counts are symmetric and shares use each module's commit count", () =>
   hegel.test((tc) => {
