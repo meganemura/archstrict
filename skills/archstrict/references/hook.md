@@ -1,8 +1,8 @@
 # The PreToolUse and PostToolUse hooks
 
-This plugin ships two hooks around every Edit/Write/MultiEdit: `PreToolUse` (`.agents/hooks/pre-tool-use.mjs`) runs before the write happens, and `PostToolUse` (`.agents/hooks/post-tool-use.mjs`) runs right after. Claude invokes them as `${CLAUDE_PLUGIN_ROOT}/hooks/pre-tool-use.mjs` and `${CLAUDE_PLUGIN_ROOT}/hooks/post-tool-use.mjs`; repo-root `hooks/` is a symlink to `.agents/hooks`. Both shell out to **the edited project's own** `node_modules/.bin/archstrict` - never this repository's own build.
+This plugin ships two hooks around every Edit/Write/MultiEdit: `PreToolUse` (`.agents/hooks/pre-tool-use.mjs`) previews a proposed edit, and `PostToolUse` (`.agents/hooks/post-tool-use.mjs`) runs right after the write. Claude invokes them as `${CLAUDE_PLUGIN_ROOT}/hooks/pre-tool-use.mjs` and `${CLAUDE_PLUGIN_ROOT}/hooks/post-tool-use.mjs`; repo-root `hooks/` is a symlink to `.agents/hooks`. Both shell out to **the edited project's own** `node_modules/.bin/archstrict` - never this repository's own build.
 
-## PreToolUse: a preview before the write
+## PreToolUse: a preview next to the tool result
 
 On a TypeScript source file (`.ts`, `.tsx`, `.mts`, `.cts`) edited with Edit, Write, or MultiEdit, the hook builds the file text the tool call would produce, without writing it to disk:
 
@@ -10,9 +10,11 @@ On a TypeScript source file (`.ts`, `.tsx`, `.mts`, `.cts`) edited with Edit, Wr
 - Edit reads the file's current text and applies `old_string` -> `new_string`, honoring `replace_all`.
 - MultiEdit applies each edit in `tool_input.edits` in order, on top of the file's current text.
 
-It then runs `node_modules/.bin/archstrict simulate --json` with that one change on stdin, under a time budget (10 s by default; set `ARCHSTRICT_PRETOOLUSE_TIMEOUT_MS` to change it, in milliseconds). When the change adds a violation, the hook allows the edit and returns the added violations as `hookSpecificOutput.additionalContext` - the same compact form the PostToolUse hook prints (rule, `path:line:col`, evidence, `because:`, the violation's `config:` pointer line, and `do:`), bounded to a few violations with a count of the rest. A resolved violation, if any, is mentioned in one summary line.
+It then runs `node_modules/.bin/archstrict simulate --json` with that one change on stdin, under a time budget (10 s by default; set `ARCHSTRICT_PRETOOLUSE_TIMEOUT_MS` to change it, in milliseconds). When the change adds a violation, the default hook returns `hookEventName` and the added violations as `hookSpecificOutput.additionalContext`. It does not set `permissionDecision`. The agent reads that preview next to the tool result. The text uses the same compact form the PostToolUse hook prints (rule, `path:line:col`, evidence, `because:`, the violation's `config:` pointer line, and `do:`), bounded to a few violations with a count of the rest. A resolved violation, if any, is mentioned in one summary line.
 
-Set `ARCHSTRICT_PRETOOLUSE=deny` to make the hook deny the tool call instead, with the same text as `permissionDecisionReason`. The default is allow-with-context: an agent mid-refactor may write an intermediate state on purpose, and a hard deny would block that.
+Set `ARCHSTRICT_PRETOOLUSE=deny` to deny the tool call before the write, with the same text as `permissionDecisionReason`. The default leaves the normal permission prompt in place. An agent mid-refactor may write an intermediate state on purpose, and a hard deny would block that.
+
+`permissionDecision` `"ask"`, with the preview as `permissionDecisionReason`, is not implemented.
 
 ### Why it might say nothing
 

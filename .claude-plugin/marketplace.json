@@ -6,7 +6,7 @@
     {
       "name": "archstrict",
       "source": "./",
-      "description": "The archstrict skill, a PreToolUse hook that previews new boundary violations before an edit, a PostToolUse hook that reports them after, and the archstrict MCP server."
+      "description": "The archstrict skill, a PreToolUse hook that returns a violation preview next to the tool result and denies the edit before the write when ARCHSTRICT_PRETOOLUSE=deny, a PostToolUse hook that reports them after the write, and the archstrict MCP server."
     }
   ]
 }

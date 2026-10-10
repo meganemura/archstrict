@@ -110,8 +110,8 @@ describe("pre-tool-use hook", () => {
       expect(JSON.parse(readFileSync(stdinMarkerPath(root), "utf8"))).toEqual({
         changes: [{ path: filePath, content: "export const x = 1;\n" }],
       });
+      expect(Object.keys(output.hookSpecificOutput ?? {}).sort()).toEqual(["additionalContext", "hookEventName"]);
       expect(output.hookSpecificOutput?.hookEventName).toBe("PreToolUse");
-      expect(output.hookSpecificOutput?.permissionDecision).toBe("allow");
       expect(output.hookSpecificOutput?.additionalContext).toContain("public-surface-bypass");
       expect(output.hookSpecificOutput?.additionalContext).toContain("because:");
       expect(output.hookSpecificOutput?.additionalContext).toContain("config:");
@@ -245,13 +245,14 @@ describe("pre-tool-use hook", () => {
     });
   });
 
-  test("added violations are reported as allow with additionalContext, and a resolved count is mentioned", () => {
+  test("added violations are reported as additionalContext with no permission decision, and a resolved count is mentioned", () => {
     withTempProject((root) => {
       installFakeArchstrict(root, "added-with-resolved");
       const filePath = join(root, "src", "new.ts");
       const output = runHook({ tool_name: "Write", tool_input: { file_path: filePath, content: "export const x = 1;\n" }, cwd: root });
 
-      expect(output.hookSpecificOutput?.permissionDecision).toBe("allow");
+      expect(Object.keys(output.hookSpecificOutput ?? {}).sort()).toEqual(["additionalContext", "hookEventName"]);
+      expect(output.hookSpecificOutput?.hookEventName).toBe("PreToolUse");
       expect(output.hookSpecificOutput?.additionalContext).toContain("would add 1 violation");
       expect(output.hookSpecificOutput?.additionalContext).toContain("would also resolve 1 violation");
     });
@@ -288,7 +289,7 @@ describe("pre-tool-use hook", () => {
     expect(JSON.parse(stdout)).toEqual({});
   });
 
-  test("integration: a real violation is previewed against the real built CLI before the write happens", () => {
+  test("integration: a real violation is previewed against the real built CLI, and the file on disk is unchanged", () => {
     withTempProject((root) => {
       mkdirSync(join(root, "src", "app"), { recursive: true });
       mkdirSync(join(root, "src", "shared"), { recursive: true });
@@ -315,7 +316,8 @@ describe("pre-tool-use hook", () => {
         cwd: root,
       });
 
-      expect(output.hookSpecificOutput?.permissionDecision).toBe("allow");
+      expect(Object.keys(output.hookSpecificOutput ?? {}).sort()).toEqual(["additionalContext", "hookEventName"]);
+      expect(output.hookSpecificOutput?.hookEventName).toBe("PreToolUse");
       expect(output.hookSpecificOutput?.additionalContext).toContain("public-surface-bypass");
       expect(output.hookSpecificOutput?.additionalContext).toContain(importer);
       expect(output.hookSpecificOutput?.additionalContext).toContain("do:");
