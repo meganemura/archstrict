@@ -64,7 +64,7 @@ function signatureOf(checker: ts.TypeChecker, target: ts.Symbol, kind: SearchMat
 export async function search(projectRoot: string, query: string): Promise<SearchResult> {
   const queryTokens = tokenize(query);
   if (queryTokens.length === 0) throw new Error("archstrict search: query must contain at least one word");
-  const config = await loadConfig(resolve(projectRoot, "archstrict.config.ts"));
+  const config = await loadConfig(resolve(projectRoot, "archstrict.config.ts"), undefined, "archstrict check", "archstrict search");
   // loadConfig already guarantees declaredModules is a well-shaped array
   // (assertDeclaredModulesShapeValid) - see check.ts's own comment.
   const options = { projectRoot, declaredModules: config.declaredModules!, exclude: config.exclude, surface: config.surface };

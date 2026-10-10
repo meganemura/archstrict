@@ -7,6 +7,7 @@ may change commands, flags, config, or output shape. The version entry will desc
 
 ### Changed
 
+- A missing `archstrict.config.ts` names the nearest ancestor directory that has one, and its `do:` is `cd <that directory> && archstrict <verb>`. A directory with no config in any ancestor still says `do: archstrict init`.
 - A `cycle` violation's `config` pointer names the declared module that governs the cycle. It no longer points at `ignoredCycles`. That field is a suppression, and the cycle `do:` does not edit it.
 - A `type-leak` `do:` ends with `or run archstrict fix` when the leaked type is already exported from the file that declares it. That is the leak `archstrict fix` re-exports in one step. A declaration that file does not export keeps the earlier text.
 - `archstrict recommend` prints each pattern proposal's config fragment in text output, under that proposal's evidence. The `do:` line says to paste the fragment into `archstrict.config.ts` before `archstrict simulate`.

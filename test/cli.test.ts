@@ -1,11 +1,17 @@
 import { describe, expect, test } from "vitest";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const REPO_ROOT = new URL("..", import.meta.url).pathname;
 const CLI_PATH = new URL("../dist/cli.js", import.meta.url).pathname;
+
+// check prints compiler paths with `/`, including on Windows, where
+// realpath and join keep `\`.
+function compilerSpelling(path: string): string {
+  return path.split("\\").join("/");
+}
 
 // Built, not run from src/ directly: this project's internal imports use
 // nodenext's .js-extension convention (matching nukadoko's, depug's, and
@@ -235,6 +241,63 @@ describe("cli", () => {
         jsonOut = (e as { stdout: string }).stdout;
       }
       expect(JSON.parse(jsonOut)).toMatchObject({ do: "archstrict init" });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("check from a subdirectory names the ancestor that has the config", () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "archstrict-cli-subdir-config-")));
+    const nested = join(root, "src");
+    try {
+      mkdirSync(nested, { recursive: true });
+      writeFileSync(join(root, "archstrict.config.ts"), "export default { declaredModules: [], because: \"test\" };\n");
+
+      let errOut = "";
+      let jsonOut = "";
+      let exitCode = 0;
+      try {
+        execFileSync("node", [CLI_PATH, "check"], { cwd: nested, encoding: "utf8" });
+      } catch (e) {
+        const err = e as { status: number; stderr: string };
+        exitCode = err.status;
+        errOut = err.stderr;
+      }
+      const project = compilerSpelling(root);
+      expect(exitCode).toBe(1);
+      expect(errOut).toContain(`${project}/archstrict.config.ts is the nearest config`);
+      expect(errOut.trim().split("\n").at(-1)).toBe(`do: cd ${project} && archstrict check`);
+
+      try {
+        jsonOut = execFileSync("node", [CLI_PATH, "check", "--json"], { cwd: nested, encoding: "utf8" });
+      } catch (e) {
+        jsonOut = (e as { stdout: string }).stdout;
+      }
+      expect(JSON.parse(jsonOut)).toMatchObject({
+        do: `cd ${project} && archstrict check`,
+      });
+
+      let todoErr = "";
+      try {
+        execFileSync("node", [CLI_PATH, "todo"], { cwd: nested, encoding: "utf8" });
+      } catch (e) {
+        todoErr = (e as { stderr: string }).stderr;
+      }
+      expect(todoErr.trim().split("\n").at(-1)).toBe(`do: cd ${project} && archstrict todo`);
+
+      const deeper = join(nested, "app");
+      mkdirSync(deeper);
+      errOut = "";
+      exitCode = 0;
+      try {
+        execFileSync("node", [CLI_PATH, "check"], { cwd: deeper, encoding: "utf8" });
+      } catch (e) {
+        const err = e as { status: number; stderr: string };
+        exitCode = err.status;
+        errOut = err.stderr;
+      }
+      expect(exitCode).toBe(1);
+      expect(errOut.trim().split("\n").at(-1)).toBe(`do: cd ${project} && archstrict check`);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

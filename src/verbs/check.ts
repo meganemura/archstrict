@@ -5,7 +5,8 @@
 // normalized to one — `deprecated`'s two arrays (violations/suggestions)
 // flatten in here, not in each rule.
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { compilerRealpath, compilerResolve } from "../project-path.js";
+import { basename } from "node:path";
+import { compilerDirname, compilerJoin, compilerRealpath, compilerResolve } from "../project-path.js";
 import ts from "typescript";
 import { buildModuleGraphForRules, globResolutionDir, type ModuleGraph, type BuildOptions } from "../module-graph.js";
 import { dominantBypassModule, dominantBypassSentence } from "./map-shape.js";
@@ -268,10 +269,53 @@ const REQUIRED_FIELDS = ["declaredModules", "because"] as const;
 // load exists to write. Only errors thrown directly here take `verb` -
 // assertSchemaVersion and assertEdgesShapeValid are shared with other
 // verbs and keep their own fixed "archstrict check", unchanged.
-export async function loadConfig(configPath: string, sourceOverride?: string, verb = "archstrict check"): Promise<Config> {
-  // init is what creates this file. A missing one is the first-run path,
-  // and a raw ENOENT doesn't name that command.
+const CONFIG_FILE_NAME = "archstrict.config.ts";
+
+// The missing file's own directory is not a candidate: the caller already
+// knows that path is absent. The nearest ancestor is the project this
+// directory sits inside. `archstrict init` there would write a second
+// config. A path that is not this file name keeps the first-run remedy,
+// because an ancestor config is not the file the caller asked to load.
+function ancestorConfigDirectory(configPath: string): string | undefined {
+  if (basename(configPath) !== CONFIG_FILE_NAME) return undefined;
+  // resolve, not realpath: `cd` stays in the caller's spelling. dirname(".")
+  // is ".", so a relative path would otherwise never leave its directory.
+  let dir = compilerDirname(compilerResolve(configPath));
+  for (;;) {
+    const parent = compilerDirname(dir);
+    if (parent === dir) return undefined;
+    dir = parent;
+    if (existsSync(compilerJoin(dir, CONFIG_FILE_NAME))) return dir;
+  }
+}
+
+// A `do:` line is a command. A directory with a space or a quote would
+// split or close that command, so only a plain path stays unquoted.
+function commandToken(path: string): string {
+  if (/^[A-Za-z0-9_./:+-]+$/.test(path)) return path;
+  return `'${path.replaceAll("'", `'"'"'`)}'`;
+}
+
+// `command` is the invocation that missed the file. Other errors keep
+// `verb`: a todo that finds a broken config still says to re-run
+// `archstrict check` after the edit. The missing-file case is different.
+// The file is not broken. The same command has to run from the ancestor.
+export async function loadConfig(
+  configPath: string,
+  sourceOverride?: string,
+  verb = "archstrict check",
+  command = verb,
+): Promise<Config> {
+  // init creates this file on a first run. That remedy is wrong once an
+  // ancestor already has the file.
   if (sourceOverride === undefined && !existsSync(configPath)) {
+    const ancestor = ancestorConfigDirectory(configPath);
+    if (ancestor !== undefined) {
+      throw new ReportError(
+        `${configPath} does not exist; ${compilerJoin(ancestor, CONFIG_FILE_NAME)} is the nearest config`,
+        `cd ${commandToken(ancestor)} && ${command}`,
+      );
+    }
     throw new ReportError(`${configPath} does not exist`, "archstrict init");
   }
   const source = sourceOverride ?? readFileSync(configPath, "utf8");

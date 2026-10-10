@@ -103,7 +103,7 @@ export async function rules(projectRoot: string, path: string): Promise<RulesRes
   if (rel === ".." || rel.startsWith("../") || isAbsolute(rel)) {
     throw new Error(`rules ${path}: path is outside project root '${root}'`);
   }
-  const config = await loadConfig(resolve(root, "archstrict.config.ts"));
+  const config = await loadConfig(resolve(root, "archstrict.config.ts"), undefined, "archstrict check", "archstrict rules");
   const configLocator = createConfigLocator(config);
   const graph = buildModuleGraphForRules({ projectRoot: root, declaredModules: config.declaredModules!, exclude: config.exclude, surface: config.surface });
   const exists = existsSync(resolvedPath);

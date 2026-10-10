@@ -125,7 +125,7 @@ export async function simulate(
 ): Promise<SimulateResult> {
   projectRoot = realpathSync(projectRoot);
   const configPath = canonicalChangePath(projectRoot, "archstrict.config.ts");
-  const beforeConfig = await loadConfig(configPath);
+  const beforeConfig = await loadConfig(configPath, undefined, "archstrict check", "archstrict simulate");
   let proposedSource: string | undefined;
   const contents = new Map<string, string | null>();
   for (const change of changes) {

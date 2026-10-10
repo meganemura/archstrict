@@ -212,7 +212,7 @@ export function freezeOrPrune(
 
 export async function todo(projectRoot: string): Promise<TodoResult> {
   const configPath = join(projectRoot, "archstrict.config.ts");
-  const config = await loadConfig(configPath);
+  const config = await loadConfig(configPath, undefined, "archstrict check", "archstrict todo");
   // See check.ts's own comment: declaredModules is the only source of
   // scope now.
   const graph = buildModuleGraphForRules({

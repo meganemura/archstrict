@@ -36,7 +36,7 @@ export async function fix(projectRoot: string, file?: string, dryRun = false): P
   const result: FixResult = { fixed: [], planned: [], unfixable: [], reverted: [] };
   const focus = file === undefined ? undefined : resolve(projectRoot, file);
   if (focus !== undefined && !existsSync(focus)) return result;
-  const config = await loadConfig(resolve(projectRoot, "archstrict.config.ts"));
+  const config = await loadConfig(resolve(projectRoot, "archstrict.config.ts"), undefined, "archstrict check", "archstrict fix");
   const configLocator = createConfigLocator(config);
   // loadConfig already guarantees declaredModules is a well-shaped array
   // (assertDeclaredModulesShapeValid) - see check.ts's own comment.
