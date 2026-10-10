@@ -811,11 +811,10 @@ function readDirEntries(dir: string): { files: Dirent[]; dirs: { entry: Dirent; 
 // any directory already reached within that same pass) is caught the
 // same way an ordinary cycle is.
 //
-// Measured directly on nukadoko-archstrict-adopt's own real tree (1,342
-// files outside node_modules): the four separate ts.sys.readDirectory
-// calls this replaces took about 41 ms; this one recursive descent takes
-// about 23 ms - roughly 1.8x faster, from walking every directory once
-// instead of four times.
+// Measured on a real project tree of 1,342 files outside node_modules:
+// the four separate ts.sys.readDirectory calls this replaces took about
+// 41 ms; this one recursive descent takes about 23 ms - roughly 1.8x
+// faster, from walking every directory once instead of four times.
 //
 // A gitignored path is not project source (scratch corpora, build output,
 // local caches), so it leaves the analyzed list and the non-TS count, the
@@ -960,13 +959,12 @@ export function listAnalyzedFiles(
   // ...) - pruning each individual call, rather than sharing one fuller
   // walk across all of them, is the simpler of the two fixes for that:
   // `init` needs no change at all, and every other analysis-only caller
-  // gets the same win for free. Measured directly on
-  // nukadoko-archstrict-adopt (which has no dist/ of its own): `init`
-  // took about 61 ms pruned and about 61 ms unpruned - indistinguishable
-  // there, since this checkout has nothing under dist/ to skip; the
-  // pruning still removes real work (a full descent into a real dist/
-  // tree, plus the resolvable/package.json/node_modules collection) on
-  // any project that has one.
+  // gets the same win for free. Measured on a real project with no
+  // dist/ of its own: `init` took about 61 ms pruned and about 61 ms
+  // unpruned - indistinguishable there, since that tree has nothing
+  // under dist/ to skip; the pruning still removes real work (a full
+  // descent into a real dist/ tree, plus the resolvable/package.json/
+  // node_modules collection) on any project that has one.
   const dtsSurfaceGlobs = surfaceGlobsAllowingDts(declaredModules, projectRoot, globalDefaultSurface);
   return walkProjectTree(projectRoot, excludeGlobs, dtsSurfaceGlobs, true, undefined, declaredBasesOf(declaredModules)).analyzedFiles;
 }

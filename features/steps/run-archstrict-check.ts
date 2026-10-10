@@ -28,7 +28,7 @@ export default defineStep({
   }),
   from: { root: [setupNukadokoScratch, "root"] },
   rationale:
-    "check's own JSON shape is the contract to verify (the ticket asks for real files and JSON output), so this spawns the real CLI with --json rather than calling check() in-process, matching cli.test.ts's own pattern. execFileSync throws on a nonzero exit (check exits 1 whenever violations exist, by design), so a nonzero exit is caught and read as data instead of letting the step fail on the expected case.",
+    "The scenario requires real files and the CLI's JSON output, so this spawns the real CLI with --json rather than calling check() in-process, matching cli.test.ts's own pattern. execFileSync throws on a nonzero exit (check exits 1 whenever violations exist, by design), so a nonzero exit is caught and read as data instead of letting the step fail on the expected case.",
   run({}, { root }) {
     let stdout: string;
     let exitCode: number;

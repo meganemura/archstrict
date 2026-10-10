@@ -1,7 +1,7 @@
 // Spike 2: what counts as a "type leak" — a public
 // surface re-exporting or otherwise exposing an internal module's type
-// without the consumer having a name for it. Three candidate definitions
-// (from the task spec): (1) an inferred return type that structurally
+// without the consumer having a name for it. Three candidate definitions:
+// (1) an inferred return type that structurally
 // includes an internal declaration, (2) a generic type parameter's
 // constraint or default bound to an internal declaration, (3) any
 // property, anywhere in an exported type's shape, whose declaration lives
@@ -107,8 +107,8 @@ function measure(
 
   // Walks every type reachable from `type`'s own shape: its properties, its
   // index signatures' value types, and (for a union) every constituent —
-  // "any property, anywhere in an exported type's shape" (report.md's
-  // definition) requires all three, not just direct properties one level
+  // "any property, anywhere in an exported type's shape" requires all
+  // three, not just direct properties one level
   // down. `seen` guards the recursion against a type that references
   // itself (directly or through a cycle of aliases).
   function walkStructural(

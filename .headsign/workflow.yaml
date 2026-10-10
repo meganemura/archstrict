@@ -33,7 +33,7 @@
 # Owner's instruction (2026-09-20): run laps back to back, without ending
 # the turn to check in, until `bd ready` is empty and $end is reached on its
 # own. A design choice that's reversible and within an already-open ticket's
-# scope gets decided and recorded (in the ticket comment and report.md), not
+# scope gets decided and recorded (in an issue comment), not
 # raised as a question. Only an irreversible, out-of-scope, or genuinely
 # owner-only decision (new paid dependency, publishing, a spec conflict
 # advisor can't resolve) is worth stopping for.
@@ -53,7 +53,7 @@ phases:
       write its id alone to `.headsign/tmp/ticket`, and write the starting
       commit with `git rev-parse HEAD > .headsign/tmp/base`. If nothing is
       ready, write nothing. Either way, touch `.headsign/tmp/pick-done`. Do
-      not start the ticket's work in this phase. Do not end the turn here to
+      not start that issue's work in this phase. Do not end the turn here to
       check in with the owner: run `headsign next` and continue straight
       into `implement` in the same turn.
     clear:
@@ -87,9 +87,9 @@ phases:
   # ── implement ────────────────────────────────────────────────────────────
   implement:
     description: >
-      Do the ticket in `.headsign/tmp/ticket` (`bd show <id>` for the text,
+      Do the claimed issue in `.headsign/tmp/ticket` (`bd show <id>` for the text,
       `bd comments <id>` for what an earlier lap or review round left). Read
-      the current epic's own tickets and report.md's prior entries before
+      the current epic's own issues and earlier issue comments before
       spike or rule work. Write tests first where a property or an exact CLI/JSON shape
       exists (Hegel for properties, example tests for exact output). For a
       ticket touching module-graph resolution or which rules run against
@@ -101,8 +101,8 @@ phases:
       commit message, a comment, a doc, or a test must not name a ticket id
       or refer to `.claude-team/` or any other internal note; write the
       substance in place instead. A ticket whose result is a measurement or
-      a decision (a spike) may leave no commit if report.md records it: the
-      gate allows that. Record findings as a comment on the ticket
+      a decision (a spike) may leave no commit if an issue comment records it: the
+      gate allows that. Record findings as a comment on the issue
       (`bd comment <id> "..."`) for the next lap and the reviewer.
     gate:
       checks:
@@ -131,8 +131,8 @@ phases:
   review:
     description: >
       Have an independent reader who writes nothing check the range
-      `$(cat .headsign/tmp/base)..HEAD` (or, for a spike, report.md's new
-      entry) against the ticket's text and acceptance criteria: does the
+      `$(cat .headsign/tmp/base)..HEAD` (or, for a spike, the new issue
+      comment) against that issue's text and acceptance criteria: does the
       range deliver what was asked, does it match this epic's own design
       decisions, does any sentence name a ticket id or `.claude-team/`. Have
       it REPORT exactly APPROVED or REJECTED with reasons, then write that

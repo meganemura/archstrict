@@ -14,8 +14,8 @@
 // Decision: one violation per cycle (per strongly connected component,
 // really — a component may hold more than one simple cycle, and this
 // reports the component once, with its shortest simple cycle as
-// evidence), not one per edge in it. Placement (spec, undecided by the
-// task spec, left to this implementation): the todo for a cycle goes on
+// evidence), not one per edge in it. Placement was left to this
+// implementation: the todo for a cycle goes on
 // the name-first module among the ones in it — an arbitrary but stable
 // and deterministic choice, so re-running `check` always picks the same
 // module for the same cycle.
