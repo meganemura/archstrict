@@ -5,6 +5,10 @@ may change commands, flags, config, or output shape. The version entry will desc
 
 ## Unreleased
 
+### Fixed
+
+- `archstrict simulate` no longer writes `node_modules/.cache/archstrict` when it builds the baseline graph. A preview stays off disk. The files it used to create are `edges.json`, `augmentations.json`, and the edge shards.
+
 ## 0.2.1 (2026-10-04)
 
 ### Fixed

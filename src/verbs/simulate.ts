@@ -147,7 +147,9 @@ export async function simulate(
   // (assertDeclaredModulesShapeValid) - see check.ts's own comment.
   const options = { projectRoot, declaredModules: beforeConfig.declaredModules!, exclude: beforeConfig.exclude, surface: beforeConfig.surface };
   const prepared = prepareGraph(options);
-  const baseline = buildModuleGraphForRules(options);
+  // A preview must not write the edge cache. The proposed graph below
+  // passes the same flag because its files are not on disk.
+  const baseline = buildModuleGraphForRules(options, { persistCache: false });
   const beforeLocator = createConfigLocator(beforeConfig);
   const mode: SimulateMode = simulateOptions.wholeProject ? "whole-project" : "scoped";
   const focusPaths = simulateOptions.wholeProject ? undefined : [...contents.keys()];
