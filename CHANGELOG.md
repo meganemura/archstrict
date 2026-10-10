@@ -11,6 +11,7 @@ may change commands, flags, config, or output shape. The version entry will desc
 
 ### Changed
 
+- The TypeScript 7 probe job sets `continue-on-error: true`. A failed install or a version guard in that job stays visible on the job, and the workflow run stays successful.
 - Run `archstrict init` again after upgrading archstrict. `archstrict.types.ts` says to do that after an upgrade, and after adding, removing, or renaming a `declaredModules` entry.
 - `Config.scope` stays on the type and is reserved. Nothing reads it. Set `exclude` to leave files out of analysis. `archstrict init` writes that sentence on the generated type, and the Prisma and VS Code converters no longer emit `scope`.
 - `archstrict check <file>` and `archstrict simulate` print one `note:` line when that file is excluded, outside the project, or not analyzed. `--json` and the exit code stay the same, so the PostToolUse hook stays silent. `archstrict fix` on a missing file exits 1 and reports `no such file`, the same failure `archstrict check` reports for a missing file.
