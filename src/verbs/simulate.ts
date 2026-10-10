@@ -8,6 +8,7 @@ import { fingerprintOf, relativizeForTodo } from "../todo-store.js";
 import { applyTodo, formatText, loadConfig, runRules, type AnyViolation, type CheckResult } from "./check.js";
 import { createConfigLocator } from "../config-pointer.js";
 import { compilerDirname, compilerJoin, compilerResolve } from "../project-path.js";
+import { focusNoteLines, focusSkip, focusSkipNote, setFocusNotes } from "./focus-note.js";
 
 export type Change = { path: string; content: string | null };
 export type SimulateMode = "scoped" | "whole-project";
@@ -220,12 +221,28 @@ export async function simulate(
   const keyOf = (v: AnyViolation) => fingerprintOf(relativizeForTodo(v, baseline.relativePath));
   const beforeFingerprints = new Set(before.map(keyOf));
   const afterFingerprints = new Set(after.map(keyOf));
-  return {
+  const result: SimulateResult = {
     mode,
     added: after.filter(violation => !beforeFingerprints.has(keyOf(violation))),
     resolved: before.filter(violation => !afterFingerprints.has(keyOf(violation))),
     unchangedCount: before.filter(violation => afterFingerprints.has(keyOf(violation))).length,
   };
+  // One line per path the preview did not read. A new file the after graph
+  // did accept is analyzed, so it keeps its violations and gets no note.
+  // The JSON fields stay the comparison the PreToolUse hook already reads.
+  const analyzed = new Set<string>(graph.outsideFiles);
+  for (const module of graph.modules.values()) {
+    for (const file of module.files) analyzed.add(file);
+  }
+  const notes: string[] = [];
+  for (const change of changes) {
+    const canonical = canonicalChangePath(projectRoot, change.path);
+    if (analyzed.has(canonical)) continue;
+    const reason = focusSkip(projectRoot, change.path, afterConfig);
+    if (reason !== undefined) notes.push(focusSkipNote(change.path, reason));
+  }
+  setFocusNotes(result, notes);
+  return result;
 }
 
 export function formatSimulateText(result: SimulateResult): string {
@@ -240,7 +257,9 @@ export function formatSimulateText(result: SimulateResult): string {
     // Keep the shared violation rendering, but omit counts that describe a full check rather than a change set.
     return text.slice(0, text.lastIndexOf("\nmodules:") + 1);
   };
+  const notes = focusNoteLines(result).map(note => `note: ${note}\n`).join("");
   return `mode: ${result.mode}\nadded: ${result.added.length}; resolved: ${result.resolved.length}; unchanged: ${result.unchangedCount}\n` +
+    notes +
     (result.added.length ? `added violations:\n${render(result.added)}` : "") +
     (result.resolved.length ? `resolved violations:\n${render(result.resolved)}` : "");
 }

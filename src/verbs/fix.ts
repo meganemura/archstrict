@@ -7,6 +7,7 @@ import { prepareGraph, type ModuleGraph } from "../module-graph.js";
 import { createWarmGraph } from "../warm-graph.js";
 import { fingerprintOf, relativizeForTodo, type ViolationForTodo } from "../todo-store.js";
 import type { Violation } from "../type-leak.js";
+import { ReportError } from "../report-error.js";
 import { loadConfig, runRules, applyTodo, filterToFile } from "./check.js";
 import { resolveWriteTarget, writeTarget } from "./agents.js";
 import { createConfigLocator } from "../config-pointer.js";
@@ -35,7 +36,12 @@ function exportedFromInternal(graph: ModuleGraph, leak: NonNullable<Violation["l
 export async function fix(projectRoot: string, file?: string, dryRun = false): Promise<FixResult> {
   const result: FixResult = { fixed: [], planned: [], unfixable: [], reverted: [] };
   const focus = file === undefined ? undefined : resolve(projectRoot, file);
-  if (focus !== undefined && !existsSync(focus)) return result;
+  // A missing path is a ReportError, the same failure check already throws,
+  // instead of an empty result that exits 0. The message names fix, so the
+  // next command is archstrict fix.
+  if (focus !== undefined && !existsSync(focus)) {
+    throw new ReportError(`fix ${file}: no such file`, "archstrict fix");
+  }
   const config = await loadConfig(resolve(projectRoot, "archstrict.config.ts"), undefined, "archstrict check", "archstrict fix");
   const configLocator = createConfigLocator(config);
   // loadConfig already guarantees declaredModules is a well-shaped array

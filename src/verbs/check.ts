@@ -56,6 +56,7 @@ import {
   type ConfigLocator,
   type ConfigPointers,
 } from "../config-pointer.js";
+import { focusNoteLines, focusSkip, focusSkipNote, setFocusNotes } from "./focus-note.js";
 
 // Not one of the six rules: reported when a todo entry matches no current
 // violation (import-linter's own default for the same case is also an
@@ -1287,6 +1288,13 @@ export async function check(projectRoot: string, focusFile?: string, options: Ch
   if (filtered.nextSteps !== undefined) {
     filtered.nextSteps = { summary: filtered.nextSteps.summary, do: footerCommands(filtered) };
   }
+  // The file exists, so filterToFile already accepted it. A missing path
+  // throws above and never reaches this note. JSON stays the CheckResult
+  // the hook already reads: the sentence is text only.
+  if (focusFile !== undefined && existsSync(compilerResolve(projectRoot, focusFile))) {
+    const reason = focusSkip(projectRoot, focusFile, config);
+    if (reason !== undefined) setFocusNotes(filtered, [focusSkipNote(focusFile, reason)]);
+  }
   return filtered;
 }
 
@@ -1582,9 +1590,10 @@ function groupedViolationLines(result: CheckResult): string[] {
 // existed: a `check <file>` run rarely exceeds this, and a project's first
 // whole-project run past it is exactly the shape grouping exists for.
 export function formatText(result: CheckResult): string {
-  const lines: string[] = result.violations.length <= 20
+  const lines: string[] = focusNoteLines(result).map((note) => `note: ${note}`);
+  lines.push(...(result.violations.length <= 20
     ? result.violations.flatMap(formatViolation)
-    : groupedViolationLines(result);
+    : groupedViolationLines(result)));
   if (result.violations.length <= 20) {
     lines.push(...(result.dominantModule !== undefined ? dominantModuleLines(result) : surfaceLessNote(result)));
   }

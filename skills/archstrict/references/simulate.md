@@ -62,6 +62,8 @@ added: 0; resolved: 0; unchanged: 1
 
 The text then lists added and resolved violations when present.
 The command exits with code 1 when `added` is nonempty, and 0 otherwise.
+When a changed path is excluded, outside the project, or not an analyzed source file, text output adds one `note:` line for that path.
+The JSON result does not include the note.
 Input or config errors also exit with code 1; `--json` reports them as `{ "error": "<message>", "do": "<command>" }`.
 
 ## Proposed config

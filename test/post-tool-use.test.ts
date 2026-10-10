@@ -292,6 +292,55 @@ describe("post-tool-use hook", () => {
     });
   });
 
+  test("prints {} for a file outside the project and for a non-TypeScript file", () => {
+    withTempProject((root) => {
+      mkdirSync(join(root, "src", "app"), { recursive: true });
+      writeFileSync(join(root, "src", "app", "index.ts"), "export const app = 1;\n");
+      writeFileSync(join(root, "package.json"), "{\"type\":\"module\"}\n");
+      writeFileSync(
+        join(root, "archstrict.config.ts"),
+        "export default { declaredModules: [{ name: \"app\", glob: \"src/app/**\", surface: \"index.ts\" }], exclude: [\"archstrict.config.ts\"], because: \"test\" };\n",
+      );
+      installArchstrictBin(root);
+
+      const pkg = runHook({ tool_name: "Edit", tool_input: { file_path: join(root, "package.json") }, cwd: root });
+      expect(pkg).toEqual({});
+      expect(existsSync(invokedMarkerPath(root))).toBe(false);
+
+      withTempProject((outside) => {
+        const file = join(outside, "other.ts");
+        writeFileSync(file, "export const x = 1;\n");
+        const stdout = execFileSync("node", [HOOK_PATH], {
+          input: JSON.stringify({ tool_name: "Edit", tool_input: { file_path: file }, cwd: root }),
+          encoding: "utf8",
+        });
+        expect(stdout).toBe("{}\n");
+        expect(existsSync(invokedMarkerPath(root))).toBe(false);
+      });
+    });
+  });
+
+  test("prints {} when check runs on a .d.ts the analysis does not read", () => {
+    withTempProject((root) => {
+      mkdirSync(join(root, "src", "app"), { recursive: true });
+      writeFileSync(join(root, "src", "app", "index.ts"), "export const app = 1;\n");
+      const declaration = join(root, "src", "app", "types.d.ts");
+      writeFileSync(declaration, "export interface T { value: number }\n");
+      writeFileSync(
+        join(root, "archstrict.config.ts"),
+        "export default { declaredModules: [{ name: \"app\", glob: \"src/app/**\", surface: \"index.ts\" }], exclude: [\"archstrict.config.ts\"], because: \"test\" };\n",
+      );
+      installArchstrictBin(root);
+
+      const stdout = execFileSync("node", [HOOK_PATH], {
+        input: JSON.stringify({ tool_name: "Edit", tool_input: { file_path: declaration }, cwd: root }),
+        encoding: "utf8",
+      });
+      expect(stdout).toBe("{}\n");
+      expect(existsSync(invokedMarkerPath(root))).toBe(true);
+    });
+  });
+
   test("prints one JSON line and exits 0 when a failing binary prints text", () => {
     withTempProject((root) => {
       mkdirSync(join(root, "src"), { recursive: true });

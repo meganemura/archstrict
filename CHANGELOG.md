@@ -7,6 +7,7 @@ may change commands, flags, config, or output shape. The version entry will desc
 
 ### Changed
 
+- `archstrict check <file>` and `archstrict simulate` print one `note:` line when that file is excluded, outside the project, or not analyzed. `--json` and the exit code stay the same, so the PostToolUse hook stays silent. `archstrict fix` on a missing file exits 1 and reports `no such file`, the same failure `archstrict check` reports for a missing file.
 - The section `archstrict agents` writes says to run `npx archstrict rules <path>` and `npx archstrict check`. The skill says the CLI runs as `npx archstrict <verb>` and that a `do:` line leaves out the `npx` prefix.
 - `archstrict check` prints each footer `do:` once, with the next action first. The `archstrict todo` line says that the first run freezes once. `--json` `nextSteps` lists those same lines.
 - An unknown `--rule` or `--module` value sets `do:` to the same `archstrict check` command without that filter. With no git history, `archstrict hotspots` points `do:` at the module with the most active violations, or says to run inside a git repository. `archstrict init --json` says to add each declare line to `declaredModules`.

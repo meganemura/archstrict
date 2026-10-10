@@ -234,10 +234,12 @@ test("a second CLI run is idempotent and writes nothing", () => project(async ({
 }));
 
 test("scope, text output, invalid arguments, and unfixable exit codes", () => project(async ({ root, put, surface }) => {
-  for (const file of ["missing.ts", "src/app/internal.ts"]) {
-    const output = cli(root, file, "--json");
-    expect(output.status).toBe(0); expect(JSON.parse(output.stdout).fixed).toEqual([]);
-  }
+  const missing = cli(root, "missing.ts", "--json");
+  expect(missing.status).toBe(1);
+  expect(JSON.parse(missing.stdout)).toEqual({ error: "fix missing.ts: no such file", do: "archstrict fix" });
+  const internal = cli(root, "src/app/internal.ts", "--json");
+  expect(internal.status).toBe(0);
+  expect(JSON.parse(internal.stdout).fixed).toEqual([]);
   expect(cli(root, "--unknown").status).toBe(1);
   expect(cli(root, "one", "two", "--json").status).toBe(1);
   put("src/app/internal.ts", 'interface Hidden { value: string }\nexport function make(): Hidden { return { value: "x" }; }');

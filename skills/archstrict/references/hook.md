@@ -43,7 +43,7 @@ Every one of these is silent by design, not a failure:
 - The walk from the edited file finds no `archstrict.config.ts`. The hook does not run a binary that happens to sit in `cwd`, and it does not print an `archstrict init` hint. `archstrict init` writes the config. It does not install the package. See the [README](https://github.com/meganemura/archstrict#install) for how to install the package into that project.
 - The directory that holds that config has no `node_modules/.bin/archstrict`. Most edits happen in files or projects that never adopted this tool.
 - `check --json` prints output that is not JSON.
-- `check <file>` found no violation in the edited file. Analysis still covers the whole project (resolving an edge needs every file), but the report is scoped to the one file that changed.
+- `check <file>` found no violation in the edited file. Analysis still covers the whole project (resolving an edge needs every file), but the report is scoped to the one file that changed. An excluded file, a file outside the project, or a file that is not analyzed (a `.d.ts` that is not a surface) still returns that empty list with exit code 0. The text `note:` is not part of the JSON.
 
 For a module surface, `check <file>` builds rule 6 from that surface's type closure, and `typeLeaks` counts only leaks reported at that file.
 

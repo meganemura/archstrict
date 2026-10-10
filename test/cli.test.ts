@@ -543,4 +543,84 @@ describe("cli", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  test("check prints one note for a file it did not analyze, and --json keeps an empty violation list", () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "archstrict-cli-unanalyzed-")));
+    const outsideDir = realpathSync(mkdtempSync(join(tmpdir(), "archstrict-cli-outside-")));
+    try {
+      mkdirSync(join(root, "src", "app"), { recursive: true });
+      writeFileSync(join(root, "src", "app", "index.ts"), "export const app = 1;\n");
+      writeFileSync(join(root, "src", "app", "main.test.ts"), "export const t = 1;\n");
+      writeFileSync(join(root, "src", "app", "types.d.ts"), "export interface T { value: number }\n");
+      writeFileSync(join(root, "package.json"), "{\"type\":\"module\"}\n");
+      writeFileSync(join(root, "archstrict.config.ts"), [
+        "export default {",
+        "  declaredModules: [{ name: \"app\", glob: \"src/app/**\", surface: \"index.ts\" }],",
+        "  exclude: [\"**/*.test.ts\", \"archstrict.config.ts\"],",
+        "  because: \"test\",",
+        "};\n",
+      ].join("\n"));
+      const outside = join(outsideDir, "other.ts");
+      writeFileSync(outside, "export const x = 1;\n");
+
+      const cases = [
+        ["src/app/main.test.ts", "note: src/app/main.test.ts is excluded, so it was not analyzed"],
+        [outside, `note: ${outside} is outside the project, so it was not analyzed`],
+        ["package.json", "note: package.json was not analyzed"],
+        ["src/app/types.d.ts", "note: src/app/types.d.ts was not analyzed"],
+      ] as const;
+      for (const [file, note] of cases) {
+        const text = execFileSync("node", [CLI_PATH, "check", file], { cwd: root, encoding: "utf8" });
+        expect(text.split("\n").filter((line) => line.startsWith("note:"))).toEqual([note]);
+        const json = JSON.parse(execFileSync("node", [CLI_PATH, "check", file, "--json"], { cwd: root, encoding: "utf8" }));
+        expect(json.violations).toEqual([]);
+        expect(json.error).toBeUndefined();
+        expect(JSON.stringify(json)).not.toContain("was not analyzed");
+        expect(JSON.stringify(json)).not.toContain("is excluded");
+        expect(JSON.stringify(json)).not.toContain("outside the project");
+      }
+
+      const analyzed = execFileSync("node", [CLI_PATH, "check", "src/app/index.ts"], { cwd: root, encoding: "utf8" });
+      expect(analyzed.split("\n").filter((line) => line.startsWith("note:"))).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(outsideDir, { recursive: true, force: true });
+    }
+  });
+
+  test("fix on a missing file exits 1 with a no such file report", () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "archstrict-cli-fix-missing-")));
+    try {
+      mkdirSync(join(root, "src", "app"), { recursive: true });
+      writeFileSync(join(root, "src", "app", "index.ts"), "export const app = 1;\n");
+      writeFileSync(join(root, "archstrict.config.ts"), "export default { declaredModules: [{ name: \"app\", glob: \"src/app/**\", surface: \"index.ts\" }], because: \"test\" };\n");
+
+      let errOut = "";
+      let exitCode = 0;
+      try {
+        execFileSync("node", [CLI_PATH, "fix", "src/shared/nope.ts"], { cwd: root, encoding: "utf8" });
+      } catch (e) {
+        const err = e as { status: number; stderr: string };
+        exitCode = err.status;
+        errOut = err.stderr;
+      }
+      expect(exitCode).toBe(1);
+      expect(errOut).toContain("fix src/shared/nope.ts: no such file");
+      expect(errOut).not.toMatch(/^\s+at /m);
+      expect(errOut.trim().split("\n").at(-1)).toBe("do: archstrict fix");
+
+      let jsonOut = "";
+      try {
+        jsonOut = execFileSync("node", [CLI_PATH, "fix", "src/shared/nope.ts", "--json"], { cwd: root, encoding: "utf8" });
+      } catch (e) {
+        jsonOut = (e as { stdout: string }).stdout;
+      }
+      expect(JSON.parse(jsonOut)).toEqual({
+        error: "fix src/shared/nope.ts: no such file",
+        do: "archstrict fix",
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
