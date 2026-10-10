@@ -35,6 +35,8 @@ to work.
 
 ## Each version
 
+A release that changes the Config type gets a rerun-init line in its changelog entry.
+
 1. Replace `(unreleased)` in `CHANGELOG.md` with the release date. Set the same version in
    `package.json`, `package-lock.json`, and `.agents/plugin.json`.
 2. Run `npm run build`, `npm run typecheck`, and `npm test`.
