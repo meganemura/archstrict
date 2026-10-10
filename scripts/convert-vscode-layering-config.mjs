@@ -12,6 +12,8 @@
 // already exempts a target sharing the source's own tag (code-layering.ts
 // only makes this explicit by `.add(parts[i])`; this project's engine
 // gets it for free from the same-group rule every allowDeny entry shares).
+import { fileURLToPath } from "node:url";
+
 export function convertVSCodeLayeringConfig(layeringTable) {
   const names = Object.keys(layeringTable);
   const classifyByDirectoryName = { tagNamespace: "env", names };
@@ -53,6 +55,8 @@ export default {
   }
 }
 
-if (process.argv[1] && new URL(import.meta.url).pathname === process.argv[1]) {
+// A URL pathname percent-encodes the path and, on Windows, starts with /C:/.
+// argv holds the filesystem path.
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   main();
 }
