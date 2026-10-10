@@ -105,6 +105,12 @@ async function runCheck(args: string[]): Promise<number> {
 }
 
 async function runTodo(args: string[]): Promise<number> {
+  // The first run is the only run that writes new entries. Any argument
+  // other than `--json` fails before that write, so a help probe or a
+  // dry run cannot spend the one freeze. There is no help table here.
+  for (const arg of args) {
+    if (arg !== "--json") throw new ReportError(`unknown option '${arg}'`, "archstrict todo [--json]");
+  }
   const asJson = args.includes("--json");
   const result = await todo(process.cwd());
   if (asJson) {

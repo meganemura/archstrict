@@ -334,6 +334,57 @@ describe("cli", () => {
     }
   });
 
+  test("todo rejects unknown arguments without freezing violations", () => {
+    const root = mkdtempSync(join(tmpdir(), "archstrict-cli-todo-unknown-"));
+    try {
+      mkdirSync(join(root, "src", "app"), { recursive: true });
+      mkdirSync(join(root, "src", "shared"), { recursive: true });
+      writeFileSync(join(root, "src", "shared", "module.ts"), "export const shared = 1;\n");
+      writeFileSync(
+        join(root, "src", "app", "module.ts"),
+        "import { shared } from \"../shared/module.ts\";\nexport const x = shared;\n",
+      );
+      execFileSync("node", [CLI_PATH, "init"], { cwd: root });
+
+      let exitCode = 0;
+      let stderr = "";
+      try {
+        execFileSync("node", [CLI_PATH, "todo", "--help"], { cwd: root, encoding: "utf8" });
+      } catch (e) {
+        const err = e as { status: number; stderr: string };
+        exitCode = err.status;
+        stderr = err.stderr;
+      }
+      expect(exitCode).toBe(1);
+      expect(stderr).toBe("archstrict: unknown option '--help'\ndo: archstrict todo [--json]\n");
+      expect(existsSync(join(root, "archstrict.todo.json"))).toBe(false);
+
+      exitCode = 0;
+      stderr = "";
+      try {
+        execFileSync("node", [CLI_PATH, "todo", "--dry-run"], { cwd: root, encoding: "utf8" });
+      } catch (e) {
+        const err = e as { status: number; stderr: string };
+        exitCode = err.status;
+        stderr = err.stderr;
+      }
+      expect(exitCode).toBe(1);
+      expect(stderr).toBe("archstrict: unknown option '--dry-run'\ndo: archstrict todo [--json]\n");
+      expect(existsSync(join(root, "archstrict.todo.json"))).toBe(false);
+
+      const first = JSON.parse(execFileSync("node", [CLI_PATH, "todo", "--json"], { cwd: root, encoding: "utf8" }));
+      expect(first).toEqual({ firstRun: true, added: 1, pruned: 0 });
+      const todoPath = join(root, "archstrict.todo.json");
+      const frozen = readFileSync(todoPath, "utf8");
+      for (const args of [["--help"], ["--dry-run"], ["--json", "--dry-run"], ["unexpected.ts"]]) {
+        expect(() => execFileSync("node", [CLI_PATH, "todo", ...args], { cwd: root, stdio: "pipe" })).toThrow();
+        expect(readFileSync(todoPath, "utf8")).toBe(frozen);
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("todo --json prints a structured TodoResult, on the first run and on a later prune-only run", () => {
     const root = mkdtempSync(join(tmpdir(), "archstrict-cli-todo-json-"));
     try {

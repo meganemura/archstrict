@@ -14,6 +14,10 @@ may change commands, flags, config, or output shape. The version entry will desc
 - `archstrict check` prints each footer `do:` once, with the next action first. The `archstrict todo` line says that the first run freezes once. `--json` `nextSteps` lists those same lines.
 - An unknown `--rule` or `--module` value sets `do:` to the same `archstrict check` command without that filter. With no git history, `archstrict hotspots` points `do:` at the module with the most active violations, or says to run inside a git repository. `archstrict init --json` says to add each declare line to `declaredModules`.
 
+### Fixed
+
+- `archstrict todo` accepted any argument and ran its first-run freeze for `todo --help` or `todo --dry-run`, writing `archstrict.todo.json`. An argument other than `--json` is now an error (`unknown option`), and nothing is written.
+
 ## 0.3.0 (2026-10-10)
 
 ### Changed
