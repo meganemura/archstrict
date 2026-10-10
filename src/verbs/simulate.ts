@@ -11,9 +11,9 @@ import { compilerDirname, compilerJoin, compilerResolve } from "../project-path.
 import { focusNoteLines, focusSkip, focusSkipNote, setFocusNotes } from "./focus-note.js";
 
 export type Change = { path: string; content: string | null };
-export type SimulateMode = "scoped" | "whole-project";
-export type SimulateResult = { mode: SimulateMode; added: AnyViolation[]; resolved: AnyViolation[]; unchangedCount: number };
-export type SimulateOptions = { wholeProject?: boolean };
+type SimulateMode = "scoped" | "whole-project";
+type SimulateResult = { mode: SimulateMode; added: AnyViolation[]; resolved: AnyViolation[]; unchangedCount: number };
+type SimulateOptions = { wholeProject?: boolean };
 
 // A proposed file can belong to a directory that does not exist yet.
 // realpathSync would throw for that file or directory. Resolve only the

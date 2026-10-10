@@ -146,7 +146,7 @@ export type TypeClosureInputs = {
   extraRoots?: readonly string[];
 };
 
-export type TypeClosureResult = {
+type TypeClosureResult = {
   files: string[];
 };
 
@@ -732,7 +732,7 @@ export function buildTypeClosure(inputs: TypeClosureInputs): TypeClosureResult {
   return { files: [...closure].sort() };
 }
 
-export type NamedDeclarationsResult = {
+type NamedDeclarationsResult = {
   keys: ReadonlySet<string>;
   // The augmentation guard needs the actual export-chain dependency set.
   // Reusing all analyzed files is refused because it discards scoped savings.

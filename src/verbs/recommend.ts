@@ -15,7 +15,7 @@ import { dominantByFiles, filePerModuleCluster } from "./map-shape.js";
 // a modules glob once init itself no longer does.
 import { freshRun, normalizeDirArg } from "./init.js";
 
-export type PatternProposal = {
+type PatternProposal = {
   pattern: string;
   // 0..1, the fraction of the pattern's own measured evidence that
   // supports it (a fully clean fit is 1) - the ranking key: at most 5
@@ -33,13 +33,13 @@ export type PatternProposal = {
   do: string;
 };
 
-export type MapNote = {
+type MapNote = {
   kind: "mega-module" | "file-per-module";
   evidence: string;
   do: string;
 };
 
-export type RecommendResult = {
+type RecommendResult = {
   modules: number;
   // Empty when the declared map is neither one giant module nor a flat
   // file-per-module inventory. Present either way, so a reader does not
@@ -57,9 +57,9 @@ export type RecommendResult = {
 // One file another module imports from a surface-less module, ranked by
 // how many distinct files import it - the file a surface proposal covers
 // first.
-export type SurfaceCandidate = { file: string; importers: number };
+type SurfaceCandidate = { file: string; importers: number };
 
-export type SurfaceProposal = {
+type SurfaceProposal = {
   module: string;
   // Every file with at least one real external importer, ranked densest
   // first - complete, not capped: JSON stays exact even though formatted

@@ -46,7 +46,7 @@ import { dominantByFiles } from "./map-shape.js";
 import { ReportError } from "../report-error.js";
 import { loadConfig } from "./check.js";
 
-export type InitResult = {
+type InitResult = {
   configPath: string;
   generatedPath: string;
   configWritten: boolean; // false when archstrict.config.ts already existed and was left alone
@@ -158,7 +158,7 @@ const TEST_FILE_EXCLUDE_CANDIDATES: readonly { label: string; root: string; nest
   { label: "__tests__/", root: "__tests__/**", nested: "**/__tests__/**" },
 ];
 
-export type TestFileExclude = {
+type TestFileExclude = {
   // The naming convention this entry matched, for stdout and the config
   // comment - never itself a glob passed to compileGlob.
   label: string;

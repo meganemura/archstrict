@@ -687,7 +687,7 @@ function isEffectivelyTypeOnlyExport(node: ts.ExportDeclaration): boolean {
 // changed without the other.
 const NON_TS_SOURCE_EXTENSIONS = [".js", ".mjs", ".cjs"] as const;
 
-export type ProjectTreeWalk = {
+type ProjectTreeWalk = {
   analyzedFiles: string[];
   nonTsSourceFileCount: number;
   resolvableFiles: string[];
@@ -1494,7 +1494,7 @@ function isTopLevelDeclaration(statement: ts.Statement): boolean {
     (ts.isImportEqualsDeclaration(statement) && !ts.isExternalModuleReference(statement.moduleReference));
 }
 
-export type GraphBuildOverrides = {
+type GraphBuildOverrides = {
   host?: ts.CompilerHost;
   oldProgram?: ts.Program;
   resolutionCache?: ts.ModuleResolutionCache;
@@ -1538,7 +1538,7 @@ export type GraphBuildOverrides = {
 // A file's own ambient and augmentation flags (walkFileImports' own header) -
 // exposed only for the edge cache and the focused rule 6 safety guard.
 // The public ModuleGraph shape does not expose these syntax details.
-export type PreparedModuleGraph = ModuleGraph & {
+type PreparedModuleGraph = ModuleGraph & {
   fileFlags: ReadonlyMap<string, {
     isScript: boolean;
     hasAmbientDeclarations: boolean;

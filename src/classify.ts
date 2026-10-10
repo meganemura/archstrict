@@ -19,8 +19,8 @@
 import { sep } from "node:path";
 import { ReportError } from "./report-error.js";
 
-export type ClassifyEntry = { glob: string; tags: readonly string[] };
-export type ClassifyByDirectoryName = { tagNamespace: string; names: readonly string[] };
+type ClassifyEntry = { glob: string; tags: readonly string[] };
+type ClassifyByDirectoryName = { tagNamespace: string; names: readonly string[] };
 
 // Converts one glob into a matcher plus its specificity. Supports `**`
 // (any number of path segments, including zero) and `*` (any characters

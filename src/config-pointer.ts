@@ -7,7 +7,7 @@ import { existsSync, readFileSync } from "node:fs";
 import ts from "typescript";
 import type { Config } from "./config.js";
 
-export type ConfigPointerRole = "fired" | "governs" | "edit-here";
+type ConfigPointerRole = "fired" | "governs" | "edit-here";
 
 export type ConfigPointer = {
   path: string;
@@ -24,8 +24,8 @@ export type ConfigLocator = {
   pointer(path: string, role: ConfigPointerRole): ConfigPointer;
 };
 
-export type PointerSpec = { pointer: string; role: ConfigPointerRole };
-export const CONFIG_POINTER_SPECS = Symbol("archstrict.config-pointer-specs");
+type PointerSpec = { pointer: string; role: ConfigPointerRole };
+const CONFIG_POINTER_SPECS = Symbol("archstrict.config-pointer-specs");
 
 export type UnlocatedViolation = {
   rule: string;

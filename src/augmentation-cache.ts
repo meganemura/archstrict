@@ -20,7 +20,7 @@ export type CachedAugmentationEntry = {
   specifiers: ModuleAugmentationSpecifier[];
 };
 
-export type AugmentationCache = {
+type AugmentationCache = {
   schema: typeof AUGMENTATION_CACHE_SCHEMA;
   archstrictVersion: string;
   files: Record<string, CachedAugmentationEntry>;

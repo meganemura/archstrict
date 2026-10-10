@@ -12,7 +12,7 @@ import type { Config } from "../config.js";
 import { DEFAULT_SURFACE, isEligibleSourceFile, toProjectRelativePosix } from "../module-graph.js";
 import { compilerDirname, compilerJoin, compilerRealpath, compilerResolve } from "../project-path.js";
 
-export type FocusSkip = "outside" | "excluded" | "unanalyzed";
+type FocusSkip = "outside" | "excluded" | "unanalyzed";
 
 // Precedence is fixed so two facts about one path cannot produce two notes.
 // Outside wins, because an exclude glob is not what kept the file out.

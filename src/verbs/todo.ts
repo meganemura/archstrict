@@ -39,7 +39,7 @@ function isFreezable(v: AnyViolation): v is Freezable {
   return "todoModule" in v;
 }
 
-export type TodoResult = {
+type TodoResult = {
   firstRun: boolean;
   added: number;
   pruned: number;

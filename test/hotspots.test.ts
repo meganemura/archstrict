@@ -9,7 +9,6 @@ import { describe, expect, test } from "vitest";
 import * as hegel from "@hegeldev/hegel";
 import * as gs from "@hegeldev/hegel/generators";
 import {
-  coChangeCount,
   formatHotspotsText,
   hotspots,
   summarizeCommitHistory,
@@ -245,16 +244,21 @@ test("without git history the leading do names the busiest module, or a git repo
     );
   }));
 
-test("co-change counts are symmetric and shares use each module's commit count", () =>
+// Independent count of commits that contain both modules.
+// Production history goes through summarizeCommitHistory, so this oracle stays in the test.
+function coChangeCount(commits: readonly (readonly string[])[], a: string, b: string): number {
+  let count = 0;
+  for (const commit of commits) {
+    const modules = new Set(commit);
+    if (modules.has(a) && modules.has(b)) count++;
+  }
+  return count;
+}
+
+test("co-change counts match an independent count and shares use each module's commit count", () =>
   hegel.test((tc) => {
     const commits = tc.draw(gs.arrays(gs.arrays(gs.sampledFrom([...MODULE_NAMES]), { unique: true, maxSize: 3 }), { maxSize: 30 }));
     const summary = summarizeCommitHistory([...MODULE_NAMES], commits.map((modules) => ({ modules: new Set(modules), linesByModule: new Map() })));
-    for (const a of MODULE_NAMES) {
-      for (const b of MODULE_NAMES) {
-        if (a === b) continue;
-        assert.equal(coChangeCount(commits, a, b), coChangeCount(commits, b, a));
-      }
-    }
     for (const pair of summary.pairs) {
       const count = coChangeCount(commits, pair.moduleA, pair.moduleB);
       assert.equal(pair.coChanges, count);

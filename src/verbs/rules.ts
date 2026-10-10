@@ -11,7 +11,7 @@ import { assertSequenceListsValue, formatPredicate, matchesPredicate, sequenceFo
 import { formatConfigPointerLines, loadConfig } from "./check.js";
 import { createConfigLocator, locateViolation, type LocatedViolation } from "../config-pointer.js";
 
-export type AllowDenyProjection = {
+type AllowDenyProjection = {
   source: string;
   targetNamespace: string;
   allow: string[] | undefined;
@@ -23,7 +23,7 @@ export type AllowDenyProjection = {
   because: string;
 };
 
-export type OrderProjection = {
+type OrderProjection = {
   tagNamespace: string;
   within: string | undefined;
   ownLayer: string;
@@ -34,7 +34,7 @@ export type OrderProjection = {
   because: string;
 };
 
-export type PointProjection = {
+type PointProjection = {
   identifier: string;
   forbiddenTo: string;
   edgeType: "value" | "type" | "both";

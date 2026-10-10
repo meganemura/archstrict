@@ -8,9 +8,9 @@ import { compileGlob } from "../classify.js";
 import { buildModuleGraphForRules, moduleForDeclaredFile, type ModuleGraph } from "../module-graph.js";
 import { applyTodo, loadConfig, readCurrentTodo, runRules } from "./check.js";
 
-export type RuleCounts = Record<string, number>;
+type RuleCounts = Record<string, number>;
 
-export type HotspotModule = {
+type HotspotModule = {
   name: string;
   commits: number;
   changedLines: number;
@@ -22,7 +22,7 @@ export type HotspotModule = {
   do: string;
 };
 
-export type HotspotPair = {
+type HotspotPair = {
   moduleA: string;
   moduleB: string;
   coChanges: number;
@@ -40,19 +40,10 @@ export type HotspotsResult = {
   pairs: HotspotPair[];
 };
 
-export type CommitModules = { modules: Set<string>; linesByModule: Map<string, number> };
+type CommitModules = { modules: Set<string>; linesByModule: Map<string, number> };
 
 function pairKey(a: string, b: string): string {
   return a < b ? `${a}\0${b}` : `${b}\0${a}`;
-}
-
-export function coChangeCount(commits: readonly (readonly string[])[], a: string, b: string): number {
-  let count = 0;
-  for (const commit of commits) {
-    const modules = new Set(commit);
-    if (modules.has(a) && modules.has(b)) count++;
-  }
-  return count;
 }
 
 export function summarizeCommitHistory(moduleNames: readonly string[], commits: readonly CommitModules[]) {

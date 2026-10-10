@@ -5,7 +5,7 @@ import ts from "typescript";
 import { buildModuleGraphForRules } from "../module-graph.js";
 import { loadConfig } from "./check.js";
 
-export type SearchMatch = {
+type SearchMatch = {
   module: string;
   surface: string;
   name: string;

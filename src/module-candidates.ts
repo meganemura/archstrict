@@ -16,7 +16,7 @@ import { moduleGlobBaseDir, moduleGlobList } from "./module-graph.js";
 
 // A file's project-relative path, POSIX-separated - the same shape
 // module-graph.ts's toProjectRelativePosix produces.
-export type CandidateGroup = {
+type CandidateGroup = {
   kind: "file" | "dir";
   // The group's own project-relative path: a directory's path for a "dir"
   // group, or the file's own path for a "file" group.
@@ -32,7 +32,7 @@ export type CandidateGroup = {
   fileCount: number;
 };
 
-export type DeclaredModuleEntry = { name: string; glob: string; surface?: string };
+type DeclaredModuleEntry = { name: string; glob: string; surface?: string };
 
 export type NamedCandidateGroup = CandidateGroup & {
   entry: DeclaredModuleEntry;

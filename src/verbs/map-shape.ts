@@ -10,13 +10,13 @@
 
 // 4/5, the same share check.ts uses for "most bypasses share one cause".
 // Integer math so a real fraction never rounds the wrong way.
-export const DOMINANT_SHARE_NUMERATOR = 4;
-export const DOMINANT_SHARE_DENOMINATOR = 5;
+const DOMINANT_SHARE_NUMERATOR = 4;
+const DOMINANT_SHARE_DENOMINATOR = 5;
 // Below this, a two-module sample project is not a mega-module, and a
 // handful of bypasses is not a freeze to warn about.
 export const DOMINANT_MIN_FILES = 8;
 export const DOMINANT_MIN_BYPASSES = 8;
-export const FILE_PER_MODULE_MIN = 4;
+const FILE_PER_MODULE_MIN = 4;
 
 export function shareAtLeast(
   part: number,
@@ -27,9 +27,9 @@ export function shareAtLeast(
   return total > 0 && part * denominator >= total * numerator;
 }
 
-export type FileCount = { name: string; files: number };
+type FileCount = { name: string; files: number };
 
-export type DominantFiles = { name: string; files: number; totalFiles: number };
+type DominantFiles = { name: string; files: number; totalFiles: number };
 
 // The module with the most files, when it holds at least 4/5 of them and
 // at least DOMINANT_MIN_FILES. A tie takes the name that sorts first, so
@@ -53,7 +53,7 @@ export function dominantByFiles(
   return { name: best.name, files: best.files, totalFiles };
 }
 
-export type DominantBypass = DominantFiles & { bypasses: number; totalBypasses: number };
+type DominantBypass = DominantFiles & { bypasses: number; totalBypasses: number };
 
 // The file-dominant module, when it also owns at least 4/5 of the
 // public-surface-bypass violations and at least DOMINANT_MIN_BYPASSES of
@@ -75,7 +75,7 @@ export function dominantBypassSentence(dominant: DominantBypass): string {
   return `${dominant.bypasses} of ${dominant.totalBypasses} public-surface-bypass violations target '${dominant.name}', which holds ${dominant.files} of ${dominant.totalFiles} analyzed files`;
 }
 
-export type FilePerModuleCluster = { parent: string; count: number; total: number };
+type FilePerModuleCluster = { parent: string; count: number; total: number };
 
 // Single-file modules gathered in one directory, when they are at least
 // 4/5 of the modules and at least FILE_PER_MODULE_MIN of them. Scattered

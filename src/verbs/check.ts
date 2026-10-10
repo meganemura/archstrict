@@ -61,7 +61,7 @@ import { focusNoteLines, focusSkip, focusSkipNote, setFocusNotes } from "./focus
 // violation (import-linter's own default for the same case is also an
 // error, not a silent pass). It has no todoModule of its own - freezing a
 // stale-todo finding would be circular.
-export type StaleTodoViolation = {
+type StaleTodoViolation = {
   rule: "stale-todo";
   path: string;
   line: number;
@@ -84,7 +84,7 @@ export type StaleTodoViolation = {
 // has any todo entries at all: staying clean means no debt, not debt
 // frozen at whatever existed when the module was added to that list. No
 // todoModule - this violation cannot itself be frozen away.
-export type CleanModuleHasTodoViolation = {
+type CleanModuleHasTodoViolation = {
   rule: "clean-module-has-todo";
   path: string;
   line: number;
@@ -94,7 +94,7 @@ export type CleanModuleHasTodoViolation = {
   do: string;
 };
 
-export type RawViolation =
+type RawViolation =
   | PublicSurfaceViolation
   | CycleViolation
   | UncoveredViolation
@@ -213,9 +213,9 @@ export type CheckResult = {
   };
 };
 
-export const NO_EDGES_SUMMARY =
+const NO_EDGES_SUMMARY =
   "this config freezes today's import graph, not a target architecture; no edges rule is configured yet";
-export const NO_EDGES_DO = [
+const NO_EDGES_DO = [
   "archstrict recommend",
   "archstrict hotspots",
   "read node_modules/archstrict/skills/archstrict/references/rearchitect.md",
@@ -440,7 +440,7 @@ function unresolvedSpecifierBreakdown(specifiers: string[]): { prefix: string; c
     .map(([prefix, count]) => ({ prefix, count }));
 }
 
-export type RunRulesOptions = {
+type RunRulesOptions = {
   configLocator?: ConfigLocator;
   // Set by check() when a `check <file>` run named a file that is not any
   // module's own surface file, and when a `check <dir>` names a directory
@@ -701,7 +701,7 @@ function isFreezable(v: AnyViolation): v is AnyViolation & { todoModule: string 
 // such a module's todo, which let existing entries sit there unnoticed
 // forever — the same shape packwerk's own `enforce_dependencies: strict`
 // refuses.
-export type ApplyTodoOptions = {
+type ApplyTodoOptions = {
   configLocator?: ConfigLocator;
   // check() sets this to ["type-leak"] on a `check <file>` run scoped to a
   // non-surface file, the same run that told runRules to skip rule 6
@@ -766,7 +766,7 @@ function entryTodoLocation(parsed: ParsedTodoFile, entry: TodoEntry): TodoLocati
 // todo-store.ts's own readTodoFile parses it once, and a per-violation or
 // per-module read would reparse the same file that many times on a
 // project with tens of thousands of violations.
-export type CurrentTodo = {
+type CurrentTodo = {
   parsed: ParsedTodoFile | undefined;
   entriesByModule: ReadonlyMap<string, TodoEntry[]>;
 };
@@ -932,7 +932,7 @@ export const CHECK_RULE_IDS = [
 type MissingCheckRuleId = Exclude<AnyViolation["rule"], (typeof CHECK_RULE_IDS)[number]>;
 const _checkRuleIdsCoverEveryRule: [MissingCheckRuleId] extends [never] ? true : never = true;
 
-export type CheckOptions = {
+type CheckOptions = {
   prove?: boolean;
   prover?: Prover;
   buildGraph?: (options: BuildOptions) => ModuleGraph;
@@ -1364,7 +1364,7 @@ function footerCommands(result: CheckResult): string[] {
   return commands;
 }
 
-export type ViolationGroup = { rule: string; moduleName: string; violations: AnyViolation[] };
+type ViolationGroup = { rule: string; moduleName: string; violations: AnyViolation[] };
 
 // Exported so a test can assert on the grouping itself: once the printed
 // text cuts a group's own line from view (CHECK_DETAIL_LINE_CAP), the count
@@ -1535,7 +1535,7 @@ function selectGroupedDetail(result: CheckResult): GroupedDetail {
   return { ordered, notes, shown: [], omitted: ordered, singleListed: [], singleOmitted: 0 };
 }
 
-export type GroupedToolGroup = {
+type GroupedToolGroup = {
   rule: string;
   module: string;
   count: number;
@@ -1543,7 +1543,7 @@ export type GroupedToolGroup = {
   do: string;
 };
 
-export type GroupedToolCheck = {
+type GroupedToolCheck = {
   violations: number;
   groupCount: number;
   groups: GroupedToolGroup[];

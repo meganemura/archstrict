@@ -27,9 +27,9 @@ import { relative } from "node:path";
 import { toTypeScriptPath } from "./project-path.js";
 import { declarationKey, sourceFileKey } from "./type-closure.js";
 
-export type Via = "inferred-return" | "generic-parameter" | "structural";
+type Via = "inferred-return" | "generic-parameter" | "structural";
 
-export type LeakFinding = {
+type LeakFinding = {
   exportedAs: string;
   via: Via;
   internalType: string;
@@ -85,12 +85,12 @@ function specifierOf(symbol: ts.Symbol): UnresolvedReference | undefined {
 // to. Boundary: this reports a fact about a real resolution failure - it
 // decides nothing about the closure, the round bound, or the fallback;
 // module-graph.ts's own `ensureProgram` owns all of that.
-export type UnresolvedReference = {
+type UnresolvedReference = {
   file: string;
   specifier: string;
   fromPosition: { line: number; column: number };
 };
-export type ReportUnresolvedReference = (ref: UnresolvedReference) => void;
+type ReportUnresolvedReference = (ref: UnresolvedReference) => void;
 
 function reportIfUnresolved(symbol: ts.Symbol, target: ts.Symbol, report: ReportUnresolvedReference | undefined): void {
   if (report === undefined || !isUnresolvedAliasTarget(target)) return;

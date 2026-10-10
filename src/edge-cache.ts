@@ -127,7 +127,7 @@ import { makeAbsolutePosix, makeProjectRelativePosix, type ProjectRelativePath }
 // Bumped whenever the on-disk shape (header or shard encoding) changes -
 // an old cache is then a silent miss (parseHeader rejects the unknown
 // schema number), never a crash on a shape this code no longer produces.
-export const CACHE_SCHEMA = 11;
+const CACHE_SCHEMA = 11;
 
 // Fixed, not derived from project size - see this module's own header.
 // module-graph.ts's own per-file loop marks a shard dirty by this same
@@ -183,7 +183,7 @@ export function resolutionKey(imp: Pick<ImportRecord, "specifier" | "mode">): st
   return `${imp.specifier}\u0000${imp.mode ?? ""}`;
 }
 
-export type ShardHeaderEntry = { file: string; hash: string };
+type ShardHeaderEntry = { file: string; hash: string };
 
 // The in-memory result of a successful read: every shard's own entries,
 // merged into one map keyed by each file's own absolute path - and the
