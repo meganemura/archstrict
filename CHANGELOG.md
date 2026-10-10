@@ -11,6 +11,7 @@ may change commands, flags, config, or output shape. The version entry will desc
 
 ### Changed
 
+- The CI test job runs `npm run dogfood:nukadoko` after `npm test`.
 - CI pins `actions/checkout` at v7.0.1 and `actions/setup-node` at v7.0.0, the same commits as the publish workflow. Each `setup-node` step sets `package-manager-cache: false`, so the job does not write an npm cache.
 - The TypeScript 7 probe job sets `continue-on-error: true`. A failed install or a version guard in that job stays visible on the job, and the workflow run stays successful.
 - Run `archstrict init` again after upgrading archstrict. `archstrict.types.ts` says to do that after an upgrade, and after adding, removing, or renaming a `declaredModules` entry.
