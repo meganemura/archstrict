@@ -5,6 +5,10 @@ may change commands, flags, config, or output shape. The version entry will desc
 
 ## Unreleased
 
+### Changed
+
+- `archstrict recommend` prints each pattern proposal's config fragment in text output, under that proposal's evidence. The `do:` line says to paste the fragment into `archstrict.config.ts` before `archstrict simulate`.
+
 ## 0.2.1 (2026-10-04)
 
 ### Fixed

@@ -392,11 +392,10 @@ test("text output stays within a bounded line budget on a 28-module project", as
   expect(result.patternProposals.length).toBeGreaterThan(0);
   expect(result.surfaceProposals.length).toBeGreaterThan(5); // more than the text cap, to exercise the "+N more" truncation
   const text = formatRecommendText(result);
-  // Under 60 lines is the design budget for this project shape: 5 pattern
-  // proposals plus a summarized public-entry-only line and a
-  // once-per-section (not once-per-module) set of surface do: lines.
+  // 109 lines is this fixture with one complete config fragment per shown
+  // proposal. The fragment stays complete because the reader pastes it.
   const lines = text.split("\n");
-  expect(lines.length).toBeLessThan(60);
+  expect(lines.length).toBe(109);
   // The three generic surface choices print once for the whole section,
   // not once per shown module, even though 5 modules are shown.
   expect(lines.filter(l => l.includes("add a barrel file")).length).toBe(1);
