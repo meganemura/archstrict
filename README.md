@@ -22,7 +22,7 @@ This puts a real `archstrict` binary at `node_modules/.bin/archstrict`. The edit
 
 - **The CLI** (`npm install -D archstrict`) runs `init`, `check`, `todo`, and the other verbs. It is the only piece that finds violations.
 - **The skill** (`skills/archstrict/`) teaches an agent to read a violation report and to change the config. A host loads it from its own skill directory, not from `node_modules/`.
-- **The AGENTS.md section** (`archstrict agents`) tells any agent that reads `AGENTS.md` to run `archstrict rules <path>` before it creates a file or adds an import, and `archstrict check` after it edits. It is a few lines of project instructions, not the skill.
+- **The AGENTS.md section** (`archstrict agents`) tells any agent that reads `AGENTS.md` to run `npx archstrict rules <path>` before it creates a file or adds an import, and `npx archstrict check` after it edits. It is a few lines of project instructions, not the skill.
 - **The edit hooks** (Claude Code only) run around each edit. The PreToolUse hook previews the change, and the PostToolUse hook runs `archstrict check <file>` and returns any violation into the agent's context. See [hook.md](skills/archstrict/references/hook.md).
 - **The MCP server** (Claude Code plugin) gives the agent `check`, `rules`, `search`, and `simulate` as tools. When the project has no archstrict install, that server connects with no tools and tells the agent to run `npm install -D archstrict`.
 - **CI** runs `archstrict check` on every change, whichever host made it.

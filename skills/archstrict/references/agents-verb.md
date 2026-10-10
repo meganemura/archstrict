@@ -1,7 +1,7 @@
 # Install agent instructions
 
 Run `archstrict agents [--json]` from the project root to add the archstrict section to `AGENTS.md`.
-The section tells agents to run `archstrict rules <path>` before creating files or adding imports, and `archstrict check` after editing.
+The section tells agents to run `npx archstrict rules <path>` before creating files or adding imports, and `npx archstrict check` after editing.
 It applies only when `archstrict.config.ts` exists.
 The command itself does not require or read that config.
 

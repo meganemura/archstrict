@@ -24,7 +24,7 @@ Node.js 22 以降が要る。
 
 - **CLI**(`npm install -D archstrict`)は `init`、`check`、`todo` などの verb を実行する。violation を見つけるのはこの部品だけである。
 - **skill**(`skills/archstrict/`)は、violation の報告の読み方と config の変え方を agent に教える。host は `node_modules/` からではなく、host 自身の skill directory から読み込む。
-- **AGENTS.md の節**(`archstrict agents`)は、`AGENTS.md` を読むすべての agent に、file を作る前や import を足す前に `archstrict rules <path>` を実行し、編集の後に `archstrict check` を実行するよう指示する。数行のプロジェクト向け指示であり、skill ではない。
+- **AGENTS.md の節**(`archstrict agents`)は、`AGENTS.md` を読むすべての agent に、file を作る前や import を足す前に `npx archstrict rules <path>` を実行し、編集の後に `npx archstrict check` を実行するよう指示する。数行のプロジェクト向け指示であり、skill ではない。
 - **編集 hook**(Claude Code 専用)は編集ごとに動く。PreToolUse hook は変更を事前に確かめ、PostToolUse hook は `archstrict check <file>` を実行して violation を agent の文脈に返す。[hook.md](skills/archstrict/references/hook.md) を参照。
 - **MCP server**(Claude Code の plugin)は、`check`、`rules`、`search`、`simulate` を tool として agent に渡す。プロジェクトに archstrict が導入されていないとき、この server は tool なしで接続し、agent に `npm install -D archstrict` の実行を伝える。
 - **CI** は、どの host が加えた変更にも `archstrict check` を実行する。
