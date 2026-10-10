@@ -5,6 +5,10 @@ may change commands, flags, config, or output shape. The version entry will desc
 
 ## Unreleased
 
+### Fixed
+
+- The Prisma and VS Code config converters now start when their own path contains a space. The run-as-main check compared a URL pathname with `process.argv[1]`. A pathname percent-encodes a space, and on Windows it starts with `/C:/`. The check uses `fileURLToPath`.
+
 ## 0.2.1 (2026-10-04)
 
 ### Fixed
