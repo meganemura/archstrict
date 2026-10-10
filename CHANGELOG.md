@@ -5,6 +5,12 @@ may change commands, flags, config, or output shape. The version entry will desc
 
 ## Unreleased
 
+### Changed
+
+- The MCP check tool appends a ReportError `do:` line to the tool error.
+- Each MCP input property has one sentence. Simulate content is the full file text, or null to delete the file. Check and rules paths are project-relative, and rules accepts a path that does not exist yet.
+- When archstrict is not installed, the plugin MCP stub says so in its initialize instructions and names `npm install -D archstrict`. The README states that case.
+
 ## 0.2.1 (2026-10-04)
 
 ### Fixed

@@ -57,7 +57,14 @@ if (typeof imported?.startArchstrictMcpServer === "function") {
       let result;
       switch (method) {
         case "initialize":
-          result = { protocolVersion: PROTOCOL_VERSION, capabilities: { tools: {} }, serverInfo: { name: "archstrict", version: "0.0.0" } };
+          // An empty tool list does not say why the tools are missing.
+          // The install command is the next action for that client.
+          result = {
+            protocolVersion: PROTOCOL_VERSION,
+            capabilities: { tools: {} },
+            serverInfo: { name: "archstrict", version: "0.0.0" },
+            instructions: "archstrict is not installed in the project root, and `npm install -D archstrict` adds the tools.",
+          };
           break;
         case "tools/list": result = { tools: [] }; break;
         case "ping": result = {}; break;

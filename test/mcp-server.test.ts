@@ -64,11 +64,14 @@ test("lists exactly four tools with their full input schemas", () => project(asy
   const result = await client.listTools();
   expect(result.tools.map(tool => tool.name)).toEqual(names);
   expect(result.tools.map(tool => tool.inputSchema)).toEqual([
-    { type: "object", properties: { file: { type: "string" } }, additionalProperties: false },
-    { type: "object", properties: { path: { type: "string" } }, required: ["path"], additionalProperties: false },
-    { type: "object", properties: { query: { type: "string" } }, required: ["query"], additionalProperties: false },
-    { type: "object", properties: { changes: { type: "array", items: {
-      type: "object", properties: { path: { type: "string" }, content: { type: ["string", "null"] } },
+    { type: "object", properties: { file: { type: "string", description: "A project-relative path that limits the report to that file." } }, additionalProperties: false },
+    { type: "object", properties: { path: { type: "string", description: "A project-relative path, including a path that does not exist yet." } }, required: ["path"], additionalProperties: false },
+    { type: "object", properties: { query: { type: "string", description: "The public export name to search for." } }, required: ["query"], additionalProperties: false },
+    { type: "object", properties: { changes: { type: "array", description: "The proposed file changes to preview in memory.", items: {
+      type: "object", properties: {
+        path: { type: "string", description: "A project-relative path of the proposed file." },
+        content: { type: ["string", "null"], description: "The full file text, not a patch, or null to delete the file." },
+      },
       required: ["path", "content"], additionalProperties: false,
     } } }, required: ["changes"], additionalProperties: false },
   ]);
@@ -127,6 +130,18 @@ test.each([
   ["simulate", { changes: [{ path: "src/app/index.ts" }] }, "content must be a string or null"],
 ] as const)("%s reports invalid input %j as a tool error", (name, args, message) => project(async (_root, client) => {
   expect(await call(client, name, args)).toEqual({ isError: true, content: [{ type: "text", text: message }] });
+}));
+
+test("a schemaVersion error includes the do line", () => project(async (root, client) => {
+  put(root, "archstrict.config.ts", "export default { schemaVersion: 2, declaredModules: [], because: 'test' };\n");
+  const configPath = join(root, "archstrict.config.ts");
+  expect(await call(client, "check")).toEqual({
+    isError: true,
+    content: [{
+      type: "text",
+      text: `${configPath} schemaVersion 2 is not supported; this archstrict reads schemaVersion 1\ndo: set schemaVersion to 1 in ${configPath}, then run archstrict check`,
+    }],
+  });
 }));
 
 test("a real verb error remains a tool execution error", () => project(async (root, client) => {

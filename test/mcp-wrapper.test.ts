@@ -80,6 +80,7 @@ test("an absent project environment falls back to the working directory", () => 
 test("an empty consumer connects successfully with zero tools", () => fixture(async root => {
   await connected(root, root, async client => {
     expect(client.getServerVersion()).toEqual({ name: "archstrict", version: "0.0.0" });
+    expect(client.getInstructions()).toBe("archstrict is not installed in the project root, and `npm install -D archstrict` adds the tools.");
     expect(await client.listTools()).toEqual({ tools: [] });
     expect(await client.ping()).toEqual({});
   });
@@ -99,7 +100,7 @@ test("the fallback ignores malformed lines and notifications and reports unknown
   expect(result.status, result.stderr).toBe(0);
   expect(result.stderr).toBe("");
   expect(result.stdout.trim().split("\n").map(line => JSON.parse(line))).toEqual([
-    { jsonrpc: "2.0", id: 0, result: { protocolVersion: "2025-11-25", capabilities: { tools: {} }, serverInfo: { name: "archstrict", version: "0.0.0" } } },
+    { jsonrpc: "2.0", id: 0, result: { protocolVersion: "2025-11-25", capabilities: { tools: {} }, serverInfo: { name: "archstrict", version: "0.0.0" }, instructions: "archstrict is not installed in the project root, and `npm install -D archstrict` adds the tools." } },
     { jsonrpc: "2.0", id: 1, result: { tools: [] } },
     { jsonrpc: "2.0", id: "ping", result: {} },
     { jsonrpc: "2.0", id: 2, error: { code: -32601, message: "Method not found" } },
