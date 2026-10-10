@@ -3,6 +3,12 @@
 The format follows Keep a Changelog, and the versions follow SemVer. Before 1.0, a minor version
 may change commands, flags, config, or output shape. The version entry will describe each change.
 
+## Unreleased
+
+### Changed
+
+- `archstrict check` prints each footer `do:` once, with the next action first. The `archstrict todo` line says that the first run freezes once. `--json` `nextSteps` lists those same lines.
+
 ## 0.3.0 (2026-10-10)
 
 ### Changed

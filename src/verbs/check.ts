@@ -1257,7 +1257,15 @@ export async function check(projectRoot: string, focusFile?: string, options: Ch
     );
     if (dominant !== undefined) focused.dominantModule = dominant;
   }
-  return applyFilters(focused, options);
+  const filtered = applyFilters(focused, options);
+  // `nextSteps.do` is the footer text. Build it after filtering, so a
+  // narrowed result does not keep a `todo` line for violations the filter
+  // removed. `footerCommands` reads the presence of `nextSteps`, not its
+  // previous `do` list.
+  if (filtered.nextSteps !== undefined) {
+    filtered.nextSteps = { summary: filtered.nextSteps.summary, do: footerCommands(filtered) };
+  }
+  return filtered;
 }
 
 // The output must always carry: rule id, path:line:col, evidence, because,
@@ -1310,26 +1318,86 @@ function dominantModuleLines(result: CheckResult): string[] {
   if (dominant === undefined) return [];
   return [
     `note: ${dominantBypassSentence(dominant)}. Freezing them records one bucket, and hotspots then report one score.`,
-    `do: split '${dominant.name}' into directories that change together before archstrict todo`,
-    "do: archstrict recommend",
   ];
 }
 
-function surfaceLessNote(result: CheckResult): string[] {
+function surfaceLessBypassCounts(result: CheckResult): { missingCount: number; bypasses: number } {
   const missing = new Set(result.modulesWithoutSurfaceNames);
   const bypasses = result.violations.filter((violation) => violation.rule === "public-surface-bypass");
   const missingCount = bypasses.filter((violation) =>
     "todoModule" in violation && violation.todoModule !== undefined && missing.has(violation.todoModule)).length;
-  if (bypasses.length === 0 || missingCount / bypasses.length < SURFACE_LESS_NOTE_THRESHOLD) return [];
+  return { missingCount, bypasses: bypasses.length };
+}
+
+function isSurfaceLessMajority(result: CheckResult): boolean {
+  const { missingCount, bypasses } = surfaceLessBypassCounts(result);
+  return bypasses > 0 && missingCount / bypasses >= SURFACE_LESS_NOTE_THRESHOLD;
+}
+
+function surfaceLessNote(result: CheckResult): string[] {
+  const { missingCount, bypasses } = surfaceLessBypassCounts(result);
+  if (!isSurfaceLessMajority(result)) return [];
   return [
-    `note: ${missingCount} of ${bypasses.length} public-surface-bypass violations target modules without a public surface`,
-    "do: archstrict todo # freeze them for now",
-    // `archstrict recommend --json` now proposes a ranked surface per
-    // surface-less module directly from the real import graph
-    // (`surfaceProposals`), instead of sending the reader to config.md to
-    // guess one by hand.
-    "do: archstrict recommend --json # read surfaceProposals for a ranked surface per module, from its own real importers",
+    `note: ${missingCount} of ${bypasses} public-surface-bypass violations target modules without a public surface`,
   ];
+}
+
+// One command, one footer line. `archstrict todo` and `archstrict recommend`
+// used to appear twice, once in the note and again after the counts, so the
+// second copy hid that `todo` freezes only on its first run.
+const TODO_FOOTER = "archstrict todo (the first run freezes once)";
+// `recommend --json` names `surfaceProposals`, the ranked surface the graph
+// already computed. A plain `archstrict recommend` beside it is the same command.
+const SURFACE_RECOMMEND_FOOTER =
+  "archstrict recommend --json # read surfaceProposals for a ranked surface per module, from its own real importers";
+const UNCOVERED_FOOTER =
+  "add each uncovered-module file to declaredModules or exclude in archstrict.config.ts, then run archstrict check";
+
+function footerCommandKey(command: string): string {
+  if (command.startsWith("archstrict todo")) return "todo";
+  if (command.startsWith("archstrict recommend")) return "recommend";
+  if (command.startsWith("archstrict hotspots")) return "hotspots";
+  if (command.startsWith("split ")) return "split";
+  if (command.startsWith("add each uncovered-module")) return "uncovered";
+  if (command.startsWith("read ")) return "read";
+  return command;
+}
+
+function hasFreezableViolation(result: CheckResult): boolean {
+  return result.violations.some((violation) => violation.rule !== "config-meaning" && !violation.frozen);
+}
+
+// The next action is first. A reader acts on the first `do:` line, and a
+// later copy of the same command is a second instruction for one step.
+function footerCommands(result: CheckResult): string[] {
+  const commands: string[] = [];
+  const seen = new Set<string>();
+  const add = (command: string) => {
+    const key = footerCommandKey(command);
+    if (seen.has(key)) return;
+    seen.add(key);
+    commands.push(command);
+  };
+
+  // An uncovered file has no module to freeze it into. `todo` cannot be
+  // the next action: its first run would freeze every other violation
+  // and still leave this file uncovered.
+  if (result.violations.some((violation) => violation.rule === "uncovered-module")) {
+    add(UNCOVERED_FOOTER);
+  } else if (result.dominantModule !== undefined && hasFreezableViolation(result)) {
+    add(`split module '${result.dominantModule.name}' before archstrict todo`);
+  } else if (hasFreezableViolation(result)) {
+    add(TODO_FOOTER);
+  }
+
+  if (result.dominantModule === undefined && isSurfaceLessMajority(result)) {
+    add(SURFACE_RECOMMEND_FOOTER);
+  }
+
+  if (result.nextSteps !== undefined) {
+    for (const step of NO_EDGES_DO) add(step);
+  }
+  return commands;
 }
 
 export type ViolationGroup = { rule: string; moduleName: string; violations: AnyViolation[] };
@@ -1525,28 +1593,11 @@ export function formatText(result: CheckResult): string {
     : `type leaks: ${result.typeLeaks}`);
   lines.push(`todo: ${result.todo}`);
   for (const note of result.notes ?? []) lines.push(`note: ${note}`);
-  // Before the finding's own do: line, so the last line stays the one
-  // concrete action for this run's findings.
+  // The summary stays with the no-edges case. Its `do:` lines are the
+  // footer list, so text and `nextSteps` cannot drift apart.
   if (result.nextSteps !== undefined) {
     lines.push(`summary: ${result.nextSteps.summary}`);
-    for (const step of result.nextSteps.do) lines.push(`do: ${step}`);
   }
-  // A do: line only when there is a concrete next action - a clean
-  // check has none, and telling the reader to re-run the command that
-  // just produced this clean result is circular, unlike every other
-  // do: this tool ever prints (each names the one thing to actually
-  // do about a real finding). While any uncovered-module violation
-  // exists, `archstrict todo` would be circular too: todo's first run
-  // freezes every OTHER freezable violation, and a file matching no
-  // declared module can never be frozen into a module's own todo (it
-  // has no module to freeze it into) - so the fix is to cover the file
-  // first, not to run todo.
-  if (result.violations.some((v) => v.rule === "uncovered-module")) {
-    lines.push(`do: add each uncovered-module file to declaredModules or exclude in archstrict.config.ts, then run archstrict check`);
-  } else if (result.dominantModule !== undefined && result.violations.some((v) => v.rule !== "config-meaning" && !v.frozen)) {
-    lines.push(`do: split module '${result.dominantModule.name}' before archstrict todo`);
-  } else if (result.violations.some((v) => v.rule !== "config-meaning" && !v.frozen)) {
-    lines.push(`do: archstrict todo`);
-  }
+  for (const command of footerCommands(result)) lines.push(`do: ${command}`);
   return lines.join("\n") + "\n";
 }

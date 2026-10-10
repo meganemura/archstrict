@@ -568,7 +568,12 @@ describe("check", () => {
       expect(text).toContain("[public-surface-bypass]");
       expect(text).toContain("because:");
       expect(text).toContain("config:");
-      expect(text.trim().split("\n").at(-1)).toBe("do: archstrict todo");
+      expect(text.split("\n").filter((line) => line.startsWith("do: "))).toEqual([
+        "do: archstrict todo (the first run freezes once)",
+        "do: archstrict recommend --json # read surfaceProposals for a ranked surface per module, from its own real importers",
+        "do: archstrict hotspots",
+        "do: read node_modules/archstrict/skills/archstrict/references/rearchitect.md",
+      ]);
 
       // The JSON shape is the contract: pinned against a
       // hand-written expected object, not a snapshot, so a shape change
@@ -592,7 +597,12 @@ describe("check", () => {
         edgeRuleCoverage: [],
         nextSteps: {
           summary: "this config freezes today's import graph, not a target architecture; no edges rule is configured yet",
-          do: ["archstrict recommend", "archstrict hotspots", "read node_modules/archstrict/skills/archstrict/references/rearchitect.md"],
+          do: [
+            "archstrict todo (the first run freezes once)",
+            "archstrict recommend --json # read surfaceProposals for a ranked surface per module, from its own real importers",
+            "archstrict hotspots",
+            "read node_modules/archstrict/skills/archstrict/references/rearchitect.md",
+          ],
         },
         violations: [
           {
@@ -725,12 +735,14 @@ describe("check", () => {
       const text = formatText(result);
       expect(text).toContain("not covered by any declared module: 1");
       expect(text).not.toContain("modules glob");
-      // `archstrict todo` could never freeze this violation away (an
-      // uncovered file has no module of its own to freeze it into), so
-      // the footer names the real fix instead of the usual command.
-      expect(text.trim().split("\n").at(-1)).toBe(
+      // An uncovered file has no module to freeze it into, so the first
+      // footer command covers the file. `todo` is absent.
+      expect(text.split("\n").filter((line) => line.startsWith("do: "))).toEqual([
         "do: add each uncovered-module file to declaredModules or exclude in archstrict.config.ts, then run archstrict check",
-      );
+        "do: archstrict recommend",
+        "do: archstrict hotspots",
+        "do: read node_modules/archstrict/skills/archstrict/references/rearchitect.md",
+      ]);
     });
   });
 

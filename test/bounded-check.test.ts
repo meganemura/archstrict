@@ -111,7 +111,7 @@ describe("bounded check text", () => {
       "unsupported syntax: 0",
       "type leaks: 0",
       "todo: 0",
-      "do: archstrict todo",
+      "do: archstrict todo (the first run freezes once)",
       "",
     ].join("\n"));
   });
@@ -141,7 +141,7 @@ describe("bounded check text", () => {
       "unsupported syntax: 0",
       "type leaks: 0",
       "todo: 0",
-      "do: archstrict todo",
+      "do: archstrict todo (the first run freezes once)",
       "",
     ].join("\n"));
   });
@@ -188,7 +188,7 @@ describe("bounded check text", () => {
       "unsupported syntax: 0",
       "type leaks: 0",
       "todo: 0",
-      "do: archstrict todo",
+      "do: archstrict todo (the first run freezes once)",
       "",
     ].join("\n"));
   });
@@ -203,10 +203,8 @@ describe("bounded check text", () => {
     expect(formatText(result(violations, ["shared"]))).toBe([
       "violations: 21 in 1 group",
       "note: 21 of 21 public-surface-bypass violations target modules without a public surface",
-      "do: archstrict todo # freeze them for now",
-      "do: archstrict recommend --json # read surfaceProposals for a ranked surface per module, from its own real importers",
-      ...Array.from({ length: 10 }, () => SINGLE_VIOLATION_BLOCK).flat(),
-      "violations omitted: 11",
+      ...Array.from({ length: 11 }, () => SINGLE_VIOLATION_BLOCK).flat(),
+      "violations omitted: 10",
       "do: archstrict check --rule public-surface-bypass --module shared --json",
       "modules: 1",
       "modules without a public surface: 1",
@@ -216,7 +214,8 @@ describe("bounded check text", () => {
       "unsupported syntax: 0",
       "type leaks: 0",
       "todo: 0",
-      "do: archstrict todo",
+      "do: archstrict todo (the first run freezes once)",
+      "do: archstrict recommend --json # read surfaceProposals for a ranked surface per module, from its own real importers",
       "",
     ].join("\n"));
   });
@@ -246,6 +245,14 @@ describe("bounded check text", () => {
       const text = formatText(result(violations));
       const details = detailLines(text);
       expect(details.length).toBeLessThanOrEqual(CHECK_DETAIL_LINE_CAP);
+
+      const footer = text.split("\n").filter((line) => line.startsWith("do: archstrict todo") || line.startsWith("do: archstrict recommend"));
+      const todoLines = footer.filter((line) => line.startsWith("do: archstrict todo"));
+      expect(todoLines.length).toBeLessThanOrEqual(1);
+      if (todoLines.length === 1) {
+        expect(todoLines[0]).toBe("do: archstrict todo (the first run freezes once)");
+      }
+      expect(footer.filter((line) => line.startsWith("do: archstrict recommend")).length).toBeLessThanOrEqual(1);
 
       for (const line of details.filter((item) => item.trimStart().startsWith("do: archstrict check"))) {
         const argv = line.trim().slice("do: archstrict ".length).split(" ");
@@ -314,8 +321,6 @@ describe("check filters", () => {
       // it, so the note fires on this narrower result too: it reads
       // whatever CheckResult formatText is given, filtered or not.
       "note: 1 of 1 public-surface-bypass violations target modules without a public surface",
-      "do: archstrict todo # freeze them for now",
-      "do: archstrict recommend --json # read surfaceProposals for a ranked surface per module, from its own real importers",
       "modules: 3",
       "modules without a public surface: 3",
       "edges: 2",
@@ -325,16 +330,27 @@ describe("check filters", () => {
       "type leaks: 0",
       "todo: 0",
       "summary: this config freezes today's import graph, not a target architecture; no edges rule is configured yet",
-      "do: archstrict recommend",
+      "do: archstrict todo (the first run freezes once)",
+      "do: archstrict recommend --json # read surfaceProposals for a ranked surface per module, from its own real importers",
       "do: archstrict hotspots",
       "do: read node_modules/archstrict/skills/archstrict/references/rearchitect.md",
-      "do: archstrict todo",
       "",
     ].join("\n"));
 
     const empty = failedCli(root, ["check", "--rule", "cycle", "--json"]);
     expect(empty.status).toBe(0);
-    expect(JSON.parse(empty.stdout)).toEqual({ ...fullResult, violations: [] });
+    expect(JSON.parse(empty.stdout)).toEqual({
+      ...fullResult,
+      violations: [],
+      nextSteps: {
+        summary: fullResult.nextSteps?.summary,
+        do: [
+          "archstrict recommend",
+          "archstrict hotspots",
+          "read node_modules/archstrict/skills/archstrict/references/rearchitect.md",
+        ],
+      },
+    });
   }));
 
   test("unknown filters list every valid value in the error message, with a runnable example do command", () => filteredProject((root) => {

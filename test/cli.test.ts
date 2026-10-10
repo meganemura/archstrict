@@ -105,7 +105,12 @@ describe("cli", () => {
       }
       expect(exitCode).toBe(1);
       expect(out).toContain("[public-surface-bypass]");
-      expect(out.trim().split("\n").at(-1)).toBe("do: archstrict todo");
+      expect(out.split("\n").filter((line) => line.startsWith("do: "))).toEqual([
+        "do: archstrict todo (the first run freezes once)",
+        "do: archstrict recommend --json # read surfaceProposals for a ranked surface per module, from its own real importers",
+        "do: archstrict hotspots",
+        "do: read node_modules/archstrict/skills/archstrict/references/rearchitect.md",
+      ]);
 
       let jsonOut = "";
       try {
