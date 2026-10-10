@@ -52,9 +52,12 @@ describe("declaredModules[].surface as an array of globs", () => {
       // both are configured surface entries; only internal.ts does.
       expect(violations).toHaveLength(1);
       expect(violations[0]!.evidence).toContain("'../server/internal.js'");
-      // Plural display names both real entry points, not one arbitrarily.
+      // Evidence still names every configured entry. The do names the
+      // files that exist, in path order, and the file the import reached.
       expect(violations[0]!.evidence).toContain("index.ts, http.ts");
-      expect(violations[0]!.do).toContain("server/index.ts, server/http.ts");
+      expect(violations[0]!.do).toBe(
+        "import from src/server/http.ts, src/server/index.ts instead of src/server/internal.ts, adding the export there first if it is missing",
+      );
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -81,7 +84,9 @@ describe("declaredModules[].surface as an array of globs", () => {
 
       const violations = checkPublicSurfaceBypass(graph);
       expect(violations).toHaveLength(1);
-      expect(violations[0]!.do).toBe("add a index.ts to app/ naming what it exports");
+      expect(violations[0]!.do).toBe(
+        "add src/app/index.ts that re-exports what other modules use and import it instead of src/app/internal.ts, or set surface: \"internal.ts\" on 'app' in archstrict.config.ts",
+      );
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

@@ -5,6 +5,10 @@ may change commands, flags, config, or output shape. The version entry will desc
 
 ## Unreleased
 
+### Changed
+
+- A `public-surface-bypass` `do:` is built from paths that exist. When a surface file is present, it names that file and the imported file, and says to add the export there first if it is missing. When none is present, it names the surface file to add (`index.ts` when that name is configured) and the imported file, and offers `surface: "<file>"` on that module as the other fix. A single-file module with no surface file still says to set `surface` to that file.
+
 ## 0.2.1 (2026-10-04)
 
 ### Fixed

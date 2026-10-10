@@ -87,17 +87,7 @@ export function checkPublicSurfaceBypass(graph: ModuleGraph, focus?: string): Vi
     if (targetModule.surfaceFiles.includes(edge.resolvedFile)) continue; // reached the public surface itself
     if (isExemptedByFriend(edge, targetModule, graph.relativePath)) continue;
 
-    violations.push(
-      violationFor(
-        edge,
-        targetModule.name,
-        targetModule.surfaceFiles,
-        targetModule.surfaceName,
-        // A file module has nowhere to "add a index.ts". The relative path
-        // is the file the glob already names, so the fix can point at it.
-        targetModule.rootIsFile ? graph.relativePath(targetModule.dir) : undefined,
-      ),
-    );
+    violations.push(violationFor(edge, targetModule, graph.relativePath));
   }
   // `graph.crossModuleEdges` follows the edge build's own walk order
   // (rootNames order - a directory scan, not a promise about reading
@@ -110,38 +100,20 @@ export function checkPublicSurfaceBypass(graph: ModuleGraph, focus?: string): Vi
     (a.path < b.path ? -1 : a.path > b.path ? 1 : 0) || a.line - b.line || a.column - b.column);
 }
 
-function violationFor(
-  edge: Edge,
-  targetModuleName: string,
-  surfaceFiles: readonly string[],
-  surface: string | readonly string[],
-  // Set when the module root is a file. Undefined for a directory module,
-  // whose remediation still names `<module>/<surface>`.
-  fileModuleRel: string | undefined,
-): Violation {
-  const surfaceList = Array.isArray(surface) ? surface : [surface as string];
+function violationFor(edge: Edge, targetModule: Module, relativePath: ProjectRelativePath): Violation {
+  const surfaceList = Array.isArray(targetModule.surfaceName)
+    ? [...targetModule.surfaceName]
+    : [targetModule.surfaceName];
   // Singular reads exactly as before (existing messages, unchanged);
-  // plural names every real, configured entry point instead of picking
-  // one arbitrarily.
+  // plural names every configured entry point instead of picking one
+  // arbitrarily. Evidence still names the configuration. The do below
+  // names files, because a configured name is not a path that exists.
   const surfaceDisplay = surfaceList.join(", ");
-  const addArticle = surfaceList.length === 1 ? "a" : "one of";
-  const importTargets = surfaceList.map((s) => `${targetModuleName}/${s}`).join(", ");
 
   const evidence =
-    surfaceFiles.length === 0
-      ? `'${edge.specifier}' resolved to module '${targetModuleName}', which has no ${surfaceDisplay}`
-      : `'${edge.specifier}' resolved to a file inside module '${targetModuleName}' other than its ${surfaceDisplay}`;
-  // `<module>/` is a directory. A glob that names one file has no such
-  // directory, so the fix names that file instead of telling the reader
-  // to add a surface file inside the module name.
-  const doText =
-    fileModuleRel !== undefined
-      ? surfaceFiles.length === 0
-        ? `set surface on '${targetModuleName}' to match ${fileModuleRel}, or stop importing it; this module is that file, not a directory`
-        : `import from ${fileModuleRel} instead, or add the needed export there`
-      : surfaceFiles.length === 0
-        ? `add ${addArticle} ${surfaceDisplay} to ${targetModuleName}/ naming what it exports`
-        : `import from ${importTargets} instead, or add the needed export there`;
+    targetModule.surfaceFiles.length === 0
+      ? `'${edge.specifier}' resolved to module '${targetModule.name}', which has no ${surfaceDisplay}`
+      : `'${edge.specifier}' resolved to a file inside module '${targetModule.name}' other than its ${surfaceDisplay}`;
 
   return {
     rule: "public-surface-bypass",
@@ -150,9 +122,56 @@ function violationFor(
     column: edge.fromPosition.column,
     evidence,
     because: BECAUSE,
-    do: doText,
-    todoModule: targetModuleName,
+    do: remediation(edge, targetModule, surfaceList, relativePath),
+    todoModule: targetModule.name,
     specifier: edge.specifier,
     target: edge.resolvedFile,
   };
+}
+
+// The do names files, so following one of its instructions removes this
+// violation. A configured name that is not on disk is not an import
+// target. When a surface file is present, retargeting the import and
+// exporting the symbol are both required, so they are one instruction.
+// When none is present, adding a surface file without retargeting the
+// import leaves the same edge in place, so that pair is one instruction.
+// Setting surface to the file the import already reaches is the other
+// instruction, and either one is enough. A file module has no directory
+// to add index.ts into, so that case still points at the file the glob
+// already names.
+function remediation(
+  edge: Edge,
+  targetModule: Module,
+  surfaceList: readonly string[],
+  relativePath: ProjectRelativePath,
+): string {
+  const targetRel = relativePath(edge.resolvedFile);
+  if (targetModule.surfaceFiles.length > 0) {
+    const present = targetModule.surfaceFiles.map((file) => relativePath(file)).join(", ");
+    return `import from ${present} instead of ${targetRel}, adding the export there first if it is missing`;
+  }
+  if (targetModule.rootIsFile) {
+    return `set surface on '${targetModule.name}' to match ${relativePath(targetModule.dir)}, or stop importing it; this module is that file, not a directory`;
+  }
+  const moduleDir = relativePath(targetModule.dir);
+  const addedName = surfaceFileToAdd(surfaceList);
+  const addedPath = moduleDir === "" ? addedName : `${moduleDir}/${addedName}`;
+  const importedName = moduleRelative(moduleDir, targetRel);
+  return `add ${addedPath} that re-exports what other modules use and import it instead of ${targetRel}, or set surface: ${JSON.stringify(importedName)} on '${targetModule.name}' in archstrict.config.ts`;
+}
+
+// index.ts is the file the default surface already names, so the common
+// case tells the reader to add that file. A module that configured a
+// different surface file is told to add that file: adding index.ts would
+// not make the retargeted import legal.
+function surfaceFileToAdd(surfaceList: readonly string[]): string {
+  if (surfaceList.includes("index.ts")) return "index.ts";
+  const plain = surfaceList.find((name) => !/[*?{}[\]]/.test(name));
+  return plain ?? "index.ts";
+}
+
+function moduleRelative(moduleDir: string, targetRel: string): string {
+  if (moduleDir === "") return targetRel;
+  const prefix = `${moduleDir}/`;
+  return targetRel.startsWith(prefix) ? targetRel.slice(prefix.length) : targetRel;
 }
