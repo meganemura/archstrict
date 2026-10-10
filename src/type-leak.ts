@@ -12,8 +12,8 @@
 // happens to contain (the consumer names it from the package, not from
 // this project's own boundary - see isInternal's own boundary-check
 // comment for why this is scoped to the matched boundary root, not the
-// declaration's bare absolute path). Promoted from a spike
-// once its definition settled (three candidates converged on one general
+// declaration's bare absolute path). Promoted once its definition
+// settled (three candidates converged on one general
 // case: a structural leak, which subsumes an inferred-return-type leak and
 // a generic-parameter leak as named subsets, kept as their own `via` tag
 // rather than a separate rule each).
@@ -169,8 +169,8 @@ function isTypeReference(type: ts.Type): type is ts.TypeReference {
 // exports - the core algorithm, independent of archstrict's module
 // concept, so it can run both per-module (checkTypeLeaks below) and
 // directly against an arbitrary entry file (nukadoko's own src/index.ts,
-// in test/type-leak.nukadoko.test.ts, matching this rule's own
-// promoted-from-spike history).
+// in test/type-leak.nukadoko.test.ts, the same target used when this
+// rule was promoted).
 export function detectTypeLeaks(
   checker: ts.TypeChecker,
   entrySf: ts.SourceFile,

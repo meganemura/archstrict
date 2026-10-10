@@ -1,5 +1,5 @@
-// Verifies the promoted rule against the same real target the spike it was
-// promoted from measured: nukadoko's own published src/index.ts (its own
+// Verifies the promoted rule against the same real target measured when
+// it was promoted: nukadoko's own published src/index.ts (its own
 // public entry point already, read-only - node_modules/nukadoko/src, not a
 // live checkout, for the same reason the nukadoko dogfood scenario uses it).
 // This is not a per-module archstrict check (index.ts sits directly under
@@ -7,7 +7,7 @@
 // never reach it) - it exercises detectTypeLeaks directly, the same core
 // function checkTypeLeaks calls per module.
 //
-// The spike this rule was promoted from reported 0 leaks here. That number
+// The measurement this rule was promoted from reported 0 leaks here. That number
 // was itself a symptom of the same bug review caught in this rule's own
 // first draft (this file's own git history has the fix): neither ever
 // resolved a re-exported symbol (`export type { Foo } from "./x.js"`)
@@ -56,7 +56,7 @@ describe("detectTypeLeaks against nukadoko's real src/index.ts", () => {
     // all the way through and confirm it has real call signatures. If
     // module resolution were silently broken (the wrong options, a
     // missing file), every export would fail to resolve to a real
-    // declaration - the exact way the spike's own "0 leaks" turned out to
+    // declaration - the exact way that measurement's "0 leaks" turned out to
     // mean nothing was checked, not nothing leaked.
     const defineStep = exports.find((s) => s.name === "defineStep");
     if (defineStep === undefined) throw new Error("expected 'defineStep' among the resolved exports");

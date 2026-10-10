@@ -37,7 +37,6 @@ export default {
   //   default include also skips;
   // - test/: a test imports across modules as a fixture; boundary rules
   //   read production code;
-  // - spike/: throwaway probes and fixtures, not the library;
   // - features/: the nukadoko scenario drives the built CLI against a
   //   scratch copy; those steps are not library modules;
   // - scripts/: oracle runners and the typescript 7 probe, not library modules;
@@ -50,7 +49,6 @@ export default {
     ".*/**",
     "**/.*/**",
     "test/**",
-    "spike/**",
     "features/**",
     "scripts/**",
     "vitest.config.ts",
