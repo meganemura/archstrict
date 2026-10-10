@@ -1,16 +1,15 @@
 #!/usr/bin/env node
-// Responsibility: the PreToolUse hook. Before an Edit/Write/MultiEdit
-// actually touches disk, this builds the file text the tool call would
-// produce and runs the edited project's own installed
-// `archstrict simulate --json` against that one change, so the agent
-// hears about a new violation before the write happens instead of after
-// (the PostToolUse hook's own moment). Per code.claude.com/docs/en/hooks,
-// PreToolUse returns its decision inside hookSpecificOutput:
-// permissionDecision ("allow"/"deny"/"ask"/"defer") plus
-// permissionDecisionReason, or additionalContext alongside "allow".
-// Boundary: no rule logic here - this only shells out to the project's own
+// Responsibility: the PreToolUse hook. It builds the file text an
+// Edit/Write/MultiEdit would produce and runs the edited project's own
+// installed `archstrict simulate --json` against that one change.
+// The default result omits permissionDecision. "allow" would skip the
+// permission prompt for an edit that adds a violation, so the preview
+// travels as additionalContext alone and the prompt stays.
+// ARCHSTRICT_PRETOOLUSE=deny still returns permissionDecision "deny"
+// and stops the write. permissionDecision "ask" is not implemented.
+// Boundary: no rule logic here. This only shells out to the project's own
 // `archstrict` binary and reshapes its JSON, mirroring post-tool-use.mjs.
-// It never runs this repository's own dist/cli.js: the hook ships to OTHER
+// It never runs this repository's own dist/cli.js. The hook ships to other
 // projects, each with its own installed archstrict.
 import { existsSync, readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -176,7 +175,7 @@ function main() {
     emit({ permissionDecision: "deny", permissionDecisionReason: text });
     return;
   }
-  emit({ permissionDecision: "allow", additionalContext: text });
+  emit({ additionalContext: text });
 }
 
 main();

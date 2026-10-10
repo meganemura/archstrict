@@ -5,6 +5,10 @@ may change commands, flags, config, or output shape. The version entry will desc
 
 ## Unreleased
 
+### Fixed
+
+- The default PreToolUse hook no longer returns `permissionDecision` `"allow"` when an edit would add a violation. It still returns `hookEventName` and `additionalContext`, so the preview sits next to the tool result and the edit keeps the normal permission prompt. `ARCHSTRICT_PRETOOLUSE=deny` still denies the tool call before the write.
+
 ## 0.2.1 (2026-10-04)
 
 ### Fixed
