@@ -242,57 +242,7 @@ describe("fingerprintOf", () => {
   });
 });
 
-describe("findMatchingEntry's migration path for a legacy public-surface-bypass entry", () => {
-  test("an entry frozen before specifier/target existed still matches the same edge, reworded evidence and all", () => {
-    const path = "src/app/importer.ts";
-    const oldEvidence = "'../shared/internal.js' resolved to module 'shared', which has no index.ts";
-    const legacyEntry = {
-      rule: "public-surface-bypass",
-      path,
-      evidence: oldEvidence,
-      // no specifier/target: exactly what an old entry lacks.
-    };
-    const index = todoStore.buildTodoIndex([legacyEntry]);
-
-    // The module gained a surface: the SAME edge now reads a different
-    // sentence, and carries the structured fields every fresh violation
-    // has.
-    const reworded = {
-      rule: "public-surface-bypass" as const,
-      path: "/abs/root/src/app/importer.ts",
-      evidence: "'../shared/internal.js' resolved to a file inside module 'shared' other than its index.ts",
-      specifier: "../shared/internal.js",
-      target: "/abs/root/src/shared/internal.ts",
-    };
-    const relativePath = (p: string) => p.replace("/abs/root/", "");
-    expect(todoStore.findMatchingEntry(index, reworded, relativePath)).toBe(legacyEntry);
-
-    // A genuinely different specifier at the same path must not match.
-    const different = { ...reworded, specifier: "../shared/other.js" };
-    expect(todoStore.findMatchingEntry(index, different, relativePath)).toBeUndefined();
-  });
-
-  test("a legacy entry whose evidence does not open with a quoted specifier matches no live violation", () => {
-    const path = "src/app/importer.ts";
-    const legacyEntry = {
-      rule: "public-surface-bypass",
-      path,
-      evidence: "note: '../shared/internal.js' resolved to module 'shared', which has no index.ts",
-    };
-    const index = todoStore.buildTodoIndex([legacyEntry]);
-    const relativePath = (p: string) => p;
-    for (const specifier of ["../shared/internal.js", "undefined"]) {
-      const live = {
-        rule: "public-surface-bypass",
-        path,
-        evidence: `'${specifier}' resolved to module 'shared', which has no index.ts`,
-        specifier,
-        target: "src/shared/internal.ts",
-      };
-      expect(todoStore.findMatchingEntry(index, live, relativePath)).toBeUndefined();
-    }
-  });
-
+describe("findMatchingEntry for a public-surface-bypass entry", () => {
   test("an entry of another rule never matches a public-surface-bypass violation, whatever its evidence says", () => {
     const path = "src/app/importer.ts";
     const specifier = "../shared/internal.js";
@@ -764,8 +714,15 @@ describe("matching survives regardless of stored path format", () => {
       const result = runRules(graph, config);
       expect(result.violations).toHaveLength(1);
       const violation = result.violations[0]!;
+      if (violation.rule !== "public-surface-bypass") throw new Error("expected a surface violation");
 
-      const absoluteEntry = { rule: violation.rule, path: violation.path, evidence: violation.evidence };
+      const absoluteEntry = {
+        rule: violation.rule,
+        path: violation.path,
+        evidence: violation.evidence,
+        specifier: violation.specifier,
+        target: violation.target,
+      };
       const relativeEntry = { ...absoluteEntry, path: "src/app/module.ts" };
       writeTodoFile(root, new Map([["shared", [absoluteEntry]]]));
       const withAbsolute = applyTodo(graph, config, result);

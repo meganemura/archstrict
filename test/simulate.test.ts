@@ -198,7 +198,13 @@ test("simulation preserves disk bytes, timestamps, todo, and a subsequent real c
   const violation = (await check(root)).violations.find(v => v.rule === "public-surface-bypass")!;
   expect(violation.rule).toBe("public-surface-bypass");
   if (violation.rule !== "public-surface-bypass") throw new Error("expected surface violation");
-  writeTodoFile(root, new Map([[violation.todoModule, [{ rule: violation.rule, path: violation.path, evidence: violation.evidence }]]]));
+  writeTodoFile(root, new Map([[violation.todoModule, [{
+    rule: violation.rule,
+    path: violation.path,
+    evidence: violation.evidence,
+    specifier: violation.specifier,
+    target: violation.target,
+  }]]]));
   const before = JSON.stringify(await check(root));
   const bytes = snapshot(root);
   const result = await simulate(root, [{ path: "src/a/index.ts", content: "export {};" }]);

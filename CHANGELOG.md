@@ -20,6 +20,7 @@ may change commands, flags, config, or output shape. The version entry will desc
 
 ### Removed
 
+- `archstrict check` and `archstrict todo` no longer match a `public-surface-bypass` entry that omits `specifier` and `target`. Every published version writes both. An entry without them is stale and does not suppress the violation.
 - `archstrict check` and `archstrict todo` no longer read the pre-release per-module todo files or the `.archstrict-todo-initialized` marker. Frozen debt lives only in the project-root `archstrict.todo.json`. No published version wrote that layout.
 
 ### Fixed

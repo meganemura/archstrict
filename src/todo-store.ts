@@ -22,9 +22,9 @@ export type TodoEntry = {
   path: string;
   evidence: string;
   // public-surface-bypass's own identity fields (see Violation's own
-  // comment in rules/public-surface.ts) - undefined on an entry migrated
-  // from before this field existed. findMatchingEntry's own comment covers
-  // how an entry missing these still matches a live violation.
+  // comment in rules/public-surface.ts). Other rules leave both undefined.
+  // A bypass entry must carry both: fingerprintOf does not treat a missing
+  // pair as the same edge.
   specifier?: string;
   target?: string;
 };
@@ -140,9 +140,9 @@ export function relativizeForTodo<T extends ViolationForTodo>(v: T, relativePath
 // itself (which file imports which file, through which specifier) never
 // moved. specifier/target are edge-intrinsic instead: the same import
 // into the same resolved file is the same debt regardless of what
-// evidence's own sentence says today. Returns undefined for a rule this
-// doesn't apply to, or for an entry migrated from before these fields
-// existed (readTodoFile never invents them).
+// evidence's own sentence says today. Returns undefined unless both
+// fields are present: every other rule, and a bypass entry that omitted
+// the pair.
 function bypassIdentity(v: ViolationForTodo): { specifier: string; target: string } | undefined {
   if (v.rule !== "public-surface-bypass" || v.specifier === undefined || v.target === undefined) return undefined;
   return { specifier: v.specifier, target: v.target };
@@ -158,35 +158,17 @@ export function fingerprintOf(v: ViolationForTodo): string {
   return createHash("sha256").update(key).digest("hex").slice(0, 12);
 }
 
-// Migration only: a public-surface-bypass entry frozen before specifier/
-// target existed carries only the sentence violationFor built. Both of
-// evidence's own sentence shapes ("resolved to module 'm', which has no
-// ..." and "resolved to a file inside module 'm' other than its ...")
-// start with the same quoted specifier, so a small, fixed prefix
-// recovers it without knowing which shape produced this entry. This
-// parse exists only for an old entry with no stored `specifier` - a
-// fresh one always carries the field, and skips it entirely.
-function parseSpecifierFromLegacyBypassEvidence(evidence: string): string | undefined {
-  const match = /^'(.+?)' resolved to /.exec(evidence);
-  return match?.[1];
-}
-
 // A module's own todo entries, indexed once so matching a violation
 // against them is O(1) instead of a fresh scan (and a fresh sha256) per
 // violation - a module can carry tens of thousands of entries on a large
 // project, and check.ts already reads the whole file only once per run
-// for the same reason (see readTodoFile's own caller). `byLegacyBypassKey`
-// covers only a legacy public-surface-bypass entry (no stored
-// `specifier`): its (path, specifier) is parsed from evidence once, here,
-// not once per violation checked against it.
+// for the same reason (see readTodoFile's own caller).
 export type TodoIndex = {
   byFingerprint: ReadonlyMap<string, TodoEntry>;
-  byLegacyBypassKey: ReadonlyMap<string, TodoEntry>;
 };
 
 export function buildTodoIndex(entries: readonly TodoEntry[]): TodoIndex {
   const byFingerprint = new Map<string, TodoEntry>();
-  const byLegacyBypassKey = new Map<string, TodoEntry>();
   for (const entry of entries) {
     // Keyed by a FRESH recompute from the entry's own stored fields
     // (already project-relative - readTodoFile normalizes a legacy
@@ -201,38 +183,23 @@ export function buildTodoIndex(entries: readonly TodoEntry[]): TodoIndex {
     // to the value it always should have had, with no rule-specific
     // rewrite needed at all - stableEvidence is a pure function of the
     // evidence text alone, unaffected by which archstrict version produced
-    // it. Only public-surface-bypass has an older stored shape (no stored
-    // specifier/target at all, not just a different formula over the same
-    // fields), which is what byLegacyBypassKey is for.
+    // it.
     byFingerprint.set(fingerprintOf(entry), entry);
-    if (entry.rule === "public-surface-bypass" && entry.specifier === undefined) {
-      const specifier = parseSpecifierFromLegacyBypassEvidence(entry.evidence);
-      if (specifier !== undefined) byLegacyBypassKey.set(`${entry.path}\n${specifier}`, entry);
-    }
   }
-  return { byFingerprint, byLegacyBypassKey };
+  return { byFingerprint };
 }
 
-export const EMPTY_TODO_INDEX: TodoIndex = { byFingerprint: new Map(), byLegacyBypassKey: new Map() };
+export const EMPTY_TODO_INDEX: TodoIndex = { byFingerprint: new Map() };
 
 // The one place check.ts/todo.ts ask "does some entry in this index still
-// name this live violation" - a fingerprint lookup first (covers every
-// rule, recomputed identically on both sides - see buildTodoIndex's own
-// comment), falling back to the legacy (path, specifier) index only for a
-// public-surface-bypass violation, since that's the only rule with an
-// older stored shape at all. `relativePath` puts `v`'s own
-// (absolute) path/target into the same project-relative form entries are
-// always stored in, for BOTH branches - the primary lookup needs this
-// exactly as much as the fallback does (fingerprintOf never relativizes
-// on its own; see relativizeForTodo's own comment for why a caller must).
+// name this live violation": a fingerprint lookup, recomputed identically
+// on both sides (see buildTodoIndex's own comment). `relativePath` puts
+// `v`'s own (absolute) path/target into the same project-relative form
+// entries are always stored in. fingerprintOf never relativizes on its
+// own; see relativizeForTodo's own comment for why a caller must.
 export function findMatchingEntry(index: TodoIndex, v: ViolationForTodo, relativePath: ProjectRelativePath): TodoEntry | undefined {
   const relativized = relativizeForTodo(v, relativePath);
-  const exact = index.byFingerprint.get(fingerprintOf(relativized));
-  if (exact !== undefined) return exact;
-  if (relativized.rule !== "public-surface-bypass") return undefined;
-  const identity = bypassIdentity(relativized);
-  if (identity === undefined) return undefined;
-  return index.byLegacyBypassKey.get(`${relativized.path}\n${identity.specifier}`);
+  return index.byFingerprint.get(fingerprintOf(relativized));
 }
 
 // Builds the on-disk row for a live violation: `path`/`target` relativized,

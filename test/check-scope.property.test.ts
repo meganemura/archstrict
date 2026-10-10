@@ -16,7 +16,7 @@ import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
 import { buildModuleGraph } from "../src/module-graph.js";
 import { applyTodo, check, filterToFile, runRules, type AnyViolation } from "../src/verbs/check.js";
-import { fingerprintOf, readTodoFile, writeTodoFile } from "../src/todo-store.js";
+import { fingerprintOf, readTodoFile, writeTodoFile, type TodoEntry } from "../src/todo-store.js";
 import { todo } from "../src/verbs/todo.js";
 
 const CONFIG = { because: "Keep app callers off shared's internals." };
@@ -64,11 +64,16 @@ describe("check <file> scoping equals filtering the full result", () => {
         // that does not exist on disk) when the draw asks for one, so the
         // fixture exercises both a match and a real miss.
         const toFreeze = bypassViolations.filter((_, i) => frozenMask[i]);
-        const entries = toFreeze.map((v) => ({
-          rule: v.rule,
-          path: v.path,
-          evidence: v.evidence,
-        }));
+        const entries: TodoEntry[] = toFreeze.map((v) => {
+          if (v.rule !== "public-surface-bypass") throw new Error(`expected public-surface-bypass, got ${v.rule}`);
+          return {
+            rule: v.rule,
+            path: v.path,
+            evidence: v.evidence,
+            specifier: v.specifier,
+            target: v.target,
+          };
+        });
         if (includeStaleEntry) {
           const stalePath = realpathSync(resolve(root)) + "/src/app/phantom.ts";
           entries.push({

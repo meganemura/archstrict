@@ -741,42 +741,6 @@ describe("todo", () => {
     });
   });
 
-  // A later prune-only run rewrites a legacy public-surface-bypass entry
-  // (frozen before specifier/target existed) to the current format the
-  // moment it's confirmed to still match - self-healing, the same as
-  // readTodo already does for a legacy absolute `path`. A later run then
-  // matches it by the primary fingerprint lookup alone, with no evidence
-  // parse at all.
-  test("a prune-only run upgrades a legacy bypass entry it still matches to the current, specifier/target format", async () => {
-    await withTempProject(async (unresolvedRoot) => {
-      const root = writeSurfaceProject(unresolvedRoot);
-      await todo(root); // freezes in the current format
-      const todoFile = join(root, "archstrict.todo.json");
-      const frozen = JSON.parse(readFileSync(todoFile, "utf8"));
-      expect(frozen.modules.b).toHaveLength(1);
-      expect(frozen.modules.b[0].specifier).toBeDefined();
-
-      // Roll that one entry back to the older shape: no specifier or target.
-      const legacy = {
-        rule: frozen.modules.b[0].rule,
-        path: frozen.modules.b[0].path,
-        evidence: frozen.modules.b[0].evidence,
-      };
-      writeFileSync(todoFile, JSON.stringify({ schemaVersion: 1, modules: { b: [legacy] } }, null, 2));
-
-      const result = await todo(root);
-      expect(result.firstRun).toBe(false);
-      expect(result.pruned).toBe(0); // still matches - not dropped
-
-      const upgraded = JSON.parse(readFileSync(todoFile, "utf8"));
-      expect(upgraded.modules.b).toHaveLength(1);
-      expect(upgraded.modules.b[0].specifier).toBeDefined();
-      expect(upgraded.modules.b[0].target).toBeDefined();
-
-      expect((await check(root)).violations).toHaveLength(0);
-    });
-  });
-
   // The regression this covers: a real project's todo file predates this
   // ticket's own fix. Its stored `fingerprint` is a hash of
   // rule+ABSOLUTE-path+evidence (todo.ts's freeze step, before this fix,
