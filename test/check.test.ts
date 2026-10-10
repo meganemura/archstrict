@@ -1479,6 +1479,93 @@ describe("check", () => {
     });
   });
 
+  // A directory is not a surface file, so rule 6 used to skip and
+  // `filterToFile` had no type-leak finding to keep. The surface inside
+  // the directory is the path rule 6 reports at.
+  test("check <dir> reports a type leak at a surface inside the directory", async () => {
+    await withTempProject(async (root) => {
+      mkdirSync(join(root, "src", "m", "nested"), { recursive: true });
+      mkdirSync(join(root, "src", "other"), { recursive: true });
+      writeFileSync(
+        join(root, "src", "m", "internal.ts"),
+        'export interface Hidden { value: string }\nexport function make(): Hidden { return { value: "x" }; }\n',
+      );
+      writeFileSync(join(root, "src", "m", "index.ts"), 'export { make } from "./internal.js";\n');
+      writeFileSync(join(root, "src", "m", "nested", "util.ts"), "export const util = 1;\n");
+      writeFileSync(join(root, "src", "other", "only.ts"), "export interface OnlyOther { value: number }\n");
+      writeFileSync(join(root, "src", "other", "index.ts"), 'export type { OnlyOther } from "./only.js";\n');
+      writeFileSync(
+        join(root, "tsconfig.json"),
+        '{"compilerOptions":{"module":"nodenext","moduleResolution":"nodenext","strict":true,"skipLibCheck":true}}',
+      );
+      writeFileSync(join(root, "archstrict.config.ts"), [
+        "export default {",
+        "  declaredModules: [",
+        '    { name: "m", glob: "src/m/**", surface: "index.ts" },',
+        '    { name: "other", glob: "src/other/**", surface: "index.ts" },',
+        "  ],",
+        '  exclude: ["archstrict.config.ts", "tsconfig.json"],',
+        '  because: "test architecture",',
+        "};",
+      ].join("\n"));
+
+      const dir = join(root, "src", "m");
+      const surface = realpathSync(join(dir, "index.ts"));
+      const otherOnly = realpathSync(join(root, "src", "other", "only.ts"));
+      const fileResult = await check(root, surface);
+      const fileText = formatText(fileResult);
+      expect(fileResult.typeLeaks).toBe(1);
+      expect(fileResult.typeLeaksSkippedFile).toBeUndefined();
+      expect(fileText).toContain(`[type-leak] ${surface}:`);
+      expect(fileText).toContain("type leaks: 1");
+      expect(fileText).not.toContain("not checked");
+      expect(hasBlockingViolations(fileResult)).toBe(true);
+
+      vi.mocked(ts.createProgram).mockClear();
+      const dirResult = await check(root, dir);
+      expect(hasBlockingViolations(dirResult)).toBe(true);
+      expect(dirResult.typeLeaks).toBe(1);
+      expect(dirResult.typeLeaksSkippedFile).toBeUndefined();
+      const fileLeaks = fileResult.violations.filter((violation) => violation.rule === "type-leak");
+      const dirLeaks = dirResult.violations.filter((violation) => violation.rule === "type-leak");
+      expect(dirLeaks).toEqual(fileLeaks);
+      const dirText = formatText(dirResult);
+      expect(dirText).toContain(`[type-leak] ${surface}:`);
+      expect(dirText).toContain("type leaks: 1");
+      expect(dirText).not.toContain("not checked");
+      expect(dirText).not.toContain(otherOnly);
+      const roots = vi.mocked(ts.createProgram).mock.calls.flatMap(([programOptions]) =>
+        "rootNames" in programOptions ? programOptions.rootNames : programOptions);
+      expect(roots).toContain(surface);
+      expect(roots).not.toContain(otherOnly);
+
+      const srcResult = await check(root, join(root, "src"));
+      expect(srcResult.typeLeaks).toBe(1);
+      expect(srcResult.violations.filter((violation) => violation.rule === "type-leak")).toEqual(fileLeaks);
+      expect(hasBlockingViolations(srcResult)).toBe(true);
+
+      const otherResult = await check(root, join(root, "src", "other"));
+      expect(otherResult.typeLeaks).toBe(0);
+      expect(otherResult.violations.some((violation) => violation.rule === "type-leak")).toBe(false);
+
+      const nested = join(dir, "nested");
+      const nestedResult = await check(root, nested);
+      expect(nestedResult.typeLeaks).toBeNull();
+      expect(nestedResult.violations.some((violation) => violation.rule === "type-leak")).toBe(false);
+      expect(formatText(nestedResult)).toContain(`type leaks: not checked (${nested} is not a module surface file)`);
+
+      expect(formatText(await check(root, surface))).toBe(fileText);
+
+      await todo(root);
+      const frozenDir = await check(root, dir);
+      expect(frozenDir.violations.some((violation) => violation.rule === "stale-todo")).toBe(false);
+      expect(frozenDir.violations.some((violation) => violation.rule === "type-leak")).toBe(false);
+      expect(frozenDir.todo).toBeGreaterThan(0);
+      const frozenOther = await check(root, join(root, "src", "other"));
+      expect(frozenOther.violations.some((violation) => violation.rule === "stale-todo")).toBe(false);
+    });
+  });
+
   // A directory-scoped check matches the same way, through `entryPath`
   // containment: the frozen entry here is a public-surface-bypass filed
   // under module "shared", but recorded at the IMPORTER's own path

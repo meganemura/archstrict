@@ -140,11 +140,14 @@ export type CheckResult = {
   unsupportedSyntax: number;
   // How many type-leak violations rule 6 found. A surface-focused call
   // counts only findings at the requested surface because the Program checks one closure.
+  // A directory-focused call counts only findings at surface files inside
+  // that directory, for the same reason: the run did not ask about the rest.
   // A project-wide count is refused because that run does not compute one.
   // 0 means it ran and found none.
   // null means rule 6 did not run at all this call (a `check <file>`
   // scoped to a file that is not any
-  // module's own surface - see check()'s own `skipTypeLeak`): "not
+  // module's own surface, or a `check <dir>` whose directory contains no
+  // surface file - see check()'s own `skipTypeLeak`): "not
   // evaluated" is a different fact than "evaluated, found none", and the
   // two must never share one number.
   typeLeaks: number | null;
@@ -396,12 +399,15 @@ function unresolvedSpecifierBreakdown(specifiers: string[]): { prefix: string; c
 export type RunRulesOptions = {
   configLocator?: ConfigLocator;
   // Set by check() when a `check <file>` run named a file that is not any
-  // module's own surface file: rule 6's own violations are always
+  // module's own surface file, and when a `check <dir>` names a directory
+  // that contains no surface file: rule 6's own violations are always
   // reported at a surface-file path (checkTypeLeaks below groups every
   // finding under `group.path = surfacePath`), so a report scoped to a
   // non-surface file can never contain one - running it at all would only
   // force a whole-project ts.Program into existence for a rule whose
-  // answer the scoped report throws away. simulate.ts never sets this: it
+  // answer the scoped report throws away. A directory that does contain a
+  // surface is not this case: those surfaces can carry a finding
+  // filterToFile keeps. simulate.ts never sets this: it
   // has no file scope, and its `before`/`after` diff needs every rule
   // evaluated on both sides.
   skipTypeLeak?: boolean;
@@ -409,11 +415,24 @@ export type RunRulesOptions = {
   // to build one closure. Inferring the name inside the rule is refused because the
   // rule does not own path canonicalization or module-surface selection.
   focusedTypeLeakModule?: string;
+  // Modules that own a surface file inside a `check <dir>` directory.
+  // Rule 6 evaluates each of those modules and no module outside the
+  // directory. A file focus leaves this unset and uses
+  // `focusedTypeLeakModule` for the one named surface.
+  focusedTypeLeakModules?: readonly string[];
+  // Real path of the `check <dir>` directory. A module evaluated above can
+  // own another surface outside the directory; findings there are dropped
+  // before the count, because this run did not ask about that file.
+  typeLeakDirectory?: string;
   // Called right after rule 6 and before every other rule. check() uses
   // it to drop rule 6's Program there, so the Program and the other
   // rules' violations never sit in memory together: on a large codebase
   // each alone fits Node's default heap, but the two together do not.
-  afterTypeLeak?: () => void;
+  // A directory run passes the notes collected from each focused module,
+  // because each `typeLeaksForFocus` call replaces the previous module's
+  // notes on the graph. Omitted for every other run, which still reads
+  // the graph's own notes.
+  afterTypeLeak?: (directoryNotes?: readonly string[]) => void;
   // check()'s own realpath'd target for a `check <file>` run - the exact
   // value `filterToFile` itself compares a violation's own (resolved)
   // `path` against. Passed down to the rules whose violations report at
@@ -452,6 +471,39 @@ function reportedAtFocus(path: string, focus: string): boolean {
   return compilerResolve(path) === focus;
 }
 
+// Same containment `filterToFile` uses for a directory target: equal to
+// the directory, or nested under it. A sibling whose name shares the
+// directory's prefix (`src/billing-extra` beside `src/billing`) is not
+// inside. Realpath is refused here because `filterToFile` resolves the
+// violation path and compares that string.
+function reportedInside(path: string, directory: string): boolean {
+  const resolved = compilerResolve(path);
+  return resolved === directory || resolved.startsWith(`${directory}/`);
+}
+
+// One focused closure per module that owns a surface inside the directory.
+// A whole-project Program is refused because a directory check used to
+// skip rule 6 to avoid that cost, and the file-focus path already proved
+// the scoped closure is enough for one module's surfaces.
+function typeLeaksForDirectory(
+  graph: ModuleGraph,
+  moduleNames: readonly string[],
+  directory: string | undefined,
+): { violations: TypeLeakViolation[]; notes: string[] } {
+  const notes: string[] = [];
+  const found = moduleNames.flatMap((name) => {
+    const leaks = graph.typeLeaksForFocus(name);
+    for (const note of graph.focusedTypeLeakNotes) {
+      if (!notes.includes(note)) notes.push(note);
+    }
+    return leaks;
+  });
+  return {
+    violations: directory === undefined ? found : found.filter((violation) => reportedInside(violation.path, directory)),
+    notes,
+  };
+}
+
 export function runRules(graph: ModuleGraph, config: Config, options: RunRulesOptions = {}): CheckResult {
   // null (not 0, not an empty array's own .length) when this rule did not
   // run: "not evaluated" and "evaluated, found none" are different facts,
@@ -461,18 +513,24 @@ export function runRules(graph: ModuleGraph, config: Config, options: RunRulesOp
   // violations; its findings still go last in the report. The `typeLeaks`
   // count stays whole-project for a full
   // run. A surface-focused run counts only findings at that surface.
+  // A directory run counts only findings at surfaces inside that directory.
   // A non-surface focus cannot receive a rule-6 finding, so evaluation is
   // refused. A surface focus uses the separate scoped graph path because an
   // all-surface closure found 53 leaks to report 4 on a 23,000-file project.
-  const allTypeLeaks = options.skipTypeLeak ? undefined : options.focusedTypeLeakModule === undefined
-    ? checkTypeLeaks(graph)
-    : graph.typeLeaksForFocus(options.focusedTypeLeakModule);
+  const directoryResult = options.skipTypeLeak || options.focusedTypeLeakModules === undefined
+    ? undefined
+    : typeLeaksForDirectory(graph, options.focusedTypeLeakModules, options.typeLeakDirectory);
+  const allTypeLeaks = options.skipTypeLeak ? undefined : directoryResult !== undefined
+    ? directoryResult.violations
+    : options.focusedTypeLeakModule === undefined
+      ? checkTypeLeaks(graph)
+      : graph.typeLeaksForFocus(options.focusedTypeLeakModule);
   // A focused module can have several surfaces. Counting every surface is
   // refused because `check <file>` reports facts about one requested file.
   const typeLeaks = allTypeLeaks === undefined || options.focus === undefined
     ? allTypeLeaks
     : allTypeLeaks.filter((violation) => reportedAtFocus(violation.path, options.focus!));
-  options.afterTypeLeak?.();
+  options.afterTypeLeak?.(directoryResult?.notes);
   const focus = options.focus;
 
   const mustBeEmptyFiles = allProjectRelativeFiles(graph);
@@ -621,6 +679,11 @@ export type ApplyTodoOptions = {
   // (see RunRulesOptions.focus's own comment) before this function runs
   // at all.
   focus?: string;
+  // Set on a `check <dir>` run that evaluated rule 6 for the surfaces
+  // inside this directory. A type-leak entry stored at a surface outside
+  // it was not evaluated, so an unmatched entry there is unknown, not
+  // stale. Other rules still ran unscoped and do not use this gate.
+  typeLeakDirectory?: string;
   // `check --frozen`'s own request: a todo-matched violation is kept in
   // `remaining` (marked `frozen: true`) instead of only counted in
   // `suppressed`. Absent (the default) reproduces the exact behavior
@@ -810,7 +873,11 @@ export function applyTodo(graph: ModuleGraph, config: Config, result: CheckResul
       // own comment makes the same call for a rule this run skipped
       // outright). Reporting it stale here would be a false positive: the
       // entry itself never got a chance to match anything this run.
+      // A directory run evaluates type-leak only for surfaces inside the
+      // directory, so the same unknown applies to a type-leak entry outside it.
       if (focus !== undefined && !entryReportedAtFocus(entry, graph.rootDir, focus)) continue;
+      if (options.typeLeakDirectory !== undefined && entry.rule === "type-leak"
+        && !reportedInside(compilerResolve(graph.rootDir, entry.path), options.typeLeakDirectory)) continue;
       if (matched.has(fingerprintOf(entry))) continue;
       if (skipStaleCheckForRules.has(entry.rule)) continue;
       remaining.push(locateViolation({
@@ -998,6 +1065,38 @@ function surfaceModuleForFocus(graph: ModuleGraph, file: string): string | undef
   return undefined;
 }
 
+// A directory focus is not a surface file, but it can contain surface
+// files. Missing paths stay undefined so `filterToFile` still throws its
+// own "no such file" error.
+function existingDirectory(file: string): string | undefined {
+  try {
+    const target = compilerRealpath(compilerResolve(file));
+    return statSync(target).isDirectory() ? target : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function moduleNamesWithSurfaceInside(graph: ModuleGraph, directory: string): string[] {
+  const prefix = `${directory}/`;
+  const names: string[] = [];
+  for (const module of graph.modules.values()) {
+    const inside = module.surfaceFiles.some((surfacePath) => {
+      try {
+        const surface = compilerRealpath(surfacePath);
+        // Same identity test as `surfaceModuleForFocus`: a symlink and its
+        // target are one file, so a textual prefix would miss the surface.
+        return surface === directory || surface.startsWith(prefix);
+      } catch {
+        return false;
+      }
+    });
+    if (inside) names.push(module.name);
+  }
+  names.sort();
+  return names;
+}
+
 export async function check(projectRoot: string, focusFile?: string, options: CheckOptions = {}): Promise<CheckResult> {
   const configPath = compilerResolve(projectRoot, "archstrict.config.ts");
   const config = await loadConfig(configPath);
@@ -1031,12 +1130,24 @@ export async function check(projectRoot: string, focusFile?: string, options: Ch
   // would filter it out regardless) - skip the rule so a whole-project
   // ts.Program is never built just to throw its answer away. Plain
   // `check` (no focusFile) always evaluates it.
-  // Only a named surface selects scoped rule 6. Scoping a full check is
-  // refused because an unscoped caller requires every module's findings.
+  // A directory is not a surface file, but a surface inside it can carry
+  // a finding `filterToFile` keeps. Rule 6 runs for those surfaces only.
+  // A file that is not a surface still skips. Only a named surface selects
+  // the single-module closure. Scoping a full check is refused because an
+  // unscoped caller requires every module's findings.
   const focusedTypeLeakModule = focusFile === undefined ? undefined : surfaceModuleForFocus(graph, focusFile);
-  // A named non-surface file cannot receive a type-leak violation. Running
-  // rule 6 is refused because its complete answer would be discarded.
-  const skipTypeLeak = focusFile !== undefined && focusedTypeLeakModule === undefined;
+  const typeLeakDirectory = focusFile === undefined || focusedTypeLeakModule !== undefined
+    ? undefined
+    : existingDirectory(focusFile);
+  const directoryTypeLeakModules = typeLeakDirectory === undefined
+    ? []
+    : moduleNamesWithSurfaceInside(graph, typeLeakDirectory);
+  // A named non-surface file, and a directory that contains no surface,
+  // cannot receive a type-leak violation. Running rule 6 is refused
+  // because its complete answer would be discarded.
+  const skipTypeLeak = focusFile !== undefined
+    && focusedTypeLeakModule === undefined
+    && directoryTypeLeakModules.length === 0;
   const focus = focusFile === undefined ? undefined : tryRealpath(focusFile);
   // Rule 6 is the only rule that touches `graph.program`/`graph.checker`,
   // and runRules runs it first - release the Program right after it, so
@@ -1049,11 +1160,17 @@ export async function check(projectRoot: string, focusFile?: string, options: Ch
     configLocator,
     skipTypeLeak,
     focusedTypeLeakModule,
+    focusedTypeLeakModules: directoryTypeLeakModules.length === 0 ? undefined : directoryTypeLeakModules,
+    typeLeakDirectory,
     focus,
-    afterTypeLeak: () => {
+    afterTypeLeak: (directoryNotes) => {
       // Scoped and unscoped notes have separate lifetimes. Combining them is
       // refused because a reused graph must not expose a scoped fallback later.
-      programNotes = [...(focusedTypeLeakModule === undefined ? graph.programNotes : graph.focusedTypeLeakNotes)];
+      // A directory run already collected one note list per module, because
+      // each focused call replaces the graph's previous notes.
+      programNotes = directoryNotes !== undefined
+        ? [...directoryNotes]
+        : [...(focusedTypeLeakModule === undefined ? graph.programNotes : graph.focusedTypeLeakNotes)];
       graph.releaseProgram();
     },
   });
@@ -1075,6 +1192,7 @@ export async function check(projectRoot: string, focusFile?: string, options: Ch
     configLocator,
     skipStaleCheckForRules: skipTypeLeak ? ["type-leak"] : [],
     focus,
+    typeLeakDirectory: directoryTypeLeakModules.length === 0 ? undefined : typeLeakDirectory,
     includeFrozen: options.frozen,
   });
   const focused = focusFile === undefined ? result : filterToFile(result, focusFile);

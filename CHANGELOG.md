@@ -17,6 +17,7 @@ may change commands, flags, config, or output shape. The version entry will desc
 
 ### Fixed
 
+- `archstrict check <dir>` reports a type leak at a surface file inside that directory, and exits 1 when that leak blocks. `archstrict check <file>` still reports a type leak only when that file is a module surface.
 - `archstrict check <dir>` reports each violation whose path is that directory or a file inside it, and exits 1 when any of them block. `archstrict check <file>` still reports only that file.
 - `archstrict simulate` no longer writes `node_modules/.cache/archstrict` when it builds the baseline graph. A preview stays off disk. The files it used to create are `edges.json`, `augmentations.json`, and the edge shards.
 - The default PreToolUse hook no longer returns `permissionDecision` `"allow"` when an edit would add a violation. It still returns `hookEventName` and `additionalContext`, so the preview sits next to the tool result and the edit keeps the normal permission prompt. `ARCHSTRICT_PRETOOLUSE=deny` still denies the tool call before the write.
