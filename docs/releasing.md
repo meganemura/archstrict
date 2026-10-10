@@ -42,7 +42,7 @@ A release that changes the Config type gets a rerun-init line in its changelog e
 2. Run `npm run build`, `npm run typecheck`, and `npm test`.
 3. Run `npm pack --dry-run`. Read its file list. It must contain `dist/`, `docs/`, `skills/`, both
    READMEs, the changelog, `AGENTS.md`, `llms.txt`, `.agents/`, and the license. It must not contain
-   `test/` or `.claude-team/`.
+   `test/`, `.claude-team/`, or `.agents/skills/`.
 4. Commit the release as `chore: release 0.x.0`. Tag it as `v0.x.0`. The tag without `v` must equal
    the `package.json` version. Push the commit and tag. The tag push starts the workflow.
 5. Approve the `publish` environment for that Actions run. The workflow runs `npm ci`, the build,

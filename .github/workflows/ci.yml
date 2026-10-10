@@ -18,7 +18,6 @@ jobs:
           package-manager-cache: false
       - run: npm ci
       - run: npm run typecheck
-      - run: npm run build
       - run: npm test
       - run: npm run dogfood:nukadoko
 
@@ -33,7 +32,9 @@ jobs:
           # v7 writes an npm cache unless this is false. CI installs from the lockfile.
           package-manager-cache: false
       - run: npm ci
-      - run: npm run build
+      # `node dist/cli.js check` depends on prepare having run under `npm ci`.
+      # prepare is `npm run build`. `npm ci --ignore-scripts` would skip that
+      # build, and this step would then fail with no `dist/cli.js`.
       - run: node dist/cli.js check
       - run: npx vitest run test/project-path.test.ts test/public-surface.test.ts test/package-files.test.ts
 
