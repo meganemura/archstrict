@@ -131,6 +131,10 @@ A node builtin also carries a second, shared `pkg:node` tag alongside its own ba
 - do: `remove this edge, or narrow the point rule '<from> -> <to>' in archstrict.config.ts if it's too broad`. Glob values appear unchanged; tag predicates use `JSON.stringify` for `<from>` and `<to>`.
 - `todoModule`: the edge's own source module
 
+## config-meaning
+
+`config-meaning` is a rule id that `archstrict check --rule` accepts. `archstrict check --prove` asks Jev, the TypeSafe model this check calls, whether each `edges` entry (`allowDeny`, `order`, and `point`) contradicts that entry's own `because` text. A contradiction with confidence at or above 0.7 is a finding on the config file. A contradiction below 0.7 is an `undecided` result. A consistent answer adds no finding. A missing `TYPESAFE_API_KEY`, or a failed batch, produces one `skipped` finding for the whole batch. A check that omits `--prove` skips this rule and makes no request. Every finding carries `tier: "calibrated"` and is advisory. These findings have no `todoModule`, so `archstrict todo` cannot freeze them.
+
 ## must-be-empty
 
 A directory a team decided must hold no code at all (e.g. a project that keeps rich models and no service objects declares `app/services` must stay empty, an anti-pattern guard). Distinct from rule 4 (`empty-rule-set`): that rule flags a rule that structurally cannot match anything; this one flags a real file existing where config says none should. A violation is any file matching config's `mustBeEmpty` glob at all - zero matches is a clean pass, not silence. The glob is project-root-relative, the same convention every rule follows now that `check`/`todo` only ever build a declared-mode module graph.
