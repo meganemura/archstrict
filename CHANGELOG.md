@@ -8,6 +8,7 @@ may change commands, flags, config, or output shape. The version entry will desc
 ### Changed
 
 - A `cycle` violation's `config` pointer names the declared module that governs the cycle. It no longer points at `ignoredCycles`. That field is a suppression, and the cycle `do:` does not edit it.
+- `archstrict recommend` prints each pattern proposal's config fragment in text output, under that proposal's evidence. The `do:` line says to paste the fragment into `archstrict.config.ts` before `archstrict simulate`.
 
 ### Fixed
 

@@ -267,6 +267,31 @@ test("layered-order: a clean three-module chain is detected with full support an
   expect(proposal!.addedViolations).toBe(0);
   expect(proposal!.evidence.join(" ")).toContain("core -> mid -> top");
   expect(proposal!.configFragment).toContain('sequence: { "": ["core","mid","top"] }');
+  expect(formatRecommendText(result)).toBe(`3 modules; 2 pattern(s) detected, 2 shown
+
+pattern proposals, ranked by evidence:
+  layered-order (support 100%, would add 0 violation(s) today):
+    order supported by these modules' own real edges: core -> mid -> top
+    2 of 2 directed edges between them match this order (the rest would need fixing, or a deliberate skip)
+    classify: [
+      { glob: "src/core/**", tags: ["role:core"] },
+      { glob: "src/mid/**", tags: ["role:mid"] },
+      { glob: "src/top/**", tags: ["role:top"] },
+    ],
+    edges: { order: [
+      { tagNamespace: "role", sequence: { "": ["core","mid","top"] }, direction: "downward-only", because: "2 of 2 directed edges between these modules already match this order" },
+    ] },
+  do: paste the fragment above into archstrict.config.ts before running archstrict simulate --json with a change set that adds one edge this rule should forbid, and confirm it fires; see node_modules/archstrict/skills/archstrict/references/prove-rules.md
+  leaf-kernel (support 100%, would add 0 violation(s) today):
+    'core': 0 outgoing edges to another declared module; 1 other module(s) import it
+    classify: [
+      { glob: "src/core/**", tags: ["kind:core"] },
+    ],
+    edges: { allowDeny: [
+      { source: "kind:core", targetNamespace: "kind", allow: [], because: "'core' is imported by 1 real edge(s) and imports no other declared module today" },
+    ] },
+  do: paste the fragment above into archstrict.config.ts before running archstrict simulate --json with a change set that adds one edge this rule should forbid, and confirm it fires; see node_modules/archstrict/skills/archstrict/references/prove-rules.md
+`);
 }));
 
 test("layered-order: a reverse edge lowers support below 1 and the proposed order still reports it as an added violation", async () => fixture(async (root, put) => {
@@ -367,11 +392,10 @@ test("text output stays within a bounded line budget on a 28-module project", as
   expect(result.patternProposals.length).toBeGreaterThan(0);
   expect(result.surfaceProposals.length).toBeGreaterThan(5); // more than the text cap, to exercise the "+N more" truncation
   const text = formatRecommendText(result);
-  // Under 60 lines is the design budget for this project shape: 5 pattern
-  // proposals plus a summarized public-entry-only line and a
-  // once-per-section (not once-per-module) set of surface do: lines.
+  // 109 lines is this fixture with one complete config fragment per shown
+  // proposal. The fragment stays complete because the reader pastes it.
   const lines = text.split("\n");
-  expect(lines.length).toBeLessThan(60);
+  expect(lines.length).toBe(109);
   // The three generic surface choices print once for the whole section,
   // not once per shown module, even though 5 modules are shown.
   expect(lines.filter(l => l.includes("add a barrel file")).length).toBe(1);

@@ -194,7 +194,7 @@ function countAddedViolations(graph: ModuleGraph, baseConfig: Config, proposedCo
   return proposed.violations.filter(v => v.rule === ruleId && !baseKeys.has(keyOf(v))).length;
 }
 
-const PROVE_RULES_DO = "run archstrict simulate --json with a change set that adds one edge this rule should forbid, and confirm it fires; see node_modules/archstrict/skills/archstrict/references/prove-rules.md";
+const PROVE_RULES_DO = "paste the fragment above into archstrict.config.ts before running archstrict simulate --json with a change set that adds one edge this rule should forbid, and confirm it fires; see node_modules/archstrict/skills/archstrict/references/prove-rules.md";
 
 // A classify block for two groups that between them cover every present
 // module: one broad catch-all glob for the larger, default-tagged group,
@@ -960,6 +960,8 @@ export function formatRecommendText(result: RecommendResult): string {
         ...(proposal.pattern === "public-entry-only"
           ? summarizePublicEntryOnlyForText(result.surfaceProposals)
           : proposal.evidence.map(line => `    ${capEvidenceLineForText(line)}`)),
+        // Simulate cannot fire until the reader pastes this fragment into the config.
+        ...proposal.configFragment.split("\n").map(line => `    ${line}`),
         `  do: ${proposal.do}`,
       ]),
     ]),
