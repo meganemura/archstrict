@@ -8,7 +8,7 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { CallToolRequestSchema, ListToolsRequestSchema, type Tool } from "@modelcontextprotocol/sdk/types.js";
 import { ReportError } from "./report-error.js";
 import { createWarmGraph } from "./warm-graph.js";
-import { check } from "./verbs/check.js";
+import { CHECK_FULL_LIST_LIMIT, check, groupedToolCheck, type CheckResult } from "./verbs/check.js";
 import { rules } from "./verbs/rules.js";
 import { search } from "./verbs/search.js";
 import { simulate, type Change } from "./verbs/simulate.js";
@@ -18,7 +18,11 @@ import { simulate, type Change } from "./verbs/simulate.js";
 // already exist on disk.
 const tools: Tool[] = [
   { name: "check", description: "Check project architecture, optionally focused on one file.",
-    inputSchema: { type: "object", properties: { file: { type: "string", description: "A project-relative path that limits the report to that file." } }, additionalProperties: false } },
+    inputSchema: { type: "object", properties: {
+      file: { type: "string", description: "A project-relative path that limits the report to that file." },
+      rule: { type: "string", description: "A rule id. The report includes only violations of that rule." },
+      module: { type: "string", description: "A declared module name. The report includes only violations for that module." },
+    }, additionalProperties: false } },
   { name: "rules", description: "Show the rules that govern a path.",
     inputSchema: { type: "object", properties: { path: { type: "string", description: "A project-relative path, including a path that does not exist yet." } }, required: ["path"], additionalProperties: false } },
   { name: "search", description: "Search public exports by name.",
@@ -42,6 +46,15 @@ function stringField(args: Record<string, unknown>, field: string): string {
   return value;
 }
 
+// Past CHECK_FULL_LIST_LIMIT the CLI text already groups by rule and module.
+// The whole violation list is the payload that grouping exists to avoid.
+// Counts, one example, and the drill-down stay; the summary counts stay too.
+function presentCheck(result: CheckResult): unknown {
+  if (result.violations.length <= CHECK_FULL_LIST_LIMIT) return result;
+  const { violations: _violations, ...summary } = result;
+  return { ...summary, ...groupedToolCheck(result) };
+}
+
 export function createArchstrictMcpServer(projectRoot: string): Server {
   // One server spans many calls in the same process, unlike a one-shot CLI invocation.
   // Retain each file's import records across refresh calls; a new holder per call would lose that reuse.
@@ -63,13 +76,24 @@ export function createArchstrictMcpServer(projectRoot: string): Server {
       }
       let result: unknown;
       switch (request.params.name) {
-        case "check":
+        case "check": {
           // Agents can check after every edit, as the PostToolUse hook does, so parsed-source reuse matters here.
           // Rules already uses a lighter graph builder without a type checker.
           // Search keeps its separate cold, one-shot design. Simulate reads
           // the disk cache without persisting its in-memory proposal.
-          result = await check(projectRoot, args.file === undefined ? undefined : stringField(args, "file"), { buildGraph: warm.refresh });
+          // `rule` and `module` are the CLI's `--rule` and `--module`: check()
+          // applies that filter after the graph is built, including the
+          // unknown-id error and its `do:`.
+          const rule = args.rule === undefined ? undefined : stringField(args, "rule");
+          const moduleName = args.module === undefined ? undefined : stringField(args, "module");
+          const found = await check(projectRoot, args.file === undefined ? undefined : stringField(args, "file"), {
+            buildGraph: warm.refresh,
+            ...(rule === undefined ? {} : { rules: [rule] }),
+            ...(moduleName === undefined ? {} : { modules: [moduleName] }),
+          });
+          result = presentCheck(found);
           break;
+        }
         case "rules":
           result = await rules(projectRoot, stringField(args, "path"));
           break;

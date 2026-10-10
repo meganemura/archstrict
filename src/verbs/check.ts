@@ -1260,6 +1260,10 @@ function formatViolation(v: AnyViolation): string[] {
 // 60 lines of grouped detail stays inside one screen and one tool-display
 // page even before the fixed footer below is added.
 export const CHECK_DETAIL_LINE_CAP = 60;
+// The text report prints every violation up to this count. Past it, the
+// report groups. The MCP check tool uses the same cut, so it does not
+// return the list the text report already refused to print.
+export const CHECK_FULL_LIST_LIMIT = 20;
 // Not a real module: rule 2 (cycle) and every rule reporting at
 // config.configPath have no module of their own to group under, and a
 // filter or a group naming a real module could never match one of these.
@@ -1394,28 +1398,6 @@ function filterArgsFor(group: ViolationGroup): string {
     : `--rule ${group.rule} --module ${group.moduleName}`;
 }
 
-// A single group already carries exactly one rule and one module - either
-// because the whole project happens to have only one, or because `--rule`/
-// `--module` already narrowed to it. Its own drill-down `do:` would repeat
-// the same filter and print this same truncated text again, not new
-// information, so full violations are listed directly up to the cap
-// instead, and `--json` (never truncated) is offered for the remainder.
-function appendSingleGroupDetail(lines: string[], group: ViolationGroup): void {
-  const filterArgs = filterArgsFor(group);
-  let shown = 0;
-  for (const violation of group.violations) {
-    const block = formatViolation(violation);
-    const reserve = shown + 1 < group.violations.length ? 2 : 0;
-    if (lines.length + block.length + reserve > CHECK_DETAIL_LINE_CAP) break;
-    lines.push(...block);
-    shown++;
-  }
-  if (shown < group.violations.length) {
-    lines.push(`violations omitted: ${group.violations.length - shown}`);
-    lines.push(`do: archstrict check ${filterArgs} --json`);
-  }
-}
-
 // Keeps one rule's own module/count listing on one physical line even when
 // a project has dozens of surface-less modules sharing that rule. Other
 // `do:` lines in this file already run past a typical terminal width, but
@@ -1460,42 +1442,74 @@ function summarizeOmittedGroups(omitted: readonly ViolationGroup[]): string[] {
   return lines;
 }
 
-function groupedViolationLines(result: CheckResult): string[] {
-  const ordered = groupViolations(result.violations);
-  const lines = [
-    `violations: ${result.violations.length} in ${ordered.length} group${ordered.length === 1 ? "" : "s"}`,
-    ...(result.dominantModule !== undefined ? dominantModuleLines(result) : surfaceLessNote(result)),
-  ];
-  if (ordered.length === 1) {
-    appendSingleGroupDetail(lines, ordered[0]!);
-    return lines;
-  }
-
-  const blocks = ordered.map((group) => [
+function groupBlock(group: ViolationGroup): string[] {
+  return [
     `[${group.rule}] module '${group.moduleName}': ${group.violations.length} violation(s)`,
     "  example:",
     ...formatViolation(group.violations[0]!),
     `  do: archstrict check ${filterArgsFor(group)}`,
-  ]);
+  ];
+}
 
+// The lines groupedViolationLines prints, before they become text. The MCP
+// check tool returns this same selection: the groups that fit, one example
+// each, and the same drill-down command. A second copy of the cap would
+// show a group the text had already cut.
+type GroupedDetail = {
+  ordered: ViolationGroup[];
+  notes: string[];
+  shown: ViolationGroup[];
+  omitted: ViolationGroup[];
+  singleListed: AnyViolation[];
+  singleOmitted: number;
+};
+
+function selectGroupedDetail(result: CheckResult): GroupedDetail {
+  const ordered = groupViolations(result.violations);
+  const notes = result.dominantModule !== undefined ? dominantModuleLines(result) : surfaceLessNote(result);
+  const headerLength = 1 + notes.length;
+  // A single group already carries exactly one rule and one module, either
+  // because the whole project has only one, or because `--rule`/`--module`
+  // already narrowed to it. Its own drill-down would repeat the same filter
+  // and print this same truncated text again, so the text lists violations
+  // directly up to the cap, and `--json` (never truncated) is the remainder.
+  if (ordered.length === 1) {
+    const group = ordered[0]!;
+    const listed: AnyViolation[] = [];
+    let used = headerLength;
+    for (const violation of group.violations) {
+      const block = formatViolation(violation);
+      const reserve = listed.length + 1 < group.violations.length ? 2 : 0;
+      if (used + block.length + reserve > CHECK_DETAIL_LINE_CAP) break;
+      listed.push(violation);
+      used += block.length;
+    }
+    return {
+      ordered,
+      notes,
+      shown: [group],
+      omitted: [],
+      singleListed: listed,
+      singleOmitted: group.violations.length - listed.length,
+    };
+  }
+
+  const blocks = ordered.map(groupBlock);
   // First pass: a cheap 2-line placeholder for the footer (the common
   // case - most cuts omit groups sharing one, or a handful of, rules).
   let shown = 0;
-  let total = lines.length;
+  let total = headerLength;
   for (const block of blocks) {
     const reserve = shown + 1 < ordered.length ? 2 : 0;
     if (total + block.length + reserve > CHECK_DETAIL_LINE_CAP) break;
     total += block.length;
     shown++;
   }
-
   // Every group fit: no footer at all, so the placeholder's guess never
   // gets checked against a real one (there is no omitted group to summarize).
   if (shown === ordered.length) {
-    lines.push(...blocks.flat());
-    return lines;
+    return { ordered, notes, shown: ordered, omitted: [], singleListed: [], singleOmitted: 0 };
   }
-
   // The real footer (one line per distinct omitted rule, plus one `do:`)
   // can need more than the 2-line placeholder once omitted groups span
   // several rules - shrink `shown` until the real total fits, rather than
@@ -1503,28 +1517,110 @@ function groupedViolationLines(result: CheckResult): string[] {
   while (shown > 0) {
     const footer = summarizeOmittedGroups(ordered.slice(shown));
     const shownLines = blocks.slice(0, shown).flat();
-    if (lines.length + shownLines.length + footer.length <= CHECK_DETAIL_LINE_CAP) {
-      lines.push(...shownLines, ...footer);
-      return lines;
+    if (headerLength + shownLines.length + footer.length <= CHECK_DETAIL_LINE_CAP) {
+      return {
+        ordered,
+        notes,
+        shown: ordered.slice(0, shown),
+        omitted: ordered.slice(shown),
+        singleListed: [],
+        singleOmitted: 0,
+      };
     }
     shown--;
   }
   // Nothing at all fit alongside the header/note - the omitted summary
   // still prints alone, rather than the header claiming groups exist with
   // no detail about any of them.
-  lines.push(...summarizeOmittedGroups(ordered));
+  return { ordered, notes, shown: [], omitted: ordered, singleListed: [], singleOmitted: 0 };
+}
+
+export type GroupedToolGroup = {
+  rule: string;
+  module: string;
+  count: number;
+  example: AnyViolation;
+  do: string;
+};
+
+export type GroupedToolCheck = {
+  violations: number;
+  groupCount: number;
+  groups: GroupedToolGroup[];
+  omitted: { rule: string; module: string; count: number }[];
+  do?: string;
+};
+
+// One example and one drill-down per group the text report shows. A single
+// group has no second group to open, and its text `do:` is the unbounded
+// `--json` list; the tool keeps one example and that same command.
+export function groupedToolCheck(result: CheckResult): GroupedToolCheck {
+  const selected = selectGroupedDetail(result);
+  if (selected.ordered.length === 1) {
+    const group = selected.ordered[0]!;
+    const filter = filterArgsFor(group);
+    return {
+      violations: result.violations.length,
+      groupCount: 1,
+      groups: [{
+        rule: group.rule,
+        module: group.moduleName,
+        count: group.violations.length,
+        example: group.violations[0]!,
+        do: `archstrict check ${filter} --json`,
+      }],
+      omitted: [],
+    };
+  }
+  const omitted = selected.omitted.map((group) => ({
+    rule: group.rule,
+    module: group.moduleName,
+    count: group.violations.length,
+  }));
+  return {
+    violations: result.violations.length,
+    groupCount: selected.ordered.length,
+    groups: selected.shown.map((group) => ({
+      rule: group.rule,
+      module: group.moduleName,
+      count: group.violations.length,
+      example: group.violations[0]!,
+      do: `archstrict check ${filterArgsFor(group)}`,
+    })),
+    omitted,
+    ...(omitted.length > 0 ? { do: `archstrict check ${filterArgsFor(selected.omitted[0]!)}` } : {}),
+  };
+}
+
+function groupedViolationLines(result: CheckResult): string[] {
+  const selected = selectGroupedDetail(result);
+  const lines = [
+    `violations: ${result.violations.length} in ${selected.ordered.length} group${selected.ordered.length === 1 ? "" : "s"}`,
+    ...selected.notes,
+  ];
+  if (selected.ordered.length === 1) {
+    for (const violation of selected.singleListed) lines.push(...formatViolation(violation));
+    if (selected.singleOmitted > 0) {
+      lines.push(`violations omitted: ${selected.singleOmitted}`);
+      lines.push(`do: archstrict check ${filterArgsFor(selected.ordered[0]!)} --json`);
+    }
+    return lines;
+  }
+  for (const group of selected.shown) lines.push(...groupBlock(group));
+  if (selected.omitted.length > 0) lines.push(...summarizeOmittedGroups(selected.omitted));
   return lines;
 }
 
-// Up to 20 violations print in full, unchanged from before grouping
-// existed: a `check <file>` run rarely exceeds this, and a project's first
-// whole-project run past it is exactly the shape grouping exists for.
+// Up to CHECK_FULL_LIST_LIMIT violations print in full, unchanged from
+// before grouping existed: a `check <file>` run rarely exceeds this, and a
+// project's first whole-project run past it is exactly the shape grouping
+// exists for.
 export function formatText(result: CheckResult): string {
   const lines: string[] = focusNoteLines(result).map((note) => `note: ${note}`);
-  lines.push(...(result.violations.length <= 20
+  lines.push(...(result.violations.length <= CHECK_FULL_LIST_LIMIT
     ? result.violations.flatMap(formatViolation)
     : groupedViolationLines(result)));
-  if (result.violations.length <= 20) {
+  if (result.violations.length <= CHECK_FULL_LIST_LIMIT) {
     lines.push(...(result.dominantModule !== undefined ? dominantModuleLines(result) : surfaceLessNote(result)));
   }
   for (const s of result.suggestions) {

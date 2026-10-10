@@ -12,7 +12,8 @@ import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync, utimesSync
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { createArchstrictMcpServer } from "../src/mcp-server.js";
-import { check } from "../src/verbs/check.js";
+import { ReportError } from "../src/report-error.js";
+import { check, formatText, groupViolations } from "../src/verbs/check.js";
 import { rules } from "../src/verbs/rules.js";
 import { search } from "../src/verbs/search.js";
 import { simulate } from "../src/verbs/simulate.js";
@@ -64,7 +65,11 @@ test("lists exactly four tools with their full input schemas", () => project(asy
   const result = await client.listTools();
   expect(result.tools.map(tool => tool.name)).toEqual(names);
   expect(result.tools.map(tool => tool.inputSchema)).toEqual([
-    { type: "object", properties: { file: { type: "string", description: "A project-relative path that limits the report to that file." } }, additionalProperties: false },
+    { type: "object", properties: {
+      file: { type: "string", description: "A project-relative path that limits the report to that file." },
+      rule: { type: "string", description: "A rule id. The report includes only violations of that rule." },
+      module: { type: "string", description: "A declared module name. The report includes only violations for that module." },
+    }, additionalProperties: false },
     { type: "object", properties: { path: { type: "string", description: "A project-relative path, including a path that does not exist yet." } }, required: ["path"], additionalProperties: false },
     { type: "object", properties: { query: { type: "string", description: "The public export name to search for." } }, required: ["query"], additionalProperties: false },
     { type: "object", properties: { changes: { type: "array", description: "The proposed file changes to preview in memory.", items: {
@@ -103,6 +108,127 @@ test("check preserves file focus", () => project(async (root, client) => {
   expect(await json(client, "check", { file: join(root, "src/app/index.ts") })).toEqual(await check(root, join(root, "src/app/index.ts")));
 }));
 
+test("check rule and module filters match the verb", () => project(async (root, client) => {
+  put(root, "src/app/index.ts", 'import { answer } from "../lib/internal.js";\nexport const result = answer;');
+  expect(await json(client, "check", { rule: "public-surface-bypass" })).toEqual(
+    await check(root, undefined, { rules: ["public-surface-bypass"] }));
+  expect(await json(client, "check", { module: "lib" })).toEqual(
+    await check(root, undefined, { modules: ["lib"] }));
+  expect(await json(client, "check", { rule: "public-surface-bypass", module: "lib" })).toEqual(
+    await check(root, undefined, { rules: ["public-surface-bypass"], modules: ["lib"] }));
+  const empty = await json(client, "check", { rule: "cycle", module: "app" });
+  expect(empty).toEqual(await check(root, undefined, { rules: ["cycle"], modules: ["app"] }));
+  expect(empty.violations).toEqual([]);
+}));
+
+test("an unknown rule or module keeps the verb's do line", () => project(async (root, client) => {
+  for (const [args, options] of [
+    [{ rule: "nope" }, { rules: ["nope"] }],
+    [{ module: "missing" }, { modules: ["missing"] }],
+  ] as const) {
+    let caught: unknown;
+    try {
+      await check(root, undefined, options);
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(ReportError);
+    const report = caught as ReportError;
+    expect(report.do.startsWith("archstrict check")).toBe(true);
+    expect(await call(client, "check", args)).toEqual({
+      isError: true,
+      content: [{ type: "text", text: `${report.message}\ndo: ${report.do}` }],
+    });
+  }
+}));
+
+function checkCommands(text: string): { group: string[]; omitted?: string } {
+  const lines = text.split("\n");
+  const end = lines.findIndex((line) => line.startsWith("modules: "));
+  const details = lines.slice(0, end);
+  const group = details
+    .filter((line) => line.startsWith("  do: archstrict check "))
+    .map((line) => line.slice("  do: ".length));
+  const plain = details
+    .filter((line) => line.startsWith("do: archstrict check "))
+    .map((line) => line.slice("do: ".length));
+  return { group, omitted: plain[0] };
+}
+
+type GroupedPayload = {
+  violations: number;
+  groupCount: number;
+  groups: { rule: string; module: string; count: number; example: unknown; do: string }[];
+  omitted: { rule: string; module: string; count: number }[];
+  do?: string;
+  modules: number;
+};
+
+function expectGrouped(payload: GroupedPayload, full: Awaited<ReturnType<typeof check>>) {
+  expect(payload.violations).toBe(full.violations.length);
+  expect(payload.violations).toBeGreaterThan(20);
+  expect(Array.isArray(payload.violations)).toBe(false);
+  expect(payload.modules).toBe(full.modules);
+  const commands = checkCommands(formatText(full));
+  const grouped = groupViolations(full.violations);
+  if (grouped.length === 1) {
+    expect(payload.groups.map((group) => group.do)).toEqual([commands.omitted]);
+    expect(commands.group).toEqual([]);
+    expect(payload.do).toBeUndefined();
+    expect(payload.omitted).toEqual([]);
+  } else {
+    expect(payload.groups.map((group) => group.do)).toEqual(commands.group);
+    expect(payload.do).toBe(commands.omitted);
+  }
+  expect(payload.groupCount).toBe(grouped.length);
+  expect(payload.groups.length + payload.omitted.length).toBe(grouped.length);
+  const shown = new Set(payload.groups.map((group) => `${group.rule}\0${group.module}`));
+  expect(payload.omitted).toEqual(grouped
+    .filter((group) => !shown.has(`${group.rule}\0${group.moduleName}`))
+    .map((group) => ({ rule: group.rule, module: group.moduleName, count: group.violations.length })));
+  for (const entry of payload.groups) {
+    const match = grouped.find((group) => group.rule === entry.rule && group.moduleName === entry.module);
+    expect(match).toBeDefined();
+    expect(entry.count).toBe(match!.violations.length);
+    expect(entry.example).toEqual(match!.violations[0]);
+  }
+  const counted = payload.groups.reduce((sum, group) => sum + group.count, 0)
+    + payload.omitted.reduce((sum, group) => sum + group.count, 0);
+  expect(counted).toBe(full.violations.length);
+}
+
+test("past 20 violations, one group returns one example and the text do", () => project(async (root, client) => {
+  for (let index = 0; index < 21; index++) {
+    put(root, `src/app/f${index}.ts`, 'import { answer } from "../lib/internal.js";\nexport const result = answer;\n');
+  }
+  const full = await check(root);
+  expect(groupViolations(full.violations)).toHaveLength(1);
+  expectGrouped(await json(client, "check"), full);
+  expect(await json(client, "check", { rule: "cycle" })).toEqual(await check(root, undefined, { rules: ["cycle"] }));
+}));
+
+test("past 20 violations, many groups match the text report's examples and do lines", () => project(async (root, client) => {
+  const names = Array.from({ length: 21 }, (_, index) => `m${String(index).padStart(2, "0")}`);
+  for (const name of names) put(root, `src/${name}/secret.ts`, "export const value = 1;\n");
+  const imports = names.map((name, index) => `import { value as v${index} } from "../${name}/secret.js";`).join("\n");
+  const sum = names.map((_, index) => `v${index}`).join(" + ");
+  put(root, "src/hub/main.ts", `${imports}\nexport const value = ${sum};\n`);
+  put(root, "archstrict.config.ts", `export default ${JSON.stringify({
+    declaredModules: ["hub", ...names].map((name) => ({ name, glob: `src/${name}/**` })),
+    exclude: ["*.ts", "src/app/**", "src/lib/**"],
+    because: "Keep imports on the public surface.",
+  })};`);
+  const full = await check(root);
+  const payload = await json(client, "check") as GroupedPayload;
+  expectGrouped(payload, full);
+  expect(payload.groups.length).toBeGreaterThan(1);
+  expect(payload.omitted.length).toBeGreaterThan(0);
+  const narrowed = await json(client, "check", { module: names[0]! });
+  expect(narrowed).toEqual(await check(root, undefined, { modules: [names[0]!] }));
+  expect(Array.isArray(narrowed.violations)).toBe(true);
+  expect(narrowed.violations.length).toBeLessThanOrEqual(20);
+}));
+
 test("rules equals the complete plain verb result", () => project(async (root, client) => {
   expect(await json(client, "rules", { path: join(root, "src/app/new.ts") })).toEqual(await rules(root, join(root, "src/app/new.ts")));
 }));
@@ -124,6 +250,8 @@ test.each([
   ["rules", {}, "path must be a string"],
   ["search", { query: 42 }, "query must be a string"],
   ["check", { file: null }, "file must be a string"],
+  ["check", { rule: 1 }, "rule must be a string"],
+  ["check", { module: null }, "module must be a string"],
   ["check", { prove: true }, "Unexpected argument: prove"],
   ["simulate", {}, "changes must be an array"],
   ["simulate", { changes: [null] }, "Each change must be an object"],
