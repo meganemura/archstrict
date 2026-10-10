@@ -170,20 +170,13 @@ export type TodoIndex = {
 export function buildTodoIndex(entries: readonly TodoEntry[]): TodoIndex {
   const byFingerprint = new Map<string, TodoEntry>();
   for (const entry of entries) {
-    // Keyed by a FRESH recompute from the entry's own stored fields
-    // (already project-relative - readTodoFile normalizes a legacy
-    // absolute one before this ever runs), never by a stored fingerprint
-    // string: this file's own entries carry no such field at all - a
-    // stored copy could only ever drift from what matching actually needs
-    // (today's recompute), and a reader wanting to name an entry uses its
-    // own line in the file (ParsedTodoFile.entryLocation) instead. A rule
-    // whose formula hasn't changed recomputes to the exact same value it
-    // always had; a rule whose formula changed (type-leak's own path
-    // exclusion, tag-order's own sequence-display exclusion) recomputes
-    // to the value it always should have had, with no rule-specific
-    // rewrite needed at all - stableEvidence is a pure function of the
-    // evidence text alone, unaffected by which archstrict version produced
-    // it.
+    // Keyed by a fresh recompute from the entry's own stored fields, never
+    // by a stored fingerprint string: entries carry no such field, and a
+    // stored copy could drift from what matching needs today.
+    // A rule whose formula has not changed recomputes to the same value; a
+    // rule whose formula changed recomputes to the value it should have,
+    // with no rule-specific rewrite, because stableEvidence is a pure
+    // function of the evidence text alone.
     byFingerprint.set(fingerprintOf(entry), entry);
   }
   return { byFingerprint };

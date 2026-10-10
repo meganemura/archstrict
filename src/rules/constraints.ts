@@ -480,12 +480,6 @@ export function checkPoint(graph: ModuleGraph, config: Config, focus?: string): 
   return computePoint(graph, config, focus).violations.sort(byPosition);
 }
 
-// Stryker disable next-line BlockStatement: The check verb calls the three focused checks directly; this aggregate wrapper has no CLI behavior.
-export function checkConstraints(graph: ModuleGraph, config: Config): ConstraintViolation[] {
-  // Stryker disable next-line ArrayDeclaration: The check verb calls the three focused checks directly; this aggregate result has no CLI behavior.
-  return [...checkAllowDeny(graph, config), ...checkOrder(graph, config), ...checkPoint(graph, config)];
-}
-
 // All configured allowDeny/order/point rules, each with how many real
 // edges reached the point where it could have judged one - not just
 // whether it violated. checkEmptyRuleSet (rule 4) uses this to flag a

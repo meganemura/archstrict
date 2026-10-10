@@ -95,8 +95,7 @@ function translateSegment(segment: string): string {
   return out;
 }
 
-// Exported for the parity test against `git check-ignore`.
-export function parseGitignore(text: string): Rule[] {
+function parseGitignore(text: string): Rule[] {
   const rules: Rule[] = [];
   for (const rawLine of text.split("\n")) {
     let line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;

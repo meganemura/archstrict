@@ -34,7 +34,7 @@ const BECAUSE = "a file matching no declared module is unchecked, not passing";
 // no `surface` would make a single-file module entirely private (its
 // default surface, index.ts, resolves to a different file), so the do:
 // text always carries the file's own name as `surface` for a file group.
-export function uncoveredViolationFor(file: string, rootDir: string, group: NamedCandidateGroup): Violation {
+export function uncoveredViolationFor(file: string, group: NamedCandidateGroup): Violation {
   // `path` stays absolute (a location every other rule's own `path`
   // points at) - only the glob suggested in `do` needs to be
   // project-relative, since that's a value meant to be pasted directly
@@ -84,7 +84,7 @@ export function checkUncoveredModules(
     const group = groupForRelFile(relFiles[i]!, groups);
     // Every file in `relFiles` was grouped by the same call, so a match
     // always exists - `suggestUncovered` never drops a file it was given.
-    return [uncoveredViolationFor(file, graph.rootDir, group!)];
+    return [uncoveredViolationFor(file, group!)];
   // Code-unit order (`<`/`>`), not localeCompare: a locale-aware compare
   // can order the same two paths differently on different machines.
   }).sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));

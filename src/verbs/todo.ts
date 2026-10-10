@@ -89,8 +89,7 @@ function refuseIfUncovered(violations: AnyViolation[], relativePath: ModuleGraph
   );
 }
 
-export function freezeOrPrune(
-  projectRoot: string,
+function freezeOrPrune(
   graph: ModuleGraph,
   config: Config,
   violations: AnyViolation[],
@@ -100,15 +99,9 @@ export function freezeOrPrune(
   // Stryker disable next-line MethodExpression: The module-name filter also excludes nonfreezable violations.
   const freezable = violations.filter(isFreezable);
 
-  // graph.rootDir, not the raw projectRoot parameter: rootDir is
-  // realpath'd (module-graph.ts's own prepareGraph does this so every
-  // relative-path computation agrees with the paths TypeScript itself
-  // resolved to), while projectRoot may not be (e.g. macOS's own
-  // /tmp -> /private/tmp). Reading and normalizing an absolute stored path
-  // against the wrong base would silently fail to relativize it back to
-  // what a live violation's own (realpath'd) path relativizes to,
-  // un-matching an otherwise-identical entry - the same reasoning
-  // check.ts's own applyTodo already applies.
+  // rootDir is realpath'd (module-graph.ts's own prepareGraph does this so
+  // every relative-path computation agrees with the paths TypeScript itself
+  // resolved to).
   const rootDir = graph.rootDir;
   const parsed = readTodoFile(rootDir);
   // "First run" is the file's own absence. A later run only prunes.
@@ -222,5 +215,5 @@ export async function todo(projectRoot: string): Promise<TodoResult> {
     surface: config.surface,
   });
   const result = runRules(graph, config);
-  return freezeOrPrune(projectRoot, graph, config, result.violations);
+  return freezeOrPrune(graph, config, result.violations);
 }

@@ -7,8 +7,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { rules, formatRulesText } from "../src/verbs/rules.js";
-import { checkUncoveredModules, uncoveredViolationFor } from "../src/rules/uncovered.js";
-import { suggestUncovered, groupForRelFile } from "../src/module-candidates.js";
+import { checkUncoveredModules } from "../src/rules/uncovered.js";
 import { checkMustBeEmpty } from "../src/rules/must-be-empty.js";
 import { check, loadConfig } from "../src/verbs/check.js";
 import { checkEdgesCoverage, checkOrder, checkPoint, formatPredicate } from "../src/rules/constraints.js";
@@ -116,9 +115,15 @@ describe("rules", () => {
       // "src/empty" is a directory group under this config (its own
       // src/app, src/shared, src/private, src/future entries all anchor
       // at "src") - old.ts and new.ts share the one "empty" suggestion.
-      const groups = suggestUncovered(["src/empty/old.ts", "src/empty/new.ts"], config.declaredModules);
-      const group = groupForRelFile(`src/empty/${name}`, groups)!;
-      expect(result.uncoveredViolation).toMatchObject(uncoveredViolationFor(path, root, group));
+      expect(result.uncoveredViolation).toMatchObject({
+        rule: "uncovered-module",
+        path,
+        line: 1,
+        column: 1,
+        evidence: `'${path}' is in scope but matches no declared module`,
+        because: "a file matching no declared module is unchecked, not passing",
+        do: 'add { name: "empty", glob: "src/empty/**" } to declaredModules in archstrict.config.ts, or add "src/empty/**" to exclude if it is not module content; then run archstrict init',
+      });
       expect(result.mustBeEmptyViolation).toMatchObject(checkMustBeEmpty([`src/empty/${name}`], config)[0]!);
       for (const violation of [result.uncoveredViolation!, result.mustBeEmptyViolation!]) {
         const text = formatRulesText(result);

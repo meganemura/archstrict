@@ -494,9 +494,7 @@ export type RunRulesOptions = {
   // so every rule runs unscoped in every other case, and either
   // `filterToFile` throws its usual "no such file" error (a missing
   // path), or narrows the unscoped result the same way it always has (a
-  // directory, or any other non-file target - stale-todo and clean-
-  // module-has-todo both report at a module's own directory, which
-  // `filterToFile` can still match directly).
+  // directory, or any other non-file target).
   focus?: string;
 };
 
@@ -504,7 +502,7 @@ export type RunRulesOptions = {
 // `path` - shared so every early-filtering call site above narrows down to
 // precisely the set `filterToFile` would keep from an unscoped run. Most
 // of this file's own violations carry an already-absolute, already-real
-// `path` (an edge's own `fromFile`, or a module's own directory) and are
+// `path` (an edge's own `fromFile`) and are
 // compared directly instead, for the edges the cost of this call would
 // itself add back (checkPublicSurfaceBypass's own comment has the
 // reasoning) - `resolve()` here exists for the one path shape that needs
@@ -636,11 +634,9 @@ export function runRules(graph: ModuleGraph, config: Config, options: RunRulesOp
 // path's own violations — analysis is whole-project, but the report is
 // scoped to the one path asked about. Rule 6 uses a module's surface file
 // as its own `path`, so it CAN match this filter (editing a surface file
-// directly). Rules 2-5 use a module directory or the config file as their
-// own `path`, never a single source file, so they never match this filter
-// by design: a per-file hook cares about the edited file's own edges (rule
-// 1, and rule 6), not a module- or config-level finding that no single
-// file edit could have caused.
+// directly). uncovered-module and must-be-empty report at a project file,
+// so they match this filter. A finding reported only at the config file
+// does not match a single source file.
 //
 // `file` and a violation's own `path` can each name the same real file in
 // a different textual form - one reached through a symlink, the other
@@ -1026,34 +1022,10 @@ function applyFilters(result: CheckResult, options: CheckOptions): CheckResult {
   };
 }
 
-// True when `file` is (a real, existing path to) some module's own
-// surface file - the only kind of path rule 6's own violations are ever
-// reported at (checkTypeLeaks groups every finding under
-// `group.path = surfacePath`). Never forces graph.program: surfaceFiles
-// is plain module metadata, built before anything touches the lazy
-// program/checker getters. A file that does not exist reads as "not a
-// surface file" here (false) rather than throwing - the real, existing
-// ReportError for that case is filterToFile's own, thrown later at its
-// usual point once `focusFile` is given.
-// check()'s own realpath'd target for a `check <file>` run, or undefined
-// for a plain `check`, a named path that doesn't exist, or a named path
-// that exists but isn't a regular file - `statSync(...).isFile()` is the
-// deciding check: a directory's own realpath is just as real as a file's,
-// but scoping the rules below to it is wrong, not merely unhelpful. Each
-// rule this file scopes reports at ONE FILE's own path (public-surface-
-// bypass and the constraint engine at `edge.fromFile`, must-be-empty and
-// uncovered-module at a project file), and compares that path against
-// `focus` directly - a directory can never equal a file's own path, so
-// scoping to one would silently drop every real violation reachable
-// through it, rather than keeping the ones inside it. `stale-todo`
-// reports at a MODULE's own directory, not a file, so `check <a module's
-// directory>` can produce it only by running the full, whole-project
-// logic and letting `filterToFile` keep it afterward, never by scoping
-// runRules to a target no rule reports at. Every other case (undefined, or a missing path) leaves
-// `focus` undefined for the same reason: every rule runs full and
-// unscoped, and `filterToFile` alone decides what survives - for a
-// missing path, that means its own "no such file" error, thrown exactly
-// where it always was.
+// The realpath of a regular file, or undefined for a directory, a missing
+// path, or any other non-file. Scoping `focus` to a directory would match
+// no file-reported violation, so those cases stay unscoped and
+// `filterToFile` decides what survives.
 function tryRealpath(file: string): string | undefined {
   try {
     const target = compilerRealpath(compilerResolve(file));

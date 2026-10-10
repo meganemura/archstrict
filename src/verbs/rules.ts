@@ -93,7 +93,7 @@ function uncoveredViolationForQuery(
   const outsideRelFiles = graph.outsideFiles.map(graph.relativePath);
   const relFiles = exists ? outsideRelFiles : [...outsideRelFiles, rel];
   const groups = suggestUncovered(relFiles, config.declaredModules ?? []);
-  return uncoveredViolationFor(resolvedPath, graph.rootDir, groupForRelFile(rel, groups)!);
+  return uncoveredViolationFor(resolvedPath, groupForRelFile(rel, groups)!);
 }
 
 export async function rules(projectRoot: string, path: string): Promise<RulesResult> {
