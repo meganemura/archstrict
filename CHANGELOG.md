@@ -5,6 +5,10 @@ may change commands, flags, config, or output shape. The version entry will desc
 
 ## Unreleased
 
+### Fixed
+
+- `archstrict check <dir>` reports each violation whose path is that directory or a file inside it, and exits 1 when any of them block. `archstrict check <file>` still reports only that file.
+
 ## 0.2.1 (2026-10-04)
 
 ### Fixed

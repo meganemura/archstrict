@@ -564,10 +564,10 @@ export function runRules(graph: ModuleGraph, config: Config, options: RunRulesOp
 // scoped `check` should still surface the exact moment an edit retires a
 // frozen violation - the file (or, for `check <dir>`, any file under the
 // directory) the STALE ENTRY ITSELF is about, not the file the report
-// happens to be written into. A directory target matches an `entryPath`
-// equal to it or nested under it (`target + "/"` prefix); a file target
-// only ever matches by equality, since a file has no children to nest
-// anything under.
+// happens to be written into. The same directory test applies to every
+// other violation's `path`: equal to the target, or nested under
+// `target + "/"`. A file target still matches only by equality. A file
+// path plus a separator is not a prefix of another file.
 export function filterToFile(result: CheckResult, file: string): CheckResult {
   const resolved = compilerResolve(file);
   if (!existsSync(resolved)) {
@@ -575,15 +575,15 @@ export function filterToFile(result: CheckResult, file: string): CheckResult {
   }
   const target = compilerRealpath(resolved);
   const targetWithSep = target + "/";
+  const matchesTarget = (candidate: string): boolean => {
+    const path = compilerResolve(candidate);
+    return path === target || path.startsWith(targetWithSep);
+  };
   return {
     ...result,
-    violations: result.violations.filter((v) => {
-      if (v.rule === "stale-todo") {
-        const entryPath = compilerResolve(v.entryPath);
-        return entryPath === target || entryPath.startsWith(targetWithSep);
-      }
-      return compilerResolve(v.path) === target;
-    }),
+    violations: result.violations.filter((v) =>
+      matchesTarget(v.rule === "stale-todo" ? v.entryPath : v.path),
+    ),
   };
 }
 

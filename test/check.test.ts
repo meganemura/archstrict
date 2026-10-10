@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { init } from "../src/verbs/init.js";
 import { todo } from "../src/verbs/todo.js";
-import { check, filterToFile, formatText, loadConfig } from "../src/verbs/check.js";
+import { check, filterToFile, formatText, hasBlockingViolations, loadConfig } from "../src/verbs/check.js";
 import type { Prover } from "../src/rules/config-meaning.js";
 import { ReportError } from "../src/report-error.js";
 import { buildModuleGraph, buildPreparedGraph, prepareGraph } from "../src/module-graph.js";
@@ -1411,6 +1411,71 @@ describe("check", () => {
       expect(scopedStale).toBeDefined();
       expect(scopedStale!.path).toBe(join(realpathSync(root), "archstrict.todo.json")); // still points at the todo file, not aPath
       expect(after.violations).toEqual(filterToFile(full, aPath).violations);
+    });
+  });
+
+  test("check <dir> lists violations inside the directory and check <file> stays on that file", async () => {
+    await withTempProject(async (root) => {
+      mkdirSync(join(root, "src", "billing"), { recursive: true });
+      mkdirSync(join(root, "src", "ledger"), { recursive: true });
+      mkdirSync(join(root, "src", "shared"), { recursive: true });
+      mkdirSync(join(root, "src", "billing-extra"), { recursive: true });
+      writeFileSync(
+        join(root, "src", "billing", "index.ts"),
+        'import { secret } from "../shared/secret.js";\nimport { ledger } from "../ledger/index.js";\nexport const bill = secret + ledger;\n',
+      );
+      writeFileSync(
+        join(root, "src", "ledger", "index.ts"),
+        'import { bill } from "../billing/index.js";\nexport const ledger = bill;\n',
+      );
+      writeFileSync(join(root, "src", "shared", "index.ts"), "export const shared = 1;\n");
+      writeFileSync(join(root, "src", "shared", "secret.ts"), "export const secret = 1;\n");
+      writeFileSync(
+        join(root, "src", "billing-extra", "index.ts"),
+        'import { secret } from "../shared/secret.js";\nexport const extra = secret;\n',
+      );
+      writeFileSync(
+        join(root, "tsconfig.json"),
+        '{"compilerOptions":{"module":"nodenext","moduleResolution":"nodenext","strict":true,"skipLibCheck":true}}',
+      );
+      writeFileSync(join(root, "archstrict.config.ts"), [
+        "export default {",
+        "  declaredModules: [",
+        '    { name: "billing", glob: "src/billing/**", surface: "index.ts" },',
+        '    { name: "ledger", glob: "src/ledger/**", surface: "index.ts" },',
+        '    { name: "shared", glob: "src/shared/**", surface: "index.ts" },',
+        '    { name: "billing-extra", glob: "src/billing-extra/**", surface: "index.ts" },',
+        "  ],",
+        '  exclude: ["archstrict.config.ts", "tsconfig.json"],',
+        '  because: "test architecture",',
+        "};",
+      ].join("\n"));
+
+      const billingDir = join(root, "src", "billing");
+      const billingFile = realpathSync(join(billingDir, "index.ts"));
+      const extraFile = realpathSync(join(root, "src", "billing-extra", "index.ts"));
+      const full = await check(root);
+      const inside = full.violations.filter(
+        (violation) => violation.path === realpathSync(billingDir) || violation.path.startsWith(realpathSync(billingDir) + "/"),
+      );
+      expect(inside.map((violation) => violation.rule).sort()).toEqual(["cycle", "public-surface-bypass"]);
+
+      const dirResult = await check(root, billingDir);
+      expect(hasBlockingViolations(dirResult)).toBe(true);
+      expect(dirResult.violations).toEqual(inside);
+      const dirText = formatText(dirResult);
+      expect(dirText).toContain(`[public-surface-bypass] ${billingFile}:`);
+      expect(dirText).toContain(`[cycle] ${billingFile}:`);
+      expect(dirText).not.toContain(extraFile);
+
+      const fileResult = await check(root, billingFile);
+      const onFile = full.violations.filter((violation) => violation.path === billingFile);
+      expect(fileResult.violations).toEqual(onFile);
+      const fileText = formatText(fileResult);
+      expect(fileText).toContain(`[public-surface-bypass] ${billingFile}:`);
+      expect(fileText).toContain(`[cycle] ${billingFile}:`);
+      expect(fileText).not.toContain(extraFile);
+      expect(hasBlockingViolations(fileResult)).toBe(true);
     });
   });
 
