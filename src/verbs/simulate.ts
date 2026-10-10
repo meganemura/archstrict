@@ -151,8 +151,15 @@ export async function simulate(
   // passes the same flag because its files are not on disk.
   const baseline = buildModuleGraphForRules(options, { persistCache: false });
   const beforeLocator = createConfigLocator(beforeConfig);
-  const mode: SimulateMode = simulateOptions.wholeProject ? "whole-project" : "scoped";
-  const focusPaths = simulateOptions.wholeProject ? undefined : [...contents.keys()];
+  // Scoped focus reports a violation only when its path is one of the
+  // changed files. A new surface, or a new exclude, moves a violation
+  // onto a file the change set does not name. That focus then reports
+  // an empty delta. A change set that contains archstrict.config.ts
+  // therefore uses whole-project mode even when the caller omitted the
+  // flag. The flag still forces that mode for a source-only change set.
+  const wholeProject = simulateOptions.wholeProject === true || proposedSource !== undefined;
+  const mode: SimulateMode = wholeProject ? "whole-project" : "scoped";
+  const focusPaths = wholeProject ? undefined : [...contents.keys()];
   const before = evaluate(baseline, beforeConfig, beforeLocator, focusPaths);
   const added = new Set<string>();
   const deleted = new Set<string>();

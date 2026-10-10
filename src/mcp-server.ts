@@ -94,6 +94,9 @@ export function createArchstrictMcpServer(projectRoot: string): Server {
             }
             return { path, content: entry.content };
           });
+          // simulate selects whole-project mode when the change set
+          // contains archstrict.config.ts. This call passes no mode of
+          // its own, so the tool uses that same choice.
           result = await simulate(projectRoot, changes);
           break;
         }

@@ -91,6 +91,7 @@ test("scoped simulation reports changed-file violations and whole-project mode k
   const scoped = await simulate(root, changes);
   expect(scoped.mode).toBe("scoped");
   expect(scoped.added).toEqual([]);
+  expect(formatSimulateText(scoped).startsWith("mode: scoped\n")).toBe(true);
 
   const whole = await simulate(root, changes, { wholeProject: true });
   expect(whole.mode).toBe("whole-project");
@@ -375,8 +376,8 @@ test("identical proposed configs preserve the baseline violation set", async () 
       const baseline = await check(root);
       const before = snapshot(root);
       expect(await simulate(root, [{ path: "archstrict.config.ts", content: config }])).toEqual({
-        mode: "scoped", added: [], resolved: [],
-        unchangedCount: baseline.violations.filter(v => v.path === join(root, "archstrict.config.ts")).length,
+        mode: "whole-project", added: [], resolved: [],
+        unchangedCount: baseline.violations.length,
       });
       expect(snapshot(root)).toEqual(before);
     });
@@ -391,6 +392,31 @@ function realCheck(root: string): AnyViolation[] {
   expect(Array.isArray(result.violations)).toBe(true);
   return result.violations;
 }
+
+test("a config-only change set reports a resolved bypass without --whole-project", () => project(async root => {
+  configure(root, { exclude: [] });
+  put(root, "src/b/private.ts", "export const value = 1;");
+  put(root, "src/a/index.ts", 'import { value } from "../b/private.js";');
+  const proposed = `export default ${JSON.stringify({
+    declaredModules: [{ name: "a", glob: "src/a/**" }, { name: "b", glob: "src/b/**", surface: ["index.ts", "private.ts"] }],
+    because: "Publish the value as a supported entry point.",
+  })};`;
+  const changes = [{ path: "archstrict.config.ts", content: proposed }];
+  const result = await simulate(root, changes);
+  expect(result.resolved.map(v => v.rule)).toEqual(["public-surface-bypass"]);
+  expect(formatSimulateText(result).startsWith("mode: whole-project\nadded: 0; resolved: 1; unchanged: 1\n")).toBe(true);
+  const sourceOnly = await simulate(root, [{ path: "src/a/index.ts", content: "export const value = 3;" }]);
+  expect(formatSimulateText(sourceOnly).startsWith("mode: scoped\nadded: 0; resolved: 1; unchanged: 0\n")).toBe(true);
+  const json = cli(root, JSON.stringify({ changes }));
+  expect(json.status).toBe(0);
+  expect(JSON.parse(json.stdout)).toMatchObject({
+    mode: "whole-project",
+    resolved: expect.arrayContaining([expect.objectContaining({ rule: "public-surface-bypass" })]),
+  });
+  const text = cli(root, JSON.stringify({ changes }), []);
+  expect(text.stdout.startsWith("mode: whole-project\n")).toBe(true);
+  expect(text.stdout).toContain("[public-surface-bypass]");
+}));
 
 test("a proposed module surface matches two real CLI checks on the same root", () => project(async root => {
   configure(root, { exclude: [] });
@@ -468,6 +494,7 @@ test("simulate leaves the edge cache directory absent", () => project(async root
   expect(existsSync(cacheDir)).toBe(false);
   const result = await simulate(root, [{ path: "src/a/index.ts", content: "export const value = 3;" }]);
   expect(result).toEqual({ mode: "scoped", added: [], resolved: [], unchangedCount: 0 });
+  expect(formatSimulateText(result)).toBe("mode: scoped\nadded: 0; resolved: 0; unchanged: 0\n");
   expect(existsSync(cacheDir)).toBe(false);
 }));
 

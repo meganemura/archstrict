@@ -17,6 +17,7 @@ may change commands, flags, config, or output shape. The version entry will desc
 
 ### Fixed
 
+- A change set that contains `archstrict.config.ts` previews in whole-project mode without `--whole-project`. A source-only change stays scoped. The MCP simulate tool uses the same choice. `archstrict.config.ts` matches the PreToolUse hook's extension filter, so that preview runs inside the hook's existing time budget.
 - The Prisma and VS Code config converters now start when an absolute path reaches them through a symlink. `fileURLToPath(import.meta.url)` names the real file, and `process.argv[1]` can keep the symlink path. The check still accepts an argv string that already equals that file, and it also accepts `realpath` of argv.
 - `archstrict check <dir>` reports a type leak at a surface file inside that directory, and exits 1 when that leak blocks. `archstrict check <file>` still reports a type leak only when that file is a module surface.
 - `archstrict check <dir>` reports each violation whose path is that directory or a file inside it, and exits 1 when any of them block. `archstrict check <file>` still reports only that file.

@@ -16,6 +16,7 @@ Use `null` to delete a file in the simulation.
 By default, the command reports only violations whose `path` is one of the changed files.
 It uses the same focused type-leak analysis as `check <file>` when a changed file is a module surface.
 Use `--whole-project` when a proposal can create a violation on an unchanged file, such as a new target that makes an existing import resolvable.
+A change set that contains `archstrict.config.ts` selects whole-project mode on its own.
 Whole-project mode also suits CI and multi-file refactors that need the complete delta.
 It compares the proposal with the project on disk and leaves the files unchanged.
 
@@ -49,7 +50,8 @@ The comparison uses the same fingerprints as todo tracking:
 Unchanged violations contribute to the count; the result does not list their values.
 A changed fingerprint can produce one resolved violation and one added violation for the same underlying problem.
 
-`mode` states whether the default changed-file scope or `--whole-project` ran.
+`mode` is `whole-project` when `--whole-project` is set, or when the change set contains `archstrict.config.ts`.
+Otherwise `mode` is `scoped`.
 
 Without `--json`, the first two lines give a summary such as:
 
@@ -69,6 +71,14 @@ Set its `content` to the full proposed config source.
 You can combine this entry with source changes or submit it alone.
 The baseline uses the config on disk; the proposed check uses the supplied config.
 No separate flag or field is required.
+That change set runs in whole-project mode, so a bypass resolved on an unchanged file appears in `resolved`.
+
+`archstrict.config.ts` matches the PreToolUse hook's extension filter (`.ts`, `.tsx`, `.mts`, `.cts`).
+A config edit therefore runs this whole-project preview inside the hook's existing time budget.
+The budget is 10 seconds by default.
+Set `ARCHSTRICT_PRETOOLUSE_TIMEOUT_MS` to change it, in milliseconds.
+When the preview exceeds that budget, the hook stays silent.
+The hook keeps its existing timeout handling.
 
 ```sh
 printf '%s\n' '{"changes":[{"path":"archstrict.config.ts","content":"export default { declaredModules: [{ name: \"app\", glob: \"src/app/**\" }, { name: \"lib\", glob: \"src/lib/**\", surface: [\"index.ts\", \"private.ts\"] }], exclude: [\"*.ts\"], because: \"Publish the library value as a supported entry point.\" };"}]}' | archstrict simulate --json
@@ -87,7 +97,9 @@ Simulation leaves archstrict.todo.json unchanged.
 
 ## MCP
 
-The MCP `simulate` tool accepts the same `changes` array in its arguments and uses scoped mode.
+The MCP `simulate` tool accepts the same `changes` array in its arguments and uses the same mode choice.
+A source-only change set stays scoped.
+A change set that contains `archstrict.config.ts` uses whole-project mode.
 After the MCP connection is initialized, send a JSON-RPC `tools/call` request:
 
 ```json
