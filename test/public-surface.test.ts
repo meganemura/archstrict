@@ -55,14 +55,18 @@ describe("checkPublicSurfaceBypass", () => {
     );
     expect(secretViolation).toBeDefined();
     expect(secretViolation?.todoModule).toBe("a");
-    expect(secretViolation?.do).toContain("a/public.ts");
+    expect(secretViolation?.do).toBe(
+      "import from src/a/public.ts instead of src/a/internal.ts, adding the export there first if it is missing",
+    );
 
     const gadgetViolation = [...bySpecifier.values()].find((v) =>
       v.evidence.includes("'../b/module.ts'"),
     );
     expect(gadgetViolation).toBeDefined();
     expect(gadgetViolation?.todoModule).toBe("b");
-    expect(gadgetViolation?.do).toContain("add a public.ts");
+    expect(gadgetViolation?.do).toBe(
+      "add src/b/public.ts that re-exports what other modules use and import it instead of src/b/module.ts, or set surface: \"module.ts\" on 'b' in archstrict.config.ts",
+    );
 
     // The import that reaches a's public.ts itself is not a violation.
     expect(
@@ -70,7 +74,7 @@ describe("checkPublicSurfaceBypass", () => {
     ).toBe(false);
   });
 
-  test("a module with none of several surface files present asks for one of them, naming each", () => {
+  test("a module with none of several surface files present names the first configured surface file to add", () => {
     const graph = buildModuleGraph({ projectRoot: FIXTURE, declaredModules, surface: ["public.ts", "entry.ts"] });
     expect(graph.unresolvedSpecifierCount).toBe(0);
     expect(graph.modules.get("b")?.surfaceFiles).toEqual([]);
@@ -78,7 +82,10 @@ describe("checkPublicSurfaceBypass", () => {
     const gadgetViolation = checkPublicSurfaceBypass(graph).find((v) =>
       v.evidence.includes("'../b/module.ts'"),
     );
-    expect(gadgetViolation?.do).toBe("add one of public.ts, entry.ts to b/ naming what it exports");
+    expect(gadgetViolation?.do).toBe(
+      "add src/b/public.ts that re-exports what other modules use and import it instead of src/b/module.ts, or set surface: \"module.ts\" on 'b' in archstrict.config.ts",
+    );
+    expect(gadgetViolation?.do).not.toContain("entry.ts");
   });
 
   test("a file-rooted module whose surface file exists sends the importer to that file", () => {
@@ -106,8 +113,9 @@ describe("checkPublicSurfaceBypass", () => {
       const violations = checkPublicSurfaceBypass(graph);
       expect(violations).toHaveLength(1);
       expect(violations[0]?.evidence).toContain("'../foo.tsx'");
-      expect(violations[0]?.do).toContain("import from src/foo.ts");
-      expect(violations[0]?.do).not.toContain("set surface");
+      expect(violations[0]?.do).toBe(
+        "import from src/foo.ts instead of src/foo.tsx, adding the export there first if it is missing",
+      );
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

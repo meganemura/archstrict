@@ -12,6 +12,7 @@ may change commands, flags, config, or output shape. The version entry will desc
 - The MCP check tool appends a ReportError `do:` line to the tool error.
 - Each MCP input property has one sentence. Simulate content is the full file text, or null to delete the file. Check and rules paths are project-relative, and rules accepts a path that does not exist yet.
 - When archstrict is not installed, the plugin MCP stub says so in its initialize instructions and names `npm install -D archstrict`. The README states that case.
+- A `public-surface-bypass` `do:` is built from paths that exist. When a surface file is present, it names that file and the imported file, and says to add the export there first if it is missing. When none is present, it names the surface file to add (`index.ts` when that name is configured) and the imported file, and offers `surface: "<file>"` on that module as the other fix. A single-file module with no surface file still says to set `surface` to that file.
 
 ### Fixed
 

@@ -93,7 +93,9 @@ describe(".d.ts as a module's public surface", () => {
       // default must get an accurate do: too, not one telling the
       // reader to use a file ("index.ts") this module doesn't even have.
       expect(violations[0]!.evidence).toContain("other than its types.d.ts");
-      expect(violations[0]!.do).toContain("webish/types.d.ts");
+      expect(violations[0]!.do).toBe(
+        "import from packages/webish/types.d.ts instead of packages/webish/internal.ts, adding the export there first if it is missing",
+      );
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
