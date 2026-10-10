@@ -7,8 +7,8 @@
 // test/classify.test.ts's own header for why an explicit import from an
 // included file still pulls an excluded one into the program).
 import { describe, expect, test } from "vitest";
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { copyFileSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -18,6 +18,21 @@ import vscodeGenerated from "./fixtures/vendored/vscode-generated.config.js";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const VENDORED = join(HERE, "fixtures/vendored");
 const SCRIPTS = join(HERE, "..", "scripts");
+
+function runWithNoArgsFromSpacedPath(scriptName: string) {
+  const dir = mkdtempSync(join(tmpdir(), "archstrict converter "));
+  try {
+    const copied = join(dir, scriptName);
+    copyFileSync(join(SCRIPTS, scriptName), copied);
+    // macOS /tmp is a symlink. argv keeps the path you pass, and the module
+    // URL uses the real path. Resolve first so the space is the only mismatch.
+    const script = realpathSync(copied);
+    expect(script.includes(" ")).toBe(true);
+    return spawnSync(process.execPath, [script], { encoding: "utf8" });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
 
 function regenerate(scriptName: string, inputName: string): string {
   const outDir = mkdtempSync(join(tmpdir(), "archstrict-converter-"));
@@ -78,6 +93,15 @@ describe("convert-prisma-architecture-config.mjs", () => {
     ]);
   });
 
+  test("prints its usage line and exits 1 when the script path contains a space", () => {
+    const result = runWithNoArgsFromSpacedPath("convert-prisma-architecture-config.mjs");
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe(
+      "usage: convert-prisma-architecture-config.mjs <architecture.config.json> [output.ts]\n",
+    );
+  });
+
   test("the committed fixture is not stale: regenerating from the same vendored input produces the identical file", () => {
     const fresh = regenerate("convert-prisma-architecture-config.mjs", "prisma-architecture.config.json");
     const committed = readFileSync(join(VENDORED, "prisma-generated.config.ts"), "utf8")
@@ -109,6 +133,15 @@ describe("convert-vscode-layering-config.mjs", () => {
 
     const common = allowDeny.find((r) => r.source === "env:common");
     expect(common!.allow).toEqual([]); // common may reach nothing else
+  });
+
+  test("prints its usage line and exits 1 when the script path contains a space", () => {
+    const result = runWithNoArgsFromSpacedPath("convert-vscode-layering-config.mjs");
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe(
+      "usage: convert-vscode-layering-config.mjs <code-layering-table.json> [output.ts]\n",
+    );
   });
 
   test("the committed fixture is not stale: regenerating from the same vendored input produces the identical file", () => {
