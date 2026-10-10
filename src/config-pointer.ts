@@ -190,10 +190,7 @@ function pointerSpecs(violation: UnlocatedViolation, config: Config): PointerSpe
     case "uncovered-module":
       return [{ pointer: "declaredModules", role: "governs" }];
     case "cycle":
-      return [
-        { pointer: declaredModulePointerForName(config, violation.todoModule), role: "governs" },
-        { pointer: "ignoredCycles", role: "edit-here" },
-      ];
+      return [{ pointer: declaredModulePointerForName(config, violation.todoModule), role: "governs" }];
     case "stale-cycle-exception": {
       const index = indexByEvidence(config.ignoredCycles, ([a, b]) => violation.evidence.includes(`['${a}', '${b}']`));
       return [{ pointer: index < 0 ? "ignoredCycles" : `ignoredCycles[${index}]`, role: "fired" }];
