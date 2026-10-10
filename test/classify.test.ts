@@ -12,7 +12,6 @@ import { classifyByGlob, classifyByDirectoryName, classifyFile, compileGlob, Amb
 
 describe("design fixtures typecheck and load", () => {
   test("prisma-shape, vscode-shape, and nukadoko-shape all satisfy Config", () => {
-    expect(prismaShape.scope).toBe("packages/**");
     expect(vscodeShape.classifyByDirectoryName?.tagNamespace).toBe("env");
     expect(nukadokoShape.declaredModules).toHaveLength(4);
   });

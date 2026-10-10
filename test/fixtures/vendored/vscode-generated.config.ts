@@ -3,7 +3,6 @@ import type { Config } from "../../../src/config.js";
 export default {
   configPath: "<generated>",
   because: "converted from code-layering.ts's own table",
-  scope: "src/vs/**",
   classifyByDirectoryName: {
   "tagNamespace": "env",
   "names": [

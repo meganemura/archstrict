@@ -84,7 +84,6 @@ async function main() {
 export default {
   configPath: "<generated>",
   because: "converted from architecture.config.json",
-  scope: "packages/**",
   classify: ${JSON.stringify(classify, null, 2)},
   edges: ${JSON.stringify(edges, null, 2)},
 } satisfies Config;

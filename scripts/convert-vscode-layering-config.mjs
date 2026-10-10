@@ -44,7 +44,6 @@ async function main() {
 export default {
   configPath: "<generated>",
   because: "converted from code-layering.ts's own table",
-  scope: "src/vs/**",
   classifyByDirectoryName: ${JSON.stringify(classifyByDirectoryName, null, 2)},
   edges: ${JSON.stringify(edges, null, 2)},
 } satisfies Config;

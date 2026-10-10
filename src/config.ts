@@ -64,13 +64,7 @@ export type Config = {
   // --- v1 schema (the only schema now that modules/kinds/layers are gone;
   // see the header comment above).
 
-  // Intended as the analysis boundary (was `modules`' role under v0's
-  // discovery model): a glob bounding which files `classify` and the
-  // constraint engine ever look at, module boundaries coming from
-  // `declaredModules` instead of being discovered under it. Declared here,
-  // typechecked, and documented - but not yet read anywhere; no rule or
-  // verb narrows its own file scan by it. Wiring it is real, deferred work,
-  // not a design decision made and reversed.
+  // Reserved, not read yet; set exclude instead.
   scope?: string;
   exclude?: readonly string[];
 

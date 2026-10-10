@@ -3,7 +3,6 @@ import type { Config } from "../../../src/config.js";
 export default {
   configPath: "<generated>",
   because: "converted from architecture.config.json",
-  scope: "packages/**",
   classify: [
   {
     "glob": "packages/1-framework/0-foundation/**",

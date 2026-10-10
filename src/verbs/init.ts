@@ -347,9 +347,7 @@ export type Config = {
   // order) exempted from rule 2 - an entry naming a pair no longer in any
   // real cycle is itself flagged (stale-cycle-exception).
   ignoredCycles?: readonly (readonly [string, string])[];
-  // An analysis boundary narrower than the whole project - not yet read
-  // by any rule or verb (declared here for forward compatibility; wiring
-  // it in is separate, later work).
+  // Reserved, not read yet; set exclude instead.
   scope?: string;
   // Glob patterns kept out of analysis entirely - not a member of any
   // module, not a source of edges, not a target either. init writes one

@@ -26,9 +26,7 @@ export type Config = {
   // order) exempted from rule 2 - an entry naming a pair no longer in any
   // real cycle is itself flagged (stale-cycle-exception).
   ignoredCycles?: readonly (readonly [string, string])[];
-  // An analysis boundary narrower than the whole project - not yet read
-  // by any rule or verb (declared here for forward compatibility; wiring
-  // it in is separate, later work).
+  // Reserved, not read yet; set exclude instead.
   scope?: string;
   // Glob patterns kept out of analysis entirely - not a member of any
   // module, not a source of edges, not a target either. init writes one
@@ -52,7 +50,10 @@ export type Config = {
   // more than one file).
   declaredModules: readonly {
     name: ModuleName;
-    glob: string;
+    // One glob, or several paths that share one directory. An array names
+    // a seam inside a flat directory. Paths in different directories are
+    // a config error; use one entry per directory.
+    glob: string | readonly string[];
     // A single glob, or several - a real package can publish more than
     // one real, differently-shaped public entry point at once. Optional:
     // when absent, a real package.json's own exports map at this

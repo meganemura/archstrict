@@ -10,7 +10,6 @@ export default {
   configPath: "<fixture>",
   because: "module boundaries for a domain/layer/plane architecture, expressed as tags instead of fixed axes",
 
-  scope: "packages/**",
   exclude: ["**/*.test.ts", "**/*.spec.ts", "**/*.d.ts", "dist/**", "coverage/**", "packages/document/**"],
   surface: "index.ts",
 
