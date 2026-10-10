@@ -1,8 +1,8 @@
 # Persistent graph cache
 
-`check`, `check <file>`, `todo`, `rules`, `recommend`, `fix`'s own baseline, and `search` all build
+`check`, `check <file>`, `todo`, `rules`, `recommend`, `hotspots`, `fix`'s own baseline, and `search` all build
 their module graph through one cached path. It reads and writes
-`node_modules/.cache/archstrict/edges.json` (a header) plus a fixed 64 shard files under
+`node_modules/.cache/archstrict/edges.json` (a header), `node_modules/.cache/archstrict/augmentations.json`, and a fixed 64 shard files under
 `node_modules/.cache/archstrict/edges/` in the analyzed project - a file's own shard is a stable
 hash of its own project-relative path. `simulate` never reads or writes this cache; it keeps its
 own in-memory overlay instead.

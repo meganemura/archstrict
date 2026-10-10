@@ -463,6 +463,14 @@ test("a proposed module rename alone leaves an existing bypass unchanged", () =>
   expect(result.unchangedCount).toBe(1);
 }));
 
+test("simulate leaves the edge cache directory absent", () => project(async root => {
+  const cacheDir = join(root, "node_modules/.cache");
+  expect(existsSync(cacheDir)).toBe(false);
+  const result = await simulate(root, [{ path: "src/a/index.ts", content: "export const value = 3;" }]);
+  expect(result).toEqual({ mode: "scoped", added: [], resolved: [], unchangedCount: 0 });
+  expect(existsSync(cacheDir)).toBe(false);
+}));
+
 test("the project config cannot be deleted by a simulation", () => project(async root => {
   await expect(simulate(root, [{ path: "archstrict.config.ts", content: null }]))
     .rejects.toThrow("cannot delete archstrict.config.ts");
