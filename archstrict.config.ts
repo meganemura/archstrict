@@ -40,9 +40,8 @@ export default {
   // - features/: the nukadoko scenario drives the built CLI against a
   //   scratch copy; those steps are not library modules;
   // - scripts/: oracle runners and the typescript 7 probe, not library modules;
-  // - the two root tool configs (vitest, nukadoko), which are harness
-  //   entry points rather than modules other code imports;
-  // - allurerc.mjs, the Allure runner config, which is not a TypeScript module.
+  // - vitest.config.ts, the test harness entry point, which is not a
+  //   module other code imports;
   exclude: [
     "archstrict.config.ts",
     "archstrict.types.ts",
@@ -52,8 +51,6 @@ export default {
     "features/**",
     "scripts/**",
     "vitest.config.ts",
-    "nukadoko.config.ts",
-    "allurerc.mjs",
   ],
   declaredModules: [
     {
