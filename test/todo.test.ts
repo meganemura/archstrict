@@ -63,8 +63,25 @@ describe("todo", () => {
       writeFileSync(join(root, "archstrict.config.ts"),
         'export default { declaredModules: [{ name: "app", glob: "src/app/**" }], exclude: ["archstrict.config.ts"], because: "test" };\n');
       await expect(todo(root)).rejects.toMatchObject({
-        message: "todo's first run refuses: 2 files match no declared module",
-        do: "add each to declaredModules or exclude in archstrict.config.ts, then run archstrict todo",
+        message: "todo's first run refuses: 2 files match no declared module: src/extra.ts, src/other.ts",
+        do: "archstrict check --rule uncovered-module",
+      });
+      expect(existsSync(join(root, "archstrict.todo.json"))).toBe(false);
+    });
+  });
+
+  test("first run names the first three uncovered files and counts the rest", async () => {
+    await withTempProject(async (root) => {
+      mkdirSync(join(root, "src", "app"), { recursive: true });
+      writeFileSync(join(root, "src", "app", "index.ts"), "export const app = 1;\n");
+      for (const name of ["a.ts", "b.ts", "c.ts", "d.ts"]) {
+        writeFileSync(join(root, "src", name), "export const value = 1;\n");
+      }
+      writeFileSync(join(root, "archstrict.config.ts"),
+        'export default { declaredModules: [{ name: "app", glob: "src/app/**" }], exclude: ["archstrict.config.ts"], because: "test" };\n');
+      await expect(todo(root)).rejects.toMatchObject({
+        message: "todo's first run refuses: 4 files match no declared module: src/a.ts, src/b.ts, src/c.ts (and 1 more)",
+        do: "archstrict check --rule uncovered-module",
       });
       expect(existsSync(join(root, "archstrict.todo.json"))).toBe(false);
     });
@@ -573,8 +590,8 @@ describe("todo", () => {
       );
 
       await expect(todo(root)).rejects.toMatchObject({
-        message: "todo's first run refuses: 1 file matches no declared module",
-        do: "add each to declaredModules or exclude in archstrict.config.ts, then run archstrict todo",
+        message: "todo's first run refuses: 1 file matches no declared module: src/extra.ts",
+        do: "archstrict check --rule uncovered-module",
       });
       await expect(todo(root)).rejects.toBeInstanceOf(ReportError);
 

@@ -518,8 +518,8 @@ describe("cli", () => {
       }
       expect(exitCode).toBe(1);
       expect(errOut).toBe(
-        "archstrict: todo's first run refuses: 1 file matches no declared module\n" +
-          "do: add each to declaredModules or exclude in archstrict.config.ts, then run archstrict todo\n",
+        "archstrict: todo's first run refuses: 1 file matches no declared module: src/extra.ts\n" +
+          "do: archstrict check --rule uncovered-module\n",
       );
       expect(existsSync(join(root, ".archstrict-todo-initialized"))).toBe(false);
 
@@ -530,8 +530,8 @@ describe("cli", () => {
         jsonOut = (e as { stdout: string }).stdout;
       }
       expect(JSON.parse(jsonOut)).toEqual({
-        error: "todo's first run refuses: 1 file matches no declared module",
-        do: "add each to declaredModules or exclude in archstrict.config.ts, then run archstrict todo",
+        error: "todo's first run refuses: 1 file matches no declared module: src/extra.ts",
+        do: "archstrict check --rule uncovered-module",
       });
       expect(existsSync(join(root, ".archstrict-todo-initialized"))).toBe(false);
     } finally {

@@ -64,13 +64,31 @@ export type TodoResult = {
 // available until every file is actually covered. A later (prune-only)
 // run is unaffected: pruning only ever shrinks, so an uncovered file
 // already past the first run does not block it.
-function refuseIfUncovered(violations: AnyViolation[]): void {
+//
+// The message names the first few project-relative paths, then a count of
+// the rest. A count alone does not say which file, so the reader has to
+// run another command before it can act. `archstrict check --rule
+// uncovered-module` already prints the paste-ready entry for every file,
+// so the message stops at three paths and points `do` at that command.
+const UNCOVERED_PATHS_SHOWN = 3;
+
+function uncoveredPathList(paths: readonly string[]): string {
+  const shown = paths.slice(0, UNCOVERED_PATHS_SHOWN).join(", ");
+  const rest = paths.length - UNCOVERED_PATHS_SHOWN;
+  return rest > 0 ? `${shown} (and ${rest} more)` : shown;
+}
+
+function refuseIfUncovered(violations: AnyViolation[], relativePath: ModuleGraph["relativePath"]): void {
   const uncovered = violations.filter((v) => v.rule === "uncovered-module");
   if (uncovered.length === 0) return;
   const noun = uncovered.length === 1 ? "file matches" : "files match";
+  // Code-unit order, the same reason checkUncoveredModules sorts: a
+  // locale-aware compare can order the same two paths differently on
+  // different machines.
+  const paths = uncovered.map((v) => relativePath(v.path)).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
   throw new ReportError(
-    `todo's first run refuses: ${uncovered.length} ${noun} no declared module`,
-    "add each to declaredModules or exclude in archstrict.config.ts, then run archstrict todo",
+    `todo's first run refuses: ${uncovered.length} ${noun} no declared module: ${uncoveredPathList(paths)}`,
+    "archstrict check --rule uncovered-module",
   );
 }
 
@@ -109,7 +127,7 @@ export function freezeOrPrune(
   // Stryker disable next-line OptionalChaining: An absent parsed file always produces a defined legacy state.
   const firstRun = parsed === undefined && !(legacy?.present ?? false);
 
-  if (firstRun) refuseIfUncovered(violations);
+  if (firstRun) refuseIfUncovered(violations, graph.relativePath);
 
   const currentByModule = new Map<string, TodoEntry[]>();
   if (parsed !== undefined) {
