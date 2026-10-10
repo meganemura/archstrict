@@ -8,7 +8,7 @@
 // included file still pulls an excluded one into the program).
 import { describe, expect, test } from "vitest";
 import { execFileSync, spawnSync } from "node:child_process";
-import { copyFileSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { copyFileSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -31,6 +31,28 @@ function runWithNoArgsFromSpacedPath(scriptName: string) {
     return spawnSync(process.execPath, [script], { encoding: "utf8" });
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+function runWithNoArgsThroughSymlink(scriptName: string, relative: boolean) {
+  const realDir = mkdtempSync(join(tmpdir(), "archstrict-converter-real-"));
+  const linkParent = mkdtempSync(join(tmpdir(), "archstrict-converter-link-"));
+  const linkDir = join(linkParent, "scripts");
+  try {
+    copyFileSync(join(SCRIPTS, scriptName), join(realDir, scriptName));
+    // Point the link at the real directory. Passing linkDir to node keeps a
+    // symlink in argv. realpath first would hide the mismatch this covers.
+    symlinkSync(realpathSync(realDir), linkDir, "dir");
+    const script = join(linkDir, scriptName);
+    expect(realpathSync(script)).not.toBe(script);
+    if (relative) {
+      return spawnSync(process.execPath, [`./${scriptName}`], { cwd: linkDir, encoding: "utf8" });
+    }
+    return spawnSync(process.execPath, [script], { encoding: "utf8" });
+  } finally {
+    rmSync(linkDir, { force: true });
+    rmSync(linkParent, { recursive: true, force: true });
+    rmSync(realDir, { recursive: true, force: true });
   }
 }
 
@@ -102,6 +124,24 @@ describe("convert-prisma-architecture-config.mjs", () => {
     );
   });
 
+  test("prints its usage line and exits 1 when an absolute path reaches it through a symlink", () => {
+    const result = runWithNoArgsThroughSymlink("convert-prisma-architecture-config.mjs", false);
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe(
+      "usage: convert-prisma-architecture-config.mjs <architecture.config.json> [output.ts]\n",
+    );
+  });
+
+  test("prints its usage line and exits 1 for a relative invocation from a symlink directory", () => {
+    const result = runWithNoArgsThroughSymlink("convert-prisma-architecture-config.mjs", true);
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe(
+      "usage: convert-prisma-architecture-config.mjs <architecture.config.json> [output.ts]\n",
+    );
+  });
+
   test("the committed fixture is not stale: regenerating from the same vendored input produces the identical file", () => {
     const fresh = regenerate("convert-prisma-architecture-config.mjs", "prisma-architecture.config.json");
     const committed = readFileSync(join(VENDORED, "prisma-generated.config.ts"), "utf8")
@@ -137,6 +177,24 @@ describe("convert-vscode-layering-config.mjs", () => {
 
   test("prints its usage line and exits 1 when the script path contains a space", () => {
     const result = runWithNoArgsFromSpacedPath("convert-vscode-layering-config.mjs");
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe(
+      "usage: convert-vscode-layering-config.mjs <code-layering-table.json> [output.ts]\n",
+    );
+  });
+
+  test("prints its usage line and exits 1 when an absolute path reaches it through a symlink", () => {
+    const result = runWithNoArgsThroughSymlink("convert-vscode-layering-config.mjs", false);
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe(
+      "usage: convert-vscode-layering-config.mjs <code-layering-table.json> [output.ts]\n",
+    );
+  });
+
+  test("prints its usage line and exits 1 for a relative invocation from a symlink directory", () => {
+    const result = runWithNoArgsThroughSymlink("convert-vscode-layering-config.mjs", true);
     expect(result.status).toBe(1);
     expect(result.stdout).toBe("");
     expect(result.stderr).toBe(

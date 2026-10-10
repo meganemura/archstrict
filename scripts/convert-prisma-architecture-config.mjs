@@ -20,6 +20,7 @@
 // - `layerOrder` -> one order rule, tagNamespace "layer", within "domain",
 //   its `sequence` the layerOrder object verbatim (already keyed by
 //   domain, exactly this project's own `within`-scoped shape).
+import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 export function convertPrismaArchitectureConfig(archConfig) {
@@ -95,8 +96,25 @@ export default {
   }
 }
 
-// A URL pathname percent-encodes the path and, on Windows, starts with /C:/.
-// argv holds the filesystem path.
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+// fileURLToPath undoes percent-encoding, and on Windows it drops the
+// leading slash in front of the drive letter. argv is a filesystem path.
+// An absolute path through a symlink stays in argv, while the module URL
+// names the real file, so compare realpath(argv) as well. Keep the raw
+// equality: a path that already matches can differ from the spelling
+// realpath returns.
+function invokedAsThisFile() {
+  const invoked = process.argv[1];
+  if (!invoked) return false;
+  const here = fileURLToPath(import.meta.url);
+  if (here === invoked) return true;
+  try {
+    return realpathSync(invoked) === here;
+  } catch {
+    // A path that cannot be resolved is not this file.
+    return false;
+  }
+}
+
+if (invokedAsThisFile()) {
   main();
 }
