@@ -6,22 +6,29 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { CallToolRequestSchema, ListToolsRequestSchema, type Tool } from "@modelcontextprotocol/sdk/types.js";
+import { ReportError } from "./report-error.js";
 import { createWarmGraph } from "./warm-graph.js";
 import { check } from "./verbs/check.js";
 import { rules } from "./verbs/rules.js";
 import { search } from "./verbs/search.js";
 import { simulate, type Change } from "./verbs/simulate.js";
 
+// Clients read these sentences before a call. Without them, a simulate
+// content value looks like a patch, and a rules path looks like it must
+// already exist on disk.
 const tools: Tool[] = [
   { name: "check", description: "Check project architecture, optionally focused on one file.",
-    inputSchema: { type: "object", properties: { file: { type: "string" } }, additionalProperties: false } },
+    inputSchema: { type: "object", properties: { file: { type: "string", description: "A project-relative path that limits the report to that file." } }, additionalProperties: false } },
   { name: "rules", description: "Show the rules that govern a path.",
-    inputSchema: { type: "object", properties: { path: { type: "string" } }, required: ["path"], additionalProperties: false } },
+    inputSchema: { type: "object", properties: { path: { type: "string", description: "A project-relative path, including a path that does not exist yet." } }, required: ["path"], additionalProperties: false } },
   { name: "search", description: "Search public exports by name.",
-    inputSchema: { type: "object", properties: { query: { type: "string" } }, required: ["query"], additionalProperties: false } },
+    inputSchema: { type: "object", properties: { query: { type: "string", description: "The public export name to search for." } }, required: ["query"], additionalProperties: false } },
   { name: "simulate", description: "Check a proposed change set in memory. A change to the project's archstrict.config.ts previews a proposed config.",
-    inputSchema: { type: "object", properties: { changes: { type: "array", items: {
-      type: "object", properties: { path: { type: "string" }, content: { type: ["string", "null"] } },
+    inputSchema: { type: "object", properties: { changes: { type: "array", description: "The proposed file changes to preview in memory.", items: {
+      type: "object", properties: {
+        path: { type: "string", description: "A project-relative path of the proposed file." },
+        content: { type: ["string", "null"], description: "The full file text, not a patch, or null to delete the file." },
+      },
       required: ["path", "content"], additionalProperties: false,
     } } }, required: ["changes"], additionalProperties: false } },
 ];
@@ -95,7 +102,12 @@ export function createArchstrictMcpServer(projectRoot: string): Server {
       }
       return { content: [{ type: "text", text: JSON.stringify(result) }] };
     } catch (error) {
-      return { isError: true, content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }] };
+      // The CLI and the PostToolUse hook print a ReportError's next command.
+      // A tool result that keeps only the message drops that command.
+      const text = error instanceof ReportError
+        ? `${error.message}\ndo: ${error.do}`
+        : error instanceof Error ? error.message : String(error);
+      return { isError: true, content: [{ type: "text", text }] };
     }
   });
   return server;
