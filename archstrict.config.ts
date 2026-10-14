@@ -37,8 +37,9 @@ export default {
   //   default include also skips;
   // - test/: a test imports across modules as a fixture; boundary rules
   //   read production code;
-  // - features/: the nukadoko scenario drives the built CLI against a
-  //   scratch copy; those steps are not library modules;
+  // - features/ and nukadoko.config.ts: the nukadoko scenarios drive the
+  //   built CLI against scratch projects; those steps and their scratch
+  //   fixture are not library modules;
   // - scripts/: oracle runners and the typescript 7 probe, not library modules;
   // - vitest.config.ts, the test harness entry point, which is not a
   //   module other code imports;
@@ -49,6 +50,7 @@ export default {
     "**/.*/**",
     "test/**",
     "features/**",
+    "nukadoko.config.ts",
     "scripts/**",
     "vitest.config.ts",
   ],

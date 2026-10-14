@@ -42,7 +42,7 @@
     "test:coverage": "vitest run --coverage --testTimeout=60000",
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.build.json",
-    "dogfood:nukadoko": "npm run build && nuka run features",
+    "dogfood:nukadoko": "npm run build && nuka check && nuka run features",
     "ci:ts7-probe": "node scripts/probe-typescript7.mjs",
     "mutation": "stryker run",
     "prepare": "npm run build",
