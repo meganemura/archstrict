@@ -57,6 +57,8 @@ describe("cli", () => {
     expect(() => execFileSync("node", [CLI_PATH], { encoding: "utf8" })).toThrow();
   });
 
+  // This test starts the CLI about 70 times, six per verb, and each start
+  // takes 0.5 to 0.7 s, so the suite-wide 15 s limit cannot hold it.
   test("help prints each verb's usage and writes no file", () => {
     const root = mkdtempSync(join(tmpdir(), "archstrict-cli-help-"));
     try {
@@ -117,7 +119,7 @@ describe("cli", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
-  });
+  }, 120_000);
 
   test("init writes the two files and prints a do: line", () => {
     const root = mkdtempSync(join(tmpdir(), "archstrict-cli-init-"));
