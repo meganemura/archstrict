@@ -12,7 +12,7 @@ import { compileGlob } from "../classify.js";
 import type { Config } from "../config.js";
 import { DEFAULT_SURFACE, moduleGlobList } from "../module-graph.js";
 import { ReportError } from "../report-error.js";
-import { formatPredicate, matchesPredicate, sequenceFor, type FromToPredicate } from "../rules/constraints.js";
+import { matchesPredicate, sequenceFor, type FromToPredicate } from "../rules/constraints.js";
 
 export type FileRow = { readonly rel: string; readonly module: string | undefined; readonly tags: Set<string> };
 
@@ -186,6 +186,13 @@ function resolveTargets(pending: readonly Pending[]): { links: Link[]; packageSe
   return { links, packageSets };
 }
 
+// formatPredicate prints JSON, which escapes into an unreadable label. A predicate needs every
+// tag in `tags` and is lifted only when every tag in `exclude` is present, hence the joins.
+function describePredicate(predicate: { tags: readonly string[]; exclude?: { tags: readonly string[] } }): string {
+  const needs = predicate.tags.join(" + ");
+  return predicate.exclude === undefined ? needs : `${needs} except ${predicate.exclude.tags.join(" + ")}`;
+}
+
 export function buildDiagramModel(config: Config, rows: readonly FileRow[]): DiagramModel {
   const orderRules = config.edges?.order ?? [];
   const stackRuleIndex = orderRules.findIndex((rule) => rule.within === undefined && sequenceFor(rule, undefined) !== undefined);
@@ -236,7 +243,7 @@ export function buildDiagramModel(config: Config, rows: readonly FileRow[]): Dia
   const predicateSelector = (predicate: FromToPredicate): string => {
     if (typeof predicate === "string") return globSelector(predicate);
     if (predicate.exclude === undefined && predicate.tags.length === 1) return tagSelector(predicate.tags[0]!);
-    return selector("predicate", formatPredicate(predicate), (row) => matchesPredicate(predicate, row.rel, row.tags));
+    return selector("predicate", describePredicate(predicate), (row) => matchesPredicate(predicate, row.rel, row.tags));
   };
   const soleBarePackage = (predicate: FromToPredicate): string | undefined =>
     typeof predicate !== "string" && predicate.tags.length === 1 && predicate.tags[0]!.startsWith("pkg:")

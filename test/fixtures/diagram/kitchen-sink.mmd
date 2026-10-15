@@ -28,7 +28,7 @@ flowchart TB
   e0["<b>must be empty</b><br/><small>src/utils/**</small><br/><i>because a utils directory hides which module owns a helper</i>"]:::empty
   s0(["<b>io:pure</b><br/><small>2 modules: kernel, domain</small>"]):::selector
   s1(["<b>kind:tool</b><br/><small>12 modules: tool0, tool1, tool2, tool3, tool4, tool5, tool6, tool7, tool8, tool9, +2 more</small>"]):::selector
-  s2(["<b>{#quot;tags#quot;:[#quot;io:pure#quot;],#quot;exclude#quot;:{#quot;tags#quot;:[#quot;layer:kernel#quot;]}}</b><br/><small>1 module: domain (2/3 files)</small>"]):::selector
+  s2(["<b>io:pure except layer:kernel</b><br/><small>1 module: domain (2/3 files)</small>"]):::selector
   s3(["<b>layer:nothing</b><br/><small>0 modules</small>"]):::empty
   k0{{"pkg: fs, path"}}:::package
   k1{{"pkg: zlib"}}:::package
