@@ -269,6 +269,116 @@ describe("diagram rendering", () => {
     ]);
   });
 
+  describe("rules that the first draft dropped", () => {
+    const two = [{ name: "a", glob: "src/a/**" }, { name: "b", glob: "src/b/**" }];
+    const twoRows = [row("src/a/1.ts", "a", "layer:ui"), row("src/b/1.ts", "b", "layer:core")];
+
+    test("an empty allow list forbids every value of its namespace", () => {
+      const cfg = config({ declaredModules: two, edges: { allowDeny: [{ source: "layer:ui", targetNamespace: "layer", allow: [], because: "ui uses no layer" }] } });
+      expect(draw(cfg, twoRows, { detail: "names" })).toBe(
+        [
+          "flowchart TB",
+          '  m0["<b>a</b>"]',
+          '  m1["<b>b</b>"]',
+          '  s0(["<b>layer:ui</b>"]):::selector',
+          '  s1(["<b>layer:*</b>"]):::selector',
+          '  s0 -.-x|"cannot use"| s1',
+          "  linkStyle 0 stroke:#e03131,stroke-width:1.5px,stroke-dasharray:5 4",
+          "  classDef selector fill:none,stroke-dasharray:4 3",
+        ].join("\n"),
+      );
+      expect(draw(cfg, twoRows)).toContain('s1(["<b>layer:*</b><br/><small>2 modules: a, b</small>"]):::selector');
+    });
+
+    test("an empty allow list in the pkg namespace forbids every package", () => {
+      const cfg = config({ declaredModules: two, edges: { allowDeny: [{ source: "layer:ui", targetNamespace: "pkg", allow: [], because: "no packages" }] } });
+      const text = draw(cfg, twoRows, { detail: "names" });
+      expect(text).toContain('k0{{"pkg: *"}}:::package');
+      expect(text).toContain('s0 -.-x|"cannot use"| k0');
+    });
+
+    test("an allow list that names only the source's own tag forbids every other value", () => {
+      const cfg = config({ edges: { allowDeny: [{ source: "layer:ui", targetNamespace: "layer", allow: ["ui"], because: "x" }] } });
+      expect(draw(cfg, [])).toContain('s0 -.-x|"cannot use"| s1');
+    });
+
+    test("a point rule or an exception whose two ends are one node is a self-loop", () => {
+      const cfg = config({
+        declaredModules: [{ name: "a", glob: "src/a/**" }],
+        edges: {
+          point: [
+            { from: "src/a/**", to: "src/a/**", because: "no internal imports" },
+            { from: { tags: ["t:x"] }, to: { tags: ["t:x"] }, because: "x files never import each other" },
+          ],
+          allowDeny: [{ source: "t:x", targetNamespace: "pkg", deny: ["fs"], exceptions: [{ from: "src/a/x.ts", to: "src/a/x.ts", because: "itself" }], because: "x" }],
+        },
+      });
+      const text = draw(cfg, [row("src/a/x.ts", "a", "t:x")], { detail: "names" });
+      expect(text.split("\n").filter((line) => /^ {2}\w+ -\.-/.test(line))).toEqual([
+        '  s0 -.-x|"cannot use"| k0',
+        '  m0 -.-x|"cannot use"| m0',
+        '  s0 -.-x|"cannot use"| s0',
+        '  s1 -.->|"exempt"| s1',
+      ]);
+    });
+
+    test("a glob lands on a module box only when it matches exactly that module's files", () => {
+      const cfg = config({
+        declaredModules: [{ name: "outer", glob: "src/**" }, { name: "inner", glob: "src/inner/**" }],
+        edges: { point: [{ from: "src/**", to: { tags: ["pkg:fs"] }, because: "x" }, { from: "src/inner/**", to: { tags: ["pkg:os"] }, because: "y" }] },
+      });
+      const text = draw(cfg, [row("src/a.ts", "outer"), row("src/inner/b.ts", "inner")], { detail: "names" });
+      expect(text).toContain('s0(["<b>src/**</b>"]):::selector');
+      expect(text).toContain('s0 -.-x|"cannot use"| k0');
+      expect(text).toContain('m1 -.-x|"cannot use"| k1');
+    });
+
+    test("two allow lists from one source in one namespace are two hexagons and a note", () => {
+      const rule = (name: string) => ({ source: "layer:ui", targetNamespace: "pkg", allow: [name], because: name });
+      const two = config({ edges: { allowDeny: [rule("react"), rule("vue")] } });
+      const text = draw(two, []);
+      expect(text.split("\n").filter((line) => line.startsWith("  k"))).toEqual(['  k0{{"pkg: react"}}:::package', '  k1{{"pkg: vue"}}:::package']);
+      expect(text).toContain('s0 -->|"only pkg"| k0');
+      expect(text).toContain('s0 -->|"only pkg"| k1');
+      const note = "- Two allow lists from one source in one namespace both apply: a target must be on every list.";
+      const doc = (cfg: Config) => renderMarkdown("demo", renderDiagram(buildDiagramModel(cfg, []), { direction: "TB", detail: "rules" }));
+      expect(doc(two)).toContain(note);
+      expect(doc(config({ edges: { allowDeny: [rule("react")] } }))).not.toContain("Two allow lists");
+    });
+
+    test("the layer legend names the direction by the arrows, not by below", () => {
+      const legend = renderDiagram(buildDiagramModel(lanes, laneRows), { direction: "BT", detail: "rules" }).legend;
+      expect(legend[0]).toEqual({ look: "thick gray arrow between layers", meaning: "a layer may use the layers its gray arrows lead to, never one they come from" });
+    });
+
+    test("an unscoped order rule without a \"\" sequence says it never applies", () => {
+      const cfg = config({
+        edges: {
+          order: [
+            { tagNamespace: "layer", sequence: { "": ["a", "b"] }, direction: "downward-only", because: "x" },
+            { tagNamespace: "tier", sequence: { a: ["lo", "hi"] }, direction: "downward-only", because: "inner" },
+            { tagNamespace: "ring", within: "layer", sequence: { a: ["in", "out"] }, direction: "downward-only", because: "scoped" },
+          ],
+        },
+      });
+      const text = draw(cfg, []);
+      expect(text).toContain('n1["<b>order</b><br/>order tier: never applies (no #quot;#quot; sequence and no within)"]:::note');
+      expect(text).toContain('n2["<b>order</b><br/>order ring within layer:a: in #lt; out"]:::note');
+    });
+
+    test("predicates with equal text and different tags are different pills", () => {
+      const cfg = config({
+        edges: {
+          point: [
+            { from: { tags: ["a:x", "b:y + c:z"] }, to: { tags: ["pkg:fs"] }, because: "one" },
+            { from: { tags: ["a:x + b:y", "c:z"] }, to: { tags: ["pkg:fs"] }, because: "two" },
+          ],
+        },
+      });
+      expect(buildDiagramModel(cfg, []).selectors.map((s) => s.id)).toEqual(["s0", "s1"]);
+    });
+  });
+
   test("a class is defined only when a node uses it", () => {
     expect(draw(lanes, laneRows)).not.toContain("classDef");
   });

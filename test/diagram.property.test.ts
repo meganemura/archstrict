@@ -1,5 +1,5 @@
 // Properties of the diagram over generated projects: escaping, edge integrity, layer and selector
-// membership, focus as a subset, and file-order independence.
+// membership, focus as a subset, file-order independence, and that every rule is drawn.
 import { describe, test } from "vitest";
 import assert from "node:assert/strict";
 import * as hegel from "@hegeldev/hegel";
@@ -17,13 +17,17 @@ const TAGS = ["io:pure", "io:effect", "kind:x", "layer:core", "layer:mid", "laye
 const EDGE_TYPES = ["value", "type", "both"] as const;
 const IMPORT_FORMS = ["static", "dynamic", "both"] as const;
 
-const subset = <T>(values: readonly T[]) => gs.arrays(gs.sampledFrom([...values]), { minSize: 1, maxSize: 3 }).map((picked) => [...new Set(picked)]);
+const subset = <T>(values: readonly T[], minSize = 1) =>
+  gs.arrays(gs.sampledFrom([...values]), { minSize, maxSize: 3 }).map((picked) => [...new Set(picked)]);
 
 type Project = { config: Config; rows: FileRow[] };
 
 const project = gs.composite((tc): Project => {
   const moduleCount = tc.draw(gs.integers({ minValue: 1, maxValue: 5 }));
   const rows: FileRow[] = [];
+  // A module nested under m0: the glob `src/m0/**` then matches files that another module owns.
+  const nested = tc.draw(gs.booleans());
+  if (nested) rows.push({ rel: "src/m0/sub/f0.ts", module: "nested", tags: new Set() });
   for (let m = 0; m < moduleCount; m++) {
     const fileCount = tc.draw(gs.integers({ minValue: 1, maxValue: 3 }));
     for (let f = 0; f < fileCount; f++) {
@@ -34,21 +38,26 @@ const project = gs.composite((tc): Project => {
     }
   }
   const globs = Array.from({ length: moduleCount }, (_, m) => `src/m${m}/**`);
+  const nestedModules = nested ? [{ name: "nested", glob: "src/m0/sub/**" }] : [];
   const predicate = gs.sampledFrom([
     ...TAGS.map((tag) => ({ tags: [tag] })),
     { tags: ["io:pure", "kind:x"] },
     { tags: ["io:pure"], exclude: { tags: ["layer:core"] } },
     ...globs,
+    "src/m0/sub/**",
   ]);
   const allowDeny = tc.draw(
     gs.arrays(
       gs.composite((inner) => {
         const targetNamespace = inner.draw(gs.sampledFrom(["pkg", "layer", "io"] as const));
-        const values = inner.draw(subset(targetNamespace === "pkg" ? PACKAGES : targetNamespace === "layer" ? LAYERS : (["pure", "effect"] as const)));
+        const allows = inner.draw(gs.booleans());
+        const values = inner.draw(subset(targetNamespace === "pkg" ? PACKAGES : targetNamespace === "layer" ? LAYERS : (["pure", "effect"] as const), allows ? 0 : 1));
+        const exceptions = inner.draw(gs.arrays(gs.composite((last) => ({ from: last.draw(gs.sampledFrom(globs)), to: last.draw(gs.sampledFrom(globs)), because: "e" })), { maxSize: 2 }));
         return {
           source: inner.draw(gs.sampledFrom([...TAGS])),
           targetNamespace,
-          ...(inner.draw(gs.booleans()) ? { allow: values } : { deny: values }),
+          ...(allows ? { allow: values } : { deny: values }),
+          ...(exceptions.length > 0 ? { exceptions } : {}),
           edgeType: inner.draw(gs.sampledFrom([...EDGE_TYPES])),
           importForm: inner.draw(gs.sampledFrom([...IMPORT_FORMS])),
           because: inner.draw(gs.text({ maxSize: 8 })),
@@ -59,12 +68,15 @@ const project = gs.composite((tc): Project => {
   );
   const point = tc.draw(
     gs.arrays(
-      gs.composite((inner) => ({
-        from: inner.draw(predicate),
-        to: inner.draw(gs.sampledFrom([{ tags: ["pkg:fs"] }, { tags: ["pkg:@scope/pkg"] }, { tags: ["io:pure"] }, ...globs])),
-        edgeType: inner.draw(gs.sampledFrom([...EDGE_TYPES])),
-        because: inner.draw(gs.text({ maxSize: 8 })),
-      })),
+      gs.composite((inner) => {
+        const from = inner.draw(predicate);
+        return {
+          from,
+          to: inner.draw(gs.booleans()) ? from : inner.draw(gs.sampledFrom([{ tags: ["pkg:fs"] }, { tags: ["pkg:@scope/pkg"] }, { tags: ["io:pure"] }, ...globs])),
+          edgeType: inner.draw(gs.sampledFrom([...EDGE_TYPES])),
+          because: inner.draw(gs.text({ maxSize: 8 })),
+        };
+      }),
       { maxSize: 3 },
     ),
   );
@@ -74,7 +86,7 @@ const project = gs.composite((tc): Project => {
     config: {
       configPath: "<test>",
       because: tc.draw(gs.text({ maxSize: 8 })),
-      declaredModules: globs.map((glob, m) => ({ name: `m${m}`, glob })),
+      declaredModules: [...globs.map((glob, m) => ({ name: `m${m}`, glob })), ...nestedModules],
       ignoredCycles: moduleCount > 1 ? [["m0", "m1"]] : [],
       mustBeEmpty: tc.draw(gs.booleans()) ? [{ glob: "src/none/**", because: "x" }] : [],
       edges: {
@@ -123,6 +135,20 @@ describe("diagram (property)", () => {
       }
       const styled = [...text.matchAll(/^ {2}linkStyle (\S+) /gm)].flatMap((match) => match[1]!.split(",").map(Number)).sort((a, b) => a - b);
       assert.deepEqual(styled, edges.map((_, index) => index));
+    });
+  });
+
+  test("every allowDeny rule, exception, and point rule is drawn as some link", () => {
+    hegel.test((tc) => {
+      const { config, rows } = tc.draw(project);
+      const drawn = new Set(buildDiagramModel(config, rows).links.map((link) => link.rule));
+      (config.edges?.allowDeny ?? []).forEach((rule, i) => {
+        // A deny list of only the source's own tag is exempt by construction and draws nothing.
+        const inert = rule.deny !== undefined && rule.deny.every((value) => `${rule.targetNamespace}:${value}` === rule.source);
+        if (!inert) assert.ok(drawn.has(`edges.allowDeny[${i}]`), `edges.allowDeny[${i}] is drawn`);
+        (rule.exceptions ?? []).forEach((_, k) => assert.ok(drawn.has(`edges.allowDeny[${i}].exceptions[${k}]`), `exception ${i}.${k} is drawn`));
+      });
+      (config.edges?.point ?? []).forEach((_, j) => assert.ok(drawn.has(`edges.point[${j}]`), `edges.point[${j}] is drawn`));
     });
   });
 

@@ -28,7 +28,7 @@ export type DiagramResult = {
   text: string;
   modules: { name: string; node: string; layer: string | null; tags: string[] }[];
   layers: { node: string; tag: string }[];
-  selectors: { node: string; kind: "tag" | "glob" | "predicate"; text: string; members: { module: string; files: number; of: number }[] }[];
+  selectors: { node: string; kind: "tag" | "glob" | "predicate" | "namespace"; text: string; members: { module: string; files: number; of: number }[] }[];
   packages: { node: string; names: string[] }[];
   links: {
     kind: LinkKind;

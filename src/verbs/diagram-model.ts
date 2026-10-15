@@ -12,7 +12,7 @@ import { compileGlob } from "../classify.js";
 import type { Config } from "../config.js";
 import { DEFAULT_SURFACE, moduleGlobList } from "../module-graph.js";
 import { ReportError } from "../report-error.js";
-import { matchesPredicate, sequenceFor, type FromToPredicate } from "../rules/constraints.js";
+import { formatPredicate, matchesPredicate, sequenceFor, type FromToPredicate } from "../rules/constraints.js";
 
 export type FileRow = { readonly rel: string; readonly module: string | undefined; readonly tags: Set<string> };
 
@@ -53,7 +53,7 @@ export type Stack = {
 
 export type SelectorNode = {
   readonly id: string;
-  readonly kind: "tag" | "glob" | "predicate";
+  readonly kind: "tag" | "glob" | "predicate" | "namespace";
   readonly text: string;
   readonly members: readonly Membership[];
 };
@@ -154,13 +154,18 @@ function buildModules(config: Config, rows: readonly FileRow[], stackNamespace: 
   });
 }
 
-type Pending = Omit<Link, "to" | "packages"> & { readonly target: { readonly id: string } | { readonly packages: readonly string[] } };
+type Pending = Omit<Link, "to" | "packages"> & {
+  readonly target: { readonly id: string } | { readonly packages: readonly string[] };
+  /** Keep this rule's packages out of the shared hexagon of its (kind, source, qualifier). */
+  readonly alone?: boolean;
+};
 
 // Package targets of one (link kind, source, qualifier) share a hexagon, and hexagons with equal
 // name lists are one node. Six point rules from one tag to six packages would otherwise draw six
-// near-identical shapes.
+// near-identical shapes. An allow list stays alone: every allow rule applies on its own, so a
+// shared hexagon would read as the union of two lists that act as an intersection.
 function resolveTargets(pending: readonly Pending[]): { links: Link[]; packageSets: PackageSet[] } {
-  const groupKey = (p: Pending) => `${p.kind}\0${p.from}\0${p.qualifier.edgeType}\0${p.qualifier.importForm}`;
+  const groupKey = (p: Pending) => `${p.kind}\0${p.from}\0${p.qualifier.edgeType}\0${p.qualifier.importForm}\0${p.alone === true ? p.rule : ""}`;
   const namesOfGroup = new Map<string, string[]>();
   for (const p of pending) {
     if (!("packages" in p.target)) continue;
@@ -220,8 +225,10 @@ export function buildDiagramModel(config: Config, rows: readonly FileRow[]): Dia
   };
 
   const selectors = new Map<string, SelectorNode>();
-  const selector = (kind: SelectorNode["kind"], text: string, matches: (row: FileRow) => boolean): string => {
-    const key = `${kind}\0${text}`;
+  // `identity` separates selectors whose displayed text is equal: a predicate prints as a short
+  // join of its tags, and two different predicates can print alike.
+  const selector = (kind: SelectorNode["kind"], text: string, matches: (row: FileRow) => boolean, identity: string = text): string => {
+    const key = `${kind}\0${identity}`;
     const known = selectors.get(key);
     if (known !== undefined) return known.id;
     const id = `s${selectors.size}`;
@@ -233,17 +240,23 @@ export function buildDiagramModel(config: Config, rows: readonly FileRow[]): Dia
       ? undefined
       : stack.layers.find((layer) => layer.value === tag.slice(stack.namespace.length + 1))?.id;
   const tagSelector = (tag: string): string => layerIdOf(tag) ?? selector("tag", tag, (row) => row.tags.has(tag));
-  // A glob that is exactly one module's only glob names that module, so the arrow lands on its box.
+  // A glob names a module only when it is that module's one glob and matches exactly the module's
+  // files: a nested module can own some of the files the glob matches, and a box would then claim
+  // files the arrow does not cover.
   const moduleOfGlob = (glob: string): string | undefined => {
     const owners = modules.filter((module) => module.globs.length === 1 && module.globs[0] === glob);
-    return owners.length === 1 ? owners[0]!.id : undefined;
+    if (owners.length !== 1) return undefined;
+    const owner = owners[0]!;
+    const matched = rows.filter((row) => compileGlob(glob).test(row.rel));
+    const own = rows.filter((row) => row.module === owner.name);
+    return matched.length === own.length && matched.every((row) => row.module === owner.name) ? owner.id : undefined;
   };
   const globSelector = (glob: string): string =>
     moduleOfGlob(glob) ?? selector("glob", glob, (row) => compileGlob(glob).test(row.rel));
   const predicateSelector = (predicate: FromToPredicate): string => {
     if (typeof predicate === "string") return globSelector(predicate);
     if (predicate.exclude === undefined && predicate.tags.length === 1) return tagSelector(predicate.tags[0]!);
-    return selector("predicate", describePredicate(predicate), (row) => matchesPredicate(predicate, row.rel, row.tags));
+    return selector("predicate", describePredicate(predicate), (row) => matchesPredicate(predicate, row.rel, row.tags), formatPredicate(predicate));
   };
   const soleBarePackage = (predicate: FromToPredicate): string | undefined =>
     typeof predicate !== "string" && predicate.tags.length === 1 && predicate.tags[0]!.startsWith("pkg:")
@@ -251,8 +264,11 @@ export function buildDiagramModel(config: Config, rows: readonly FileRow[]): Dia
       : undefined;
 
   const pending: Pending[] = [];
+  // An allowDeny rule exempts a target that carries the source tag, so its self-link says nothing.
+  // A point rule and an exception have no such exemption: a self-link there is a real ban.
   const add = (link: Omit<Pending, "subject"> & { subject?: string | null }): void => {
-    if ("id" in link.target && link.target.id === link.from) return;
+    const exempt = /^edges\.allowDeny\[\d+\]$/.test(link.rule);
+    if (exempt && "id" in link.target && link.target.id === link.from) return;
     pending.push({ subject: null, ...link });
   };
 
@@ -266,11 +282,21 @@ export function buildDiagramModel(config: Config, rows: readonly FileRow[]): Dia
     const values = rule.allow ?? rule.deny ?? [];
     const kind = rule.allow === undefined ? "forbid" : "allow";
     const common = { kind, from, rule: `edges.allowDeny[${index}]`, qualifier: qualifierOf(rule), because: rule.because, subject: kind === "allow" ? rule.targetNamespace : null } as const;
-    if (rule.targetNamespace === "pkg") {
-      if (values.length > 0) add({ ...common, target: { packages: values } });
+    // An allow list whose values are all the source's own tag forbids every other value, as an
+    // empty one does. The own value draws nothing, so the rule would vanish without this.
+    const targets = values.filter((value) => rule.targetNamespace === "pkg" || tagSelector(`${rule.targetNamespace}:${value}`) !== from);
+    if (kind === "allow" && targets.length === 0) {
+      const anyValue = rule.targetNamespace === "pkg"
+        ? { packages: ["*"] }
+        : { id: selector("namespace", `${rule.targetNamespace}:*`, (row) => [...row.tags].some((tag) => tag.startsWith(`${rule.targetNamespace}:`))) };
+      add({ ...common, kind: "forbid", subject: null, target: anyValue, alone: true });
       return;
     }
-    for (const value of values) add({ ...common, target: { id: tagSelector(`${rule.targetNamespace}:${value}`) } });
+    if (rule.targetNamespace === "pkg") {
+      if (values.length > 0) add({ ...common, target: { packages: values }, alone: kind === "allow" });
+      return;
+    }
+    for (const value of targets) add({ ...common, target: { id: tagSelector(`${rule.targetNamespace}:${value}`) } });
   });
 
   (config.edges?.point ?? []).forEach((rule, index) => {
@@ -321,8 +347,11 @@ export function buildDiagramModel(config: Config, rows: readonly FileRow[]): Dia
   if (stack !== undefined && stackRule !== undefined) addNote("stack", [], stack.qualifier, stackRule.because);
   orderRules.forEach((rule, index) => {
     if (index === stackRuleIndex) return;
-    const lines = Object.keys(rule.sequence).map((key) =>
-      `order ${rule.tagNamespace}${key === "" ? "" : ` within ${rule.within ?? "?"}:${key}`}: ${rule.sequence[key]!.join(" < ")}`);
+    // Without `within`, only the "" key is ever looked up, so any other key judges nothing.
+    const keys = Object.keys(rule.sequence).filter((key) => rule.within !== undefined || key === "");
+    const lines = rule.within === undefined && keys.length === 0
+      ? [`order ${rule.tagNamespace}: never applies (no "" sequence and no within)`]
+      : keys.map((key) => `order ${rule.tagNamespace}${key === "" ? "" : ` within ${rule.within}:${key}`}: ${rule.sequence[key]!.join(" < ")}`);
     addNote("order", lines, qualifierOf(rule), rule.because);
   });
 

@@ -34,7 +34,7 @@ const LINKS: Record<LinkKind, LinkRow> = {
     qualified: false,
     reasons: false,
     look: "thick gray arrow between layers",
-    meaning: "a layer may use any layer below it, never one above",
+    meaning: "a layer may use the layers its gray arrows lead to, never one they come from",
   },
   allow: {
     arrow: "-->",
@@ -193,6 +193,18 @@ function noteLabel(note: Note, detail: DiagramDetail): string | null {
 
 const SEMANTIC_NOTES: readonly { readonly applies: (links: readonly Link[]) => boolean; readonly text: string }[] = [
   { applies: (links) => links.some((link) => link.kind === "allow"), text: "An allow list also forbids every other value of its tag namespace." },
+  {
+    applies: (links) => {
+      const rulesOf = new Map<string, Set<string>>();
+      for (const link of links) {
+        if (link.kind !== "allow") continue;
+        const key = `${link.from}\0${link.subject}`;
+        rulesOf.set(key, (rulesOf.get(key) ?? new Set()).add(link.rule));
+      }
+      return [...rulesOf.values()].some((rules) => rules.size > 1);
+    },
+    text: "Two allow lists from one source in one namespace both apply: a target must be on every list.",
+  },
   {
     applies: (links) => links.some((link) => (link.kind === "allow" || link.kind === "forbid") && link.rule.startsWith("edges.allowDeny")),
     text: "An allowDeny rule judges only a target that carries a tag in its namespace, and a target that also carries the source tag is exempt.",
