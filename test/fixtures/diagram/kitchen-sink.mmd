@@ -1,0 +1,63 @@
+flowchart TB
+  subgraph l0["layer: command (value)"]
+  end
+  subgraph l1["layer: shell (value)"]
+    m2["<b>shell</b><br/><small>src/shell/**</small>"]
+    m3["<b>store</b><br/><small>src/store/**</small><br/><small>surface: none</small><br/><small>friend: src/shell/** -#gt; db.ts</small>"]
+  end
+  subgraph l2["layer: domain (value)"]
+  end
+  subgraph l3["layer: kernel (value)"]
+    m0["<b>kernel</b><br/><small>src/kernel/**</small>"]
+  end
+  m1["<b>domain</b><br/><small>src/domain/**</small><br/><small>layer: domain, kernel, (none)</small>"]
+  m4["<b>vendor</b><br/><small>src/vendor/**</small><br/><small>surface: lib.ts</small>"]
+  m5["<b>odd #amp; #quot;name#quot;</b><br/><small>src/odd/**</small>"]
+  m6["<b>tool0</b><br/><small>src/tools/t0/**</small>"]
+  m7["<b>tool1</b><br/><small>src/tools/t1/**</small>"]
+  m8["<b>tool2</b><br/><small>src/tools/t2/**</small>"]
+  m9["<b>tool3</b><br/><small>src/tools/t3/**</small>"]
+  m10["<b>tool4</b><br/><small>src/tools/t4/**</small>"]
+  m11["<b>tool5</b><br/><small>src/tools/t5/**</small>"]
+  m12["<b>tool6</b><br/><small>src/tools/t6/**</small>"]
+  m13["<b>tool7</b><br/><small>src/tools/t7/**</small>"]
+  m14["<b>tool8</b><br/><small>src/tools/t8/**</small>"]
+  m15["<b>tool9</b><br/><small>src/tools/t9/**</small>"]
+  m16["<b>tool10</b><br/><small>src/tools/t10/**</small>"]
+  m17["<b>tool11</b><br/><small>src/tools/t11/**</small>"]
+  e0["<b>must be empty</b><br/><small>src/utils/**</small><br/><i>because a utils directory hides which module owns a helper</i>"]:::empty
+  s0(["<b>io:pure</b><br/><small>2 modules: kernel, domain</small>"]):::selector
+  s1(["<b>kind:tool</b><br/><small>12 modules: tool0, tool1, tool2, tool3, tool4, tool5, tool6, tool7, tool8, tool9, +2 more</small>"]):::selector
+  s2(["<b>{#quot;tags#quot;:[#quot;io:pure#quot;],#quot;exclude#quot;:{#quot;tags#quot;:[#quot;layer:kernel#quot;]}}</b><br/><small>1 module: domain (2/3 files)</small>"]):::selector
+  s3(["<b>layer:nothing</b><br/><small>0 modules</small>"]):::empty
+  k0{{"pkg: fs, path"}}:::package
+  k1{{"pkg: zlib"}}:::package
+  k2{{"pkg: node"}}:::package
+  k3{{"pkg: left-pad"}}:::package
+  n0["<b>project</b><br/><i>because The kitchen sink: one of everything the diagram can draw.</i>"]:::note
+  n1["<b>layer order (value)</b><br/><i>because a layer uses only the layers below it</i>"]:::note
+  n2["<b>order (type)</b><br/>order tier within layer:kernel: low #lt; high<br/>order tier within layer:shell: inner #lt; outer<br/><i>because inside a layer, tiers keep the same direction</i>"]:::note
+  l0 ==> l1
+  l1 ==> l2
+  l2 ==> l3
+  l1 -->|"only layer: the shell reaches the domain and the kernel, nothing else"| l2
+  l1 -->|"only layer: the shell reaches the domain and the kernel, nothing else"| l3
+  s0 -.-x|"cannot use (value): pure code takes values, not files"| k0
+  s1 -->|"only pkg: tools compress with zlib and use nothing else from npm"| k1
+  s1 -.-x|"cannot use (static): tools stay below the shell"| l1
+  s2 -.-x|"cannot use: only the kernel reads the store directly"| m3
+  m4 -.-x|"cannot use: vendored code stays free of Node builtins"| k2
+  s3 -.-x|"cannot use (dynamic): a tag no file carries draws an empty selector"| k3
+  m6 -.->|"exempt: tool0 is the shell's own helper"| m2
+  m0 <-.->|"known cycle"| m1
+  m2 -.->|"deprecated, at most 3: the shell reaches the store through one file"| m3
+  linkStyle 0,1,2 stroke:#868e96,stroke-width:3px
+  linkStyle 3,4,6 stroke:#2f9e44,stroke-width:2px
+  linkStyle 5,7,8,9,10 stroke:#e03131,stroke-width:1.5px,stroke-dasharray:5 4
+  linkStyle 11 stroke:#f08c00,stroke-width:1.5px,stroke-dasharray:2 3
+  linkStyle 12 stroke:#868e96,stroke-width:1.5px,stroke-dasharray:2 3
+  linkStyle 13 stroke:#e8590c,stroke-width:1.5px,stroke-dasharray:5 4
+  classDef selector fill:none,stroke-dasharray:4 3
+  classDef empty stroke-dasharray:4 3,opacity:0.6
+  classDef package fill:none,stroke:#e03131,color:#e03131
+  classDef note fill:none,stroke-dasharray:2 2
