@@ -562,3 +562,32 @@ test("no feature-isolation proposal with only one feature module under the conta
   const result = await recommend(root);
   expect(result.patternProposals.find(p => p.pattern === "feature-isolation")).toBeUndefined();
 }));
+
+test("a config whose singleton module has an exact classify entry gets proposals whose classify adds to the existing tags", async () => fixture(async (root, put) => {
+  put("src/build/build-error.ts", "export const buildError = 1;\n");
+  put("src/build/index.ts", 'import "./build-error.ts";\nexport const build = 1;\n');
+  put("src/app/index.ts", 'import "../build/index.ts";\nexport const app = 1;\n');
+  put("archstrict.config.ts", `export default {
+    declaredModules: [
+      { name: "build-error", glob: "src/build/build-error.ts", surface: "src/build/build-error.ts" },
+      { name: "build", glob: "src/build/**" },
+      { name: "app", glob: "src/app/**" },
+    ],
+    classify: [
+      { glob: "src/build/build-error.ts", tags: ["layer:kernel"] },
+      { glob: "src/build/**", tags: ["layer:build"] },
+      { glob: "src/app/**", tags: ["layer:app"] },
+    ],
+    because: "Keep the build kernel free of callers.",
+  };`);
+  const result = await recommend(root);
+  const proposal = result.patternProposals.find(p => p.pattern === "layered-order");
+  expect(proposal?.addedViolations).toBe(0);
+  expect(proposal?.configFragment.split("\n").slice(0, 5)).toEqual([
+    "classify: [",
+    '  { glob: "src/build/build-error.ts", tags: ["layer:kernel","role:build-error"] },',
+    '  { glob: "src/build/**", tags: ["layer:build","role:build"] },',
+    '  { glob: "src/app/**", tags: ["layer:app","role:app"] },',
+    "],",
+  ]);
+}));
