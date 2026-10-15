@@ -17,6 +17,7 @@ may change commands, flags, config, or output shape. The version entry will desc
 - `npm run typecheck` includes `src`, `test`, `scripts`, `features`, and root `*.ts`. It checks TypeScript files in those paths. `scripts` holds `.mjs` files only, which `tsc` skips. `test/fixtures` is excluded, except a fixture a test imports.
 - The CI test job runs `npm run dogfood:nukadoko` after `npm test`.
 - CI pins `actions/checkout` at v7.0.1 and `actions/setup-node` at v7.0.0, the same commits as the publish workflow. Each `setup-node` step sets `package-manager-cache: false`, so the job does not write an npm cache.
+- A version bump in `package.json` that lands on `main` now starts the publish workflow. The workflow publishes to npm after the `publish` environment approves the run, then creates the `v*` tag and the GitHub release. Nobody pushes a release tag by hand.
 - The TypeScript 7 probe job sets `continue-on-error: true`. A failed install or a version guard in that job stays visible on the job, and the workflow run stays successful.
 - Run `archstrict init` again after upgrading archstrict. `archstrict.types.ts` says to do that after an upgrade, and after adding, removing, or renaming a `declaredModules` entry.
 - `Config.scope` stays on the type and is reserved. Nothing reads it. Set `exclude` to leave files out of analysis. `archstrict init` writes that sentence on the generated type, and the Prisma and VS Code converters no longer emit `scope`.
