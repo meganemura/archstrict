@@ -103,13 +103,19 @@ type ClassifyEntry = { glob: string; tags: string[] };
 // entry is reached.
 function proposeClassify(graph: ModuleGraph, baseConfig: Config, added: readonly ClassifyEntry[]): { merged: ClassifyEntry[]; shown: ClassifyEntry[] } {
   const base = baseConfig.classify ?? [];
+  const files = [...[...graph.modules.values()].flatMap(module => module.files), ...graph.outsideFiles].map(file => graph.relativePath(file));
+  const merged = mergeClassify(files, base, added);
+  const unchanged = new Set(base.map(entry => `${entry.glob}\0${tagKey(entry.tags)}`));
+  return { merged, shown: merged.filter(entry => !unchanged.has(`${entry.glob}\0${tagKey(entry.tags)}`)) };
+}
+
+export function mergeClassify(files: readonly string[], base: readonly { glob: string; tags: readonly string[] }[], added: readonly ClassifyEntry[]): ClassifyEntry[] {
   const tagsByGlob = new Map<string, string[]>();
   for (const entry of [...base, ...added]) tagsByGlob.set(entry.glob, unionTags(tagsByGlob.get(entry.glob) ?? [], entry.tags));
   const globs = [...tagsByGlob.keys()].map(glob => ({ glob, value: glob }));
   const wanted = new Map<string, string[]>();
   const filesByWinner = new Map<string, string[]>();
   const pinned: string[] = [];
-  const files = [...[...graph.modules.values()].flatMap(module => module.files), ...graph.outsideFiles].map(file => graph.relativePath(file));
   for (const file of files) {
     const want = classifyOrAmbiguous(() => unionTags(classifyByGlob(file, base) ?? [], classifyByGlob(file, added) ?? []));
     if (want === undefined) continue;
@@ -123,12 +129,10 @@ function proposeClassify(graph: ModuleGraph, baseConfig: Config, added: readonly
     if (winnerFiles.every(file => tagKey(wanted.get(file)!) === tagKey(tags))) tagsByGlob.set(glob, tags);
     else pinned.push(...winnerFiles);
   }
-  const merged = [
+  return [
     ...pinned.map(file => ({ glob: file, tags: wanted.get(file)! })),
     ...[...tagsByGlob].filter(([glob]) => !pinned.includes(glob)).map(([glob, tags]) => ({ glob, tags })),
   ];
-  const unchanged = new Set(base.map(entry => `${entry.glob}\0${tagKey(entry.tags)}`));
-  return { merged, shown: merged.filter(entry => !unchanged.has(`${entry.glob}\0${tagKey(entry.tags)}`)) };
 }
 
 function unionTags(first: readonly string[], second: readonly string[]): string[] {
