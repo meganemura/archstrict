@@ -600,3 +600,25 @@ test("a config whose singleton module has an exact classify entry gets proposals
     "],",
   ]);
 }));
+
+test("layered-order picks a tag namespace the config does not already use", async () => fixture(async (root, put) => {
+  put("src/core/index.ts", "export const core = 1;\n");
+  put("src/top/index.ts", 'import "../core/index.ts";\nexport const top = 1;\n');
+  put("archstrict.config.ts", `export default {
+    declaredModules: [{ name: "core", glob: "src/core/**" }, { name: "top", glob: "src/top/**" }],
+    classify: [{ glob: "src/**", tags: ["role:service"] }],
+    because: "Keep the core free of callers.",
+  };`);
+  const result = await recommend(root);
+  const proposal = result.patternProposals.find(p => p.pattern === "layered-order");
+  expect(proposal?.configFragment).toBe([
+    "classify: [",
+    '  { glob: "src/core/**", tags: ["role:service","role2:core"] },',
+    '  { glob: "src/top/**", tags: ["role:service","role2:top"] },',
+    "],",
+    "edges: { order: [",
+    '  { tagNamespace: "role2", sequence: { "": ["core","top"] }, direction: "downward-only", because: "1 of 1 directed edges between these modules already match this order" },',
+    "] },",
+  ].join("\n"));
+  expect(proposal?.addedViolations).toBe(0);
+}));
