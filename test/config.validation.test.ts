@@ -24,6 +24,10 @@ test("edge shape errors identify the faulty value and give the matching edit", a
     }
     cases.push({ edges: { [kind]: [{ typo: "invalid" }] }, message: `config.edges.${kind}[0] has an unknown field 'typo'`, remedy: `remove 'typo' from config.edges.${kind}[0]` });
   }
+  cases.push({ edges: { allowDeny: [{ source: "layer:a", targetNamespace: "pkg", deny: ["x"], guard: "true", because: "test" }] },
+    message: "config.edges.allowDeny[0].guard must be true or false, not string", remedy: "set config.edges.allowDeny[0].guard to true or false" });
+  cases.push({ edges: { point: [{ from: "src/**", to: "lib/**", guard: 1, because: "test" }] },
+    message: "config.edges.point[0].guard must be true or false, not number", remedy: "set config.edges.point[0].guard to true or false" });
   cases.push({ edges: { order: [{ tagNamespace: "layer", sequence: [], direction: "downward-only", because: "test" }] },
     message: "an edges.order entry's sequence must be an object", remedy: "set that sequence to an object keyed by the within scope" });
   for (const { edges, message, remedy } of cases) {

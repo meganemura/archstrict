@@ -307,7 +307,24 @@ describe("a guard rule, which bans an import no file has yet", () => {
       "guard allowDeny rule 'role:db -> pkgs' matches no real edge in scope, and its targetNamespace 'pkgs' is neither pkg nor a namespace classify assigns",
       "guard point rule 'src/nowhere/** -> {\"tags\":[\"role:app\"]}' matches no real edge in scope, and its from 'src/nowhere/**' matches no file in scope",
       "guard point rule 'src/db/** -> src/nowhere/**' matches no real edge in scope, and its to 'src/nowhere/**' matches no file in scope",
-      "guard point rule 'src/db/** -> {\"tags\":[\"rol:app\"]}' matches no real edge in scope, and its to tag 'rol:app' is neither pkg nor a namespace classify assigns",
+      "guard point rule 'src/db/** -> {\"tags\":[\"rol:app\"]}' matches no real edge in scope, and its to tag 'rol:app' is neither a pkg tag nor a tag classify assigns",
+    ]);
+  }));
+
+  test("a guard whose deny value or to tag is a typo of a value classify assigns is still an empty-rule-set finding", () => roleProject((root, config) => {
+    config.edges = {
+      allowDeny: [
+        { source: "role:db", targetNamespace: "role", deny: ["app", "ap"], guard: true, because: "test" },
+        { source: "role:db", targetNamespace: "role", allow: ["nothing-real"], guard: true, because: "allow values are not checked" },
+      ],
+      point: [
+        { from: { tags: ["role:db"] }, to: { tags: ["role:ap"] }, guard: true, because: "test" },
+        { from: { tags: ["role:db"] }, to: { tags: ["pkg:not-installed"] }, guard: true, because: "pkg names are not checked" },
+      ],
+    };
+    expect(checkEmptyRuleSet(graphOf(root, config), config).map(v => v.evidence)).toEqual([
+      "guard allowDeny rule 'role:db -> role' matches no real edge in scope, and its deny value 'ap' is not a 'role:' value classify assigns",
+      "guard point rule '{\"tags\":[\"role:db\"]} -> {\"tags\":[\"role:ap\"]}' matches no real edge in scope, and its to tag 'role:ap' is neither a pkg tag nor a tag classify assigns",
     ]);
   }));
 });
