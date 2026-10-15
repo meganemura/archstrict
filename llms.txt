@@ -27,6 +27,7 @@ Installed package: `node_modules/archstrict/skills/archstrict/SKILL.md` (this fi
 - `archstrict simulate [--json] [--whole-project]` — preview proposed source or config changes without writing to disk. A source-only change set reports the changed files. A change set that contains `archstrict.config.ts`, or `--whole-project`, reports the complete project delta. Read the JSON change set from stdin
 - `archstrict search <query> [--json]` — rank names exported from public surfaces by token overlap with the query
 - `archstrict hotspots [--since <git ref or date>] [--json]` — combine Git change frequency and co-change with module fan-in, fan-out, frozen debt, and active violations
+- `archstrict diagram [--format mermaid|markdown] [--direction TB|BT|LR|RL] [--detail names|rules|reasons] [--focus <module>] [--json]` — draw `archstrict.config.ts` as a Mermaid flowchart on stdout: layers from the first `order` rule, a pill per tag, glob, or predicate that lists the modules holding matching files, and the packages a rule bans. It reads file names, not imports, and writes no file
 - `archstrict mcp` — start the stdio MCP server. Its tools are `check`, `rules`, `search`, and `simulate`
 
 A config or missing-file failure prints a `do:` line naming the command to run. With `--json` that failure is `{ "error": "<message>", "do": "<command>" }`.

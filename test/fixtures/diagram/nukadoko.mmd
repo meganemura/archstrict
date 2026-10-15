@@ -1,0 +1,92 @@
+flowchart TB
+  subgraph l0["layer: entry"]
+    m27["<b>bin</b><br/><small>src/cli.ts</small><br/><small>surface: cli.ts</small>"]
+    m28["<b>entry</b><br/><small>src/index.ts</small><br/><small>surface: index.ts</small>"]
+    m29["<b>matching</b><br/><small>src/matching/**</small>"]
+  end
+  subgraph l1["layer: adapter"]
+    m25["<b>cli</b><br/><small>src/cli/**</small><br/><small>surface: run-cli.ts</small>"]
+    m26["<b>external</b><br/><small>src/external/**</small><br/><small>surface: record-step.ts</small>"]
+  end
+  subgraph l2["layer: workflow"]
+    m19["<b>accept</b><br/><small>src/accept/**</small><br/><small>surface: render-record.ts, select-run.ts</small>"]
+    m20["<b>harvest</b><br/><small>src/harvest/**</small><br/><small>surface: build-draft.ts</small>"]
+    m21["<b>live</b><br/><small>src/live/**</small><br/><small>surface: client.ts, live-session-notice.ts, spawn-daemon.ts</small>"]
+    m22["<b>mcp</b><br/><small>src/mcp/**</small><br/><small>surface: index.ts</small><br/><small>friend: src/cli/** -#gt; list-tools.ts</small>"]
+    m23["<b>tend</b><br/><small>src/tend/**</small><br/><small>surface: analyze.ts, record-parse.ts, types.ts</small>"]
+    m24["<b>webmcp</b><br/><small>src/webmcp/**</small><br/><small>surface: call-tool.ts, list-tools.ts</small>"]
+  end
+  subgraph l3["layer: run"]
+    m18["<b>run</b><br/><small>src/run/**</small><br/><small>surface: match-step.ts, probe-git.ts, process-signal.ts, progress-log.ts, run-concurrent.ts, run-id.ts, run-scenario.ts, select-pickles.ts</small>"]
+  end
+  subgraph l4["layer: service"]
+    m15["<b>check</b><br/><small>src/check/**</small><br/><small>surface: analyze.ts, binding-check.ts, codes.ts, config-check.ts, done-callback.ts, feature-check.ts, from-order.ts, types.ts, unfillable-key.ts</small>"]
+    m16["<b>environment</b><br/><small>src/environment/**</small><br/><small>surface: name.ts, probe-version.ts, resolve-environment.ts</small>"]
+    m17["<b>report</b><br/><small>src/report/**</small><br/><small>surface: allure/categories.ts, allure/emitter.ts, messages/emitter.ts, step-records.ts</small>"]
+  end
+  subgraph l5["layer: read"]
+    m12["<b>discover</b><br/><small>src/discover/**</small><br/><small>surface: discover-steps.ts, format-vocabulary-error.ts</small>"]
+    m13["<b>feature</b><br/><small>src/feature/**</small><br/><small>surface: feature-arg-read.ts, load-features.ts, parse-oath.ts, resolve-oaths.ts</small>"]
+    m14["<b>version</b><br/><small>src/version.ts</small><br/><small>surface: version.ts</small>"]
+  end
+  subgraph l6["layer: fixture"]
+    m9["<b>fixture</b><br/><small>src/fixture/**</small><br/><small>surface: define-fixtures.ts, graph.ts, resolver.ts, step-needs.ts, validate-fixtures.ts</small>"]
+  end
+  subgraph l7["layer: context"]
+    m8["<b>context</b><br/><small>src/context/**</small><br/><small>surface: create-context.ts, env.ts, errors.ts, evidence.ts, poll.ts, trace-actions.ts, used.ts</small>"]
+  end
+  subgraph l8["layer: config"]
+    m7["<b>config</b><br/><small>src/config/**</small><br/><small>surface: define-config.ts, errors.ts, load-config.ts, module-kind.ts, schema.ts</small>"]
+  end
+  subgraph l9["layer: contract"]
+    m11["<b>step</b><br/><small>src/step/**</small><br/><small>surface: context.ts, define-explore.ts, define-step.ts, fixture-names.ts, fixture-types.ts, infer-needs.ts, resolve-use.ts, step-fixture-names.ts, strict-args.ts, validate-from.ts, validate-parts.ts</small>"]
+  end
+  subgraph l10["layer: record"]
+    m10["<b>record</b><br/><small>src/record/**</small><br/><small>surface: messages-output.ts, newest-run.ts, read-step-record.ts, record-id.ts, retention.ts, run-exports.ts, run-marker.ts, scenario-record.ts, types.ts, write-step-record.ts</small>"]
+  end
+  subgraph l11["layer: base"]
+    m2["<b>binding</b><br/><small>src/binding/**</small><br/><small>surface: capture.ts, errors.ts, escape-hint.ts, expression.ts, parameter-type-config.ts, parameter-type-errors.ts, pattern.ts, quote-hint.ts, registry.ts, schema-shape.ts</small>"]
+    m3["<b>compat</b><br/><small>src/compat/**</small><br/><small>surface: allure-runtime.ts, data-table.ts, declared.ts, define-world.ts, errors.ts, hooks.ts, index.ts, registry.ts, run-hooks.ts, tag-expression.ts, world.ts</small>"]
+    m4["<b>secrets</b><br/><small>src/secrets/**</small><br/><small>surface: build-secret-set.ts, classify-env-files.ts, redact.ts, types.ts</small>"]
+    m5["<b>session</b><br/><small>src/session/**</small><br/><small>surface: live-sock.ts, lock.ts, manage.ts, name.ts, paths.ts, storage-state.ts, store.ts</small>"]
+    m6["<b>sink</b><br/><small>src/sink/**</small><br/><small>surface: writable-sink.ts</small>"]
+  end
+  subgraph l12["layer: leaf"]
+    m0["<b>env</b><br/><small>src/env/**</small><br/><small>surface: load-env-files.ts, parse-env-file.ts</small>"]
+    m1["<b>issues</b><br/><small>src/issues/**</small><br/><small>surface: format-issues.ts</small>"]
+  end
+  e0["<b>must be empty</b><br/><small>src/core/**</small><br/><i>because there is no mega-core directory. A new check, matcher, compat file, or command goes in its own module.</i>"]:::empty
+  e1["<b>must be empty</b><br/><small>src/utils/**</small><br/><i>because a utils directory becomes the next mega-core. A shared function gets a named module (sink, issues, env) instead.</i>"]:::empty
+  e2["<b>must be empty</b><br/><small>src/shared/**</small><br/><i>because a shared directory hides which seam a change belongs to. Name the module for the thing it is.</i>"]:::empty
+  s0(["<b>pkghost:library</b><br/><small>26 modules: env, issues, binding, compat, secrets, session, sink, config, context, fixture, +16 more</small>"]):::selector
+  s1(["<b>pkghost:cli</b><br/><small>2 modules: cli, bin</small>"]):::selector
+  s2(["<b>pkghost:mcp</b><br/><small>1 module: mcp</small>"]):::selector
+  s3(["<b>pkghost:feature</b><br/><small>1 module: feature</small>"]):::selector
+  k0{{"pkg: @modelcontextprotocol/client, yargs, @cucumber/gherkin"}}:::package
+  k1{{"pkg: @modelcontextprotocol/client, @cucumber/gherkin"}}:::package
+  k2{{"pkg: yargs, @cucumber/gherkin"}}:::package
+  k3{{"pkg: @modelcontextprotocol/client, yargs"}}:::package
+  n0["<b>project</b><br/><i>because seams follow growth. The step contract is one module, layered between records below and config, context, and fixtures above. Checks, compat, matching, mcp, and the CLI are separate modules with explicit surfaces, so a new file in one of them does not land in a single core.</i>"]:::note
+  n1["<b>layer order</b><br/><i>because foundation first. Records sit under the step contract, then config, the context that builds ctx, and fixtures. Checks, the runner, matching, and mcp sit above all five, so a change in one of them does not reach back into a lower layer. compat sits below them in base, so the migration door never depends on the engine it is migrating into.</i>"]:::note
+  l0 ==> l1
+  l1 ==> l2
+  l2 ==> l3
+  l3 ==> l4
+  l4 ==> l5
+  l5 ==> l6
+  l6 ==> l7
+  l7 ==> l8
+  l8 ==> l9
+  l9 ==> l10
+  l10 ==> l11
+  l11 ==> l12
+  s0 -.-x|"cannot use: the MCP client, yargs, and the Gherkin parser each have one home. Library code does not grow a second one."| k0
+  s1 -.-x|"cannot use: the CLI may parse argv with yargs. The MCP client stays behind a dynamic import of the mcp module, and feature files are parsed by the feature module."| k1
+  s2 -.-x|"cannot use: mcp is the only module that links the optional MCP client. It does not parse argv or feature files."| k2
+  s3 -.-x|"cannot use: feature is the only module that links @cucumber/gherkin. It does not parse argv or talk to an MCP server."| k3
+  linkStyle 0,1,2,3,4,5,6,7,8,9,10,11 stroke:#868e96,stroke-width:3px
+  linkStyle 12,13,14,15 stroke:#e03131,stroke-width:1.5px,stroke-dasharray:5 4
+  classDef selector fill:none,stroke-dasharray:4 3
+  classDef empty stroke-dasharray:4 3,opacity:0.6
+  classDef package fill:none,stroke:#e03131,color:#e03131
+  classDef note fill:none,stroke-dasharray:2 2

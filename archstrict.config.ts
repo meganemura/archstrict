@@ -80,6 +80,7 @@ export default {
       surface: [
         "agents.ts",
         "check.ts",
+        "diagram.ts",
         "fix.ts",
         "hotspots.ts",
         "init.ts",

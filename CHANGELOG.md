@@ -7,6 +7,7 @@ may change commands, flags, config, or output shape. The version entry will desc
 
 ### Added
 
+- `archstrict diagram` draws `archstrict.config.ts` as a Mermaid flowchart on stdout. The first unscoped `order` rule becomes the layout: one box per layer, highest first, holding the modules whose files all carry that tag. A tag, glob, or tag predicate that a rule names becomes a dashed pill that lists the modules holding a matching file, with `(n/m files)` when only part of a module matches. `pkg:` targets become red hexagons. `deny` and `point` draw red dashed arrows, `allow` draws green ones, and `exceptions`, `ignoredCycles`, `deprecated`, and `mustBeEmpty` each have their own look. A rule's `edgeType` or `importForm` other than `both` always shows on its label. `--format markdown` adds a heading, a legend table, and the facts the arrows cannot carry. `--detail names|rules|reasons`, `--direction TB|BT|LR|RL`, and `--focus <module>` change what is drawn, and `--json` prints the document with its nodes and links. The verb reads file names, builds no import graph, and writes nothing. See `skills/archstrict/references/diagram.md`.
 - `archstrict --help`, `-h`, and `help` print one usage table and exit 0 without running a verb. `archstrict <verb> --help` prints that verb's line. `init`, `todo`, `fix`, and `agents` are marked `[writes files]`. An unknown verb prints the table and exits 1. A failure without its own `do` uses `archstrict <verb> --help`.
 
 ### Changed
