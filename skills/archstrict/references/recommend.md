@@ -23,6 +23,21 @@ seam, and it is left out of this count. Text prints every note. JSON
 always includes the array, empty when neither shape holds, so a missing
 field is not how "the map is finished" is spelled.
 
+## `proposedClassify`
+
+JSON only. One tag per module that has files, `<namespace>:<module name>`,
+for writing your own `edges` rules. The namespace is `role`, or `role2`,
+`role3`, and so on when the config already names `role`. The entries are
+added to the config's own `classify` the same way a proposal's fragment
+is: the list holds only the entries that are new or changed, and a changed
+entry carries the config's tags and the new one together.
+
+Every proposal picks its tag namespace the same way. A namespace counts as
+used when `classify` or `classifyByDirectoryName` assigns it, or when an
+`edges` rule names it: an `order` `tagNamespace`, an `allowDeny` `source`
+or `targetNamespace`, or a tag in a `point` predicate. `pkg` is always
+used.
+
 ## `patternProposals`
 
 At most 5 proposals, ranked by evidence - a project with more detectable

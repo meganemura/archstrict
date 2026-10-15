@@ -414,13 +414,14 @@ function detectLeafKernels(
     incoming.set(edge.toModule, (incoming.get(edge.toModule) ?? 0) + 1);
   }
   const proposals: { proposal: PatternProposal; weight: number }[] = [];
+  const ns = freeTagNamespace(baseConfig, "kind");
   for (const module of modules) {
     const inCount = incoming.get(module.name) ?? 0;
     if (inCount === 0 || (outgoing.get(module.name) ?? 0) > 0) continue;
-    const tag = `kind:${module.name}`;
+    const tag = `${ns}:${module.name}`;
     const classify = proposeClassify(graph, baseConfig, classifyEntries(declaredModules, module.name, [tag]));
     const because = `'${module.name}' is imported by ${inCount} real edge(s) and imports no other declared module today`;
-    const allowDenyRule = { source: tag, targetNamespace: "kind", allow: [] as string[], because };
+    const allowDenyRule = { source: tag, targetNamespace: ns, allow: [] as string[], because };
     const proposedConfig: Config = {
       ...baseConfig,
       classify: classify.merged,
@@ -433,7 +434,7 @@ function detectLeafKernels(
         evidence: [`'${module.name}': 0 outgoing edges to another declared module; ${inCount} other module(s) import it`],
         configFragment: [
           "classify: [", ...classify.shown.map(c => `  { glob: ${JSON.stringify(c.glob)}, tags: ${JSON.stringify(c.tags)} },`), "],",
-          "edges: { allowDeny: [", `  { source: ${JSON.stringify(tag)}, targetNamespace: "kind", allow: [], because: ${JSON.stringify(because)} },`, "] },",
+          "edges: { allowDeny: [", `  { source: ${JSON.stringify(tag)}, targetNamespace: ${JSON.stringify(ns)}, allow: [], because: ${JSON.stringify(because)} },`, "] },",
         ].join("\n"),
         addedViolations: countAddedViolations(graph, baseConfig, proposedConfig, "tag-boundary"),
         do: PROVE_RULES_DO,
@@ -515,11 +516,23 @@ function edgesBetweenGroups(counts: ReadonlyMap<string, ReadonlyMap<string, numb
 // read wrong. `allowDeny`/`point` have no such throw, but reusing a live
 // namespace would still misread as extending a rule the project already
 // wrote for a different reason - so every new detector below picks a
-// namespace free of both classify's own tags and classifyByDirectoryName.
+// namespace no part of the config names: classify, classifyByDirectoryName,
+// or any edges rule, since a namespace a rule names but nothing assigns yet
+// is still that rule's vocabulary.
 function usedTagNamespaces(config: Config): Set<string> {
-  const namespaces = new Set<string>();
-  for (const entry of config.classify ?? []) for (const tag of entry.tags) namespaces.add(tag.split(":")[0] ?? tag);
+  const tags: string[] = (config.classify ?? []).flatMap(entry => entry.tags);
+  const namespaces = new Set<string>(["pkg"]);
   if (config.classifyByDirectoryName) namespaces.add(config.classifyByDirectoryName.tagNamespace);
+  for (const rule of config.edges?.order ?? []) namespaces.add(rule.tagNamespace);
+  for (const rule of config.edges?.allowDeny ?? []) {
+    tags.push(rule.source);
+    namespaces.add(rule.targetNamespace);
+  }
+  for (const rule of config.edges?.point ?? []) {
+    if (typeof rule.from !== "string") tags.push(...rule.from.tags, ...(rule.from.exclude?.tags ?? []));
+    if (typeof rule.to !== "string") tags.push(...rule.to.tags);
+  }
+  for (const tag of tags) namespaces.add(tag.split(":")[0]!);
   return namespaces;
 }
 
@@ -931,10 +944,11 @@ export async function recommend(
   // Config either way, real or previewed.
   const baseConfig: Config = config ?? { configPath, declaredModules: plan!.declaredModules, exclude: plan!.exclude, surface, because: "archstrict recommend preview" };
   const detected = detectPatterns(modules, graph, counts, declaredModules, baseConfig, surfaceProposals);
+  const roleNs = freeTagNamespace(baseConfig, "role");
   return {
     modules: modules.length,
     mapNotes,
-    proposedClassify: modules.flatMap(module => classifyEntries(declaredModules, module.name, [`role:${module.name}`])),
+    proposedClassify: proposeClassify(graph, baseConfig, modules.flatMap(module => classifyEntries(declaredModules, module.name, [`${roleNs}:${module.name}`]))).shown,
     detected: detected.length,
     patternProposals: detected.slice(0, PATTERN_PROPOSAL_CAP),
     surfaceProposals,
