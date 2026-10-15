@@ -308,6 +308,20 @@ test("layered-order: a module with no edge is left out of the order and named", 
   expect(proposal!.configFragment).not.toContain("role:alone");
 }));
 
+test("layered-order: a balanced pair counts against support and is named, so support agrees with the added violations", async () => fixture(async (root, put) => {
+  put("src/core/index.ts", "export const core = 1;\n");
+  put("src/mid/index.ts", 'import "../core/index.ts";\nexport const mid = 1;\n');
+  put("src/top/index.ts", 'import "../mid/index.ts";\nexport const top = 1;\n');
+  put("src/side/index.ts", 'import "../core/index.ts";\nexport const side = 1;\n');
+  put("src/core/back.ts", 'import "../side/index.ts";\nexport const back = 1;\n');
+  const result = await recommend(root);
+  const proposal = result.patternProposals.find(p => p.pattern === "layered-order");
+  expect(proposal).toBeDefined();
+  expect(proposal!.evidence).toContain("no direction to read, the same edge count each way: core <-> side (1 each way)");
+  expect(proposal!.support).toBeCloseTo(3 / 4);
+  expect(proposal!.addedViolations).toBe(1);
+}));
+
 test("layered-order: a reverse edge lowers support below 1 and the proposed order still reports it as an added violation", async () => fixture(async (root, put) => {
   put("src/core/index.ts", "export const core = 1;\n");
   put("src/mid/a.ts", 'import "../core/index.ts";\nexport const a = 1;\n');
@@ -406,10 +420,10 @@ test("text output stays within a bounded line budget on a 28-module project", as
   expect(result.patternProposals.length).toBeGreaterThan(0);
   expect(result.surfaceProposals.length).toBeGreaterThan(5); // more than the text cap, to exercise the "+N more" truncation
   const text = formatRecommendText(result);
-  // 109 lines is this fixture with one complete config fragment per shown
+  // 110 lines is this fixture with one complete config fragment per shown
   // proposal. The fragment stays complete because the reader pastes it.
   const lines = text.split("\n");
-  expect(lines.length).toBe(109);
+  expect(lines.length).toBe(110);
   // The three generic surface choices print once for the whole section,
   // not once per shown module, even though 5 modules are shown.
   expect(lines.filter(l => l.includes("add a barrel file")).length).toBe(1);

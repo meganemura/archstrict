@@ -243,6 +243,7 @@ function detectLayeredOrder(
   const linked = new Set<string>();
   let forward = 0;
   let reverse = 0;
+  const balanced: { a: string; b: string; each: number }[] = [];
   for (let i = 0; i < names.length; i++) {
     for (let j = i + 1; j < names.length; j++) {
       const a = names[i]!;
@@ -252,7 +253,11 @@ function detectLayeredOrder(
       if (ab === 0 && ba === 0) continue;
       linked.add(a);
       linked.add(b);
-      if (ab === ba) continue; // exactly balanced: no direction to read, so no constraint either way
+      if (ab === ba) {
+        // Exactly balanced: no direction to read, so no constraint either way.
+        balanced.push({ a, b, each: ab });
+        continue;
+      }
       const [importer, dependency, majority, minority] = ab > ba ? [a, b, ab, ba] : [b, a, ba, ab];
       before.get(dependency)!.add(importer);
       forward += majority;
@@ -260,6 +265,13 @@ function detectLayeredOrder(
     }
   }
   if (forward === 0) return undefined; // no directional evidence between any pair at all
+  // Whichever way the order places a balanced pair, one direction's edges
+  // break it. Counting them keeps support and addedViolations telling the
+  // same story, instead of 100% support beside added violations.
+  for (const pair of balanced) {
+    forward += pair.each;
+    reverse += pair.each;
+  }
   // A module with no edge to any other has no place in the order: a
   // topological sort would still slot it somewhere, by name, and the
   // proposal would then read as if the edges put it there. A balanced pair
@@ -304,6 +316,7 @@ function detectLayeredOrder(
       evidence: [
         `order supported by these modules' own real edges: ${order.join(" -> ")}`,
         `${forward} of ${forward + reverse} directed edges between them match this order (the rest would need fixing, or a deliberate skip)`,
+        ...(balanced.length === 0 ? [] : [`no direction to read, the same edge count each way: ${balanced.map(p => `${p.a} <-> ${p.b} (${p.each} each way)`).join(", ")}`]),
         ...(unlinked.length === 0 ? [] : [`left out, no edge to another module: ${unlinked.join(", ")}`]),
       ],
       configFragment,
