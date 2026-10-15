@@ -105,8 +105,12 @@ function proposeClassify(graph: ModuleGraph, baseConfig: Config, added: readonly
   const base = baseConfig.classify ?? [];
   const files = [...[...graph.modules.values()].flatMap(module => module.files), ...graph.outsideFiles].map(file => graph.relativePath(file));
   const merged = mergeClassify(files, base, added);
+  return { merged, shown: shownClassify(base, merged) };
+}
+
+export function shownClassify(base: readonly { glob: string; tags: readonly string[] }[], merged: readonly ClassifyEntry[]): ClassifyEntry[] {
   const unchanged = new Set(base.map(entry => `${entry.glob}\0${tagKey(entry.tags)}`));
-  return { merged, shown: merged.filter(entry => !unchanged.has(`${entry.glob}\0${tagKey(entry.tags)}`)) };
+  return merged.filter(entry => !unchanged.has(`${entry.glob}\0${tagKey(entry.tags)}`));
 }
 
 export function mergeClassify(files: readonly string[], base: readonly { glob: string; tags: readonly string[] }[], added: readonly ClassifyEntry[]): ClassifyEntry[] {
