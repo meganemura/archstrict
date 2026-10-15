@@ -57,8 +57,43 @@ describe("cli", () => {
     expect(() => execFileSync("node", [CLI_PATH], { encoding: "utf8" })).toThrow();
   });
 
-  // This test starts the CLI about 70 times, six per verb, and each start
-  // takes 0.5 to 0.7 s, so the suite-wide 15 s limit cannot hold it.
+  // Each verb loads the TypeScript compiler or the MCP SDK only when it runs. Loading them up front
+  // made every start take 0.5 s, so this test, which starts the CLI about 70 times, outran the
+  // suite's time limit.
+  test("help loads neither the compiler nor the MCP SDK", () => {
+    const root = mkdtempSync(join(tmpdir(), "archstrict-cli-help-load-"));
+    try {
+      const hook = join(root, "refuse.mjs");
+      writeFileSync(
+        hook,
+        `import { registerHooks } from "node:module";
+registerHooks({
+  resolve(specifier, context, next) {
+    if (specifier === "typescript" || specifier.startsWith("@modelcontextprotocol/")) {
+      throw new Error("loaded " + specifier);
+    }
+    return next(specifier, context);
+  },
+});
+`,
+      );
+      for (const argv of [["--help"], ["check", "--help"], ["mcp", "--help"], ["nope"]]) {
+        try {
+          execFileSync("node", ["--import", hook, CLI_PATH, ...argv], { encoding: "utf8", stdio: "pipe" });
+        } catch (error) {
+          // An unknown verb exits 1 by design; anything else that failed is a load.
+          const stderr = String((error as { stderr?: unknown }).stderr);
+          expect(stderr).not.toMatch(/loaded /);
+          expect(stderr).toMatch(/unknown verb/);
+        }
+      }
+      // The hook does refuse a verb that needs the compiler, so a pass above is not the hook missing.
+      expect(() => execFileSync("node", ["--import", hook, CLI_PATH, "rules", "src/x.ts"], { cwd: root, encoding: "utf8", stdio: "pipe" })).toThrow(/loaded typescript/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("help prints each verb's usage and writes no file", () => {
     const root = mkdtempSync(join(tmpdir(), "archstrict-cli-help-"));
     try {
@@ -119,7 +154,7 @@ describe("cli", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
-  }, 120_000);
+  });
 
   test("init writes the two files and prints a do: line", () => {
     const root = mkdtempSync(join(tmpdir(), "archstrict-cli-init-"));

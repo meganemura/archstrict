@@ -11,6 +11,7 @@ may change commands, flags, config, or output shape. The version entry will desc
 
 ### Changed
 
+- The CLI imports a verb only when that verb runs. `--help`, an unknown verb, and a usage error no longer load the TypeScript compiler or the MCP SDK, so `archstrict --help` takes about 40 ms instead of about 0.5 s.
 - The MCP `check` tool accepts optional `rule` and `module` arguments and filters with the same rule and module check as `archstrict check`. Past 20 violations it returns each shown group's count, one example, and the `do:` that reruns that group. Groups the text report cuts stay as counts, with the `do:` for the largest remaining group.
 - The package-files test runs `npm pack --dry-run --ignore-scripts` once per file. `prepare` is `npm run build`, and that flag keeps the pack from rebuilding `dist/`. CI no longer runs `npm run build` after `npm ci`. The Windows job's `node dist/cli.js check` depends on `prepare` having run under `npm ci`. The packed list must not contain a path under `.agents/skills/`.
 - `npm run typecheck` includes `src`, `test`, `scripts`, `features`, and root `*.ts`. It checks TypeScript files in those paths. `scripts` holds `.mjs` files only, which `tsc` skips. `test/fixtures` is excluded, except a fixture a test imports.

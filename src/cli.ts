@@ -2,17 +2,10 @@
 // Responsibility: parse argv and dispatch to a verb (init, check, todo, rules, agents, recommend, fix, simulate, search, hotspots, mcp).
 // Boundary: no rule logic here; verbs live in their own modules.
 // Help is printed from the usage table before dispatch. A help flag must not reach a verb that writes files.
-import { startArchstrictMcpServer } from "./mcp-server.js";
-import { search, formatSearchText } from "./verbs/search.js";
-import { simulate, formatSimulateText, type Change } from "./verbs/simulate.js";
-import { agents, formatAgentsText } from "./verbs/agents.js";
-import { recommend, formatRecommendText } from "./verbs/recommend.js";
-import { fix, formatFixText } from "./verbs/fix.js";
-import { init } from "./verbs/init.js";
-import { check, formatText, hasBlockingViolations } from "./verbs/check.js";
-import { todo } from "./verbs/todo.js";
-import { rules, formatRulesText } from "./verbs/rules.js";
-import { hotspots, formatHotspotsText } from "./verbs/hotspots.js";
+// Each verb is imported when it runs. The verbs reach the TypeScript compiler and the MCP SDK, and
+// loading them was 94% of a 0.5 s `--help`: a CPU profile of that run put the time in module
+// loading, not in any archstrict code. Help, an unknown verb, and a bad flag load none of them.
+import type { Change } from "./verbs/simulate.js";
 import { ReportError } from "./report-error.js";
 import { parseCheckArgv } from "./check-options.js";
 
@@ -149,6 +142,7 @@ function parseInitArgv(argv: string[]): string | undefined {
 }
 
 async function runInit(args: string[]): Promise<number> {
+  const { init } = await import("./verbs/init.js");
   const asJson = args.includes("--json");
   const result = await init(process.cwd(), parseInitArgv(args));
   if (asJson) {
@@ -187,6 +181,7 @@ async function runInit(args: string[]): Promise<number> {
 
 async function runCheck(args: string[]): Promise<number> {
   const parsed = parseCheckArgv(args);
+  const { check, formatText, hasBlockingViolations } = await import("./verbs/check.js");
   const result = await check(process.cwd(), parsed.focusFile, {
     prove: parsed.prove,
     rules: parsed.rules,
@@ -211,6 +206,7 @@ async function runTodo(args: string[]): Promise<number> {
     if (arg !== "--json") throw new ReportError(`unknown option '${arg}'`, "archstrict todo [--json]");
   }
   const asJson = args.includes("--json");
+  const { todo } = await import("./verbs/todo.js");
   const result = await todo(process.cwd());
   if (asJson) {
     process.stdout.write(JSON.stringify(result, null, 2) + "\n");
@@ -232,15 +228,17 @@ async function runRules(args: string[]): Promise<number> {
   const asJson = args.includes("--json");
   const paths = args.filter((arg) => arg !== "--json");
   if (paths.length !== 1) throw new Error("usage: archstrict rules <path> [--json]");
+  const { rules, formatRulesText } = await import("./verbs/rules.js");
   const result = await rules(process.cwd(), paths[0]!);
   process.stdout.write(asJson ? JSON.stringify(result, null, 2) + "\n" : formatRulesText(result));
   return 0;
 }
 
-function runAgents(args: string[]): number {
+async function runAgents(args: string[]): Promise<number> {
   if (args.some((arg) => arg !== "--json" && arg !== "--remove")) {
     throw new Error("usage: archstrict agents [--remove] [--json]");
   }
+  const { agents, formatAgentsText } = await import("./verbs/agents.js");
   const result = agents(process.cwd(), args.includes("--remove"));
   process.stdout.write(args.includes("--json") ? JSON.stringify(result, null, 2) + "\n" : formatAgentsText(result));
   return 0;
@@ -251,6 +249,7 @@ async function runRecommend(args: string[]): Promise<number> {
   if (paths.length > 1 || paths.some(arg => arg.startsWith("-"))) {
     throw new Error("usage: archstrict recommend [dir] [--json]");
   }
+  const { recommend, formatRecommendText } = await import("./verbs/recommend.js");
   // Without a config, the directory controls init's own in-memory walk; a
   // declared config supplies its own scope regardless.
   const result = await recommend(process.cwd(), paths[0]);
@@ -263,6 +262,7 @@ async function runFix(args: string[]): Promise<number> {
   if (paths.length > 1 || paths.some(arg => arg.startsWith("-"))) {
     throw new Error("usage: archstrict fix [file] [--dry-run] [--json]");
   }
+  const { fix, formatFixText } = await import("./verbs/fix.js");
   const dryRun = args.includes("--dry-run");
   const result = await fix(process.cwd(), paths[0], dryRun);
   process.stdout.write(args.includes("--json") ? JSON.stringify(result, null, 2) + "\n" : formatFixText(result));
@@ -280,6 +280,7 @@ async function runSimulate(args: string[]): Promise<number> {
   if (typeof body !== "object" || body === null || !("changes" in body) || !Array.isArray(body.changes)) {
     throw new Error("stdin must contain a JSON object with a changes array");
   }
+  const { simulate, formatSimulateText } = await import("./verbs/simulate.js");
   const result = await simulate(process.cwd(), body.changes as Change[], { wholeProject: args.includes("--whole-project") });
   process.stdout.write(args.includes("--json") ? JSON.stringify(result, null, 2) + "\n" : formatSimulateText(result));
   return result.added.length === 0 ? 0 : 1;
@@ -287,6 +288,7 @@ async function runSimulate(args: string[]): Promise<number> {
 
 async function runSearch(args: string[]): Promise<number> {
   const query = args.filter(arg => arg !== "--json").join(" ");
+  const { search, formatSearchText } = await import("./verbs/search.js");
   const result = await search(process.cwd(), query);
   process.stdout.write(args.includes("--json") ? JSON.stringify(result, null, 2) + "\n" : formatSearchText(result));
   return 0;
@@ -303,6 +305,7 @@ async function runHotspots(args: string[]): Promise<number> {
     }
     throw new Error("usage: archstrict hotspots [--since <git ref or date>] [--json]");
   }
+  const { hotspots, formatHotspotsText } = await import("./verbs/hotspots.js");
   const result = await hotspots(process.cwd(), since);
   process.stdout.write(args.includes("--json") ? JSON.stringify(result, null, 2) + "\n" : formatHotspotsText(result));
   return 0;
@@ -312,6 +315,7 @@ async function runHotspots(args: string[]): Promise<number> {
 // A real subprocess stayed alive with stdin open and exited when stdin closed;
 // the host can also terminate it. A separate server-closed promise is unnecessary.
 async function runMcp(): Promise<number> {
+  const { startArchstrictMcpServer } = await import("./mcp-server.js");
   await startArchstrictMcpServer(process.cwd());
   return 0;
 }
@@ -342,7 +346,7 @@ async function main(argv: string[]): Promise<number> {
     if (verb === "check") return await runCheck(rest);
     if (verb === "todo") return await runTodo(rest);
     if (verb === "rules") return await runRules(rest);
-    if (verb === "agents") return runAgents(rest);
+    if (verb === "agents") return await runAgents(rest);
     const unexpected: never = verb;
     throw new Error(`usage: ${usageLine(unexpected)}`);
   } catch (error) {
