@@ -71,13 +71,17 @@ import { forcedBasesOf, gitignoreStackAbove, isPathGitignored, nextIgnoreState, 
 // Detected once here, not resolved: a builtin is synthesized as its own
 // external edge instead.
 //
-// `builtinModules` lists a scheme-only builtin (node:sqlite, node:test,
-// node:sea) with its prefix, since its bare name is free for an npm
-// package. So that prefixed form is a builtin as written, and a bare
-// `sqlite` still resolves as a package.
+// A scheme-only builtin has no bare form, since its bare name is free for an
+// npm package: `node:sqlite` is a builtin and `sqlite` is a package. Node 24
+// lists these in `builtinModules` with the prefix; Node 22 leaves them out
+// (measured on 22 in CI), and the project's runtime decides what it imports,
+// not the Node that runs archstrict. So the known ones are named here too.
 const BUILTIN_MODULE_NAMES = new Set(builtinModules);
+const SCHEME_ONLY_BUILTINS = new Set(["node:sea", "node:sqlite", "node:test", "node:test/reporters"]);
 function builtinModuleName(specifier: string): string | undefined {
-  if (specifier.startsWith("node:") && BUILTIN_MODULE_NAMES.has(specifier)) return specifier.slice("node:".length);
+  if (SCHEME_ONLY_BUILTINS.has(specifier) || (specifier.startsWith("node:") && BUILTIN_MODULE_NAMES.has(specifier))) {
+    return specifier.slice("node:".length);
+  }
   const bare = specifier.replace(/^node:/, "");
   return BUILTIN_MODULE_NAMES.has(bare) ? bare : undefined;
 }
