@@ -41,6 +41,26 @@ describe("buildModuleGraph (package-specifier resolution)", () => {
     expect(edge!.toModule).toBeUndefined();
     expect(edge!.externalPackage).toBe("fs");
   });
+
+  test("a scheme-only builtin (\"node:sqlite\", \"node:test\") is a builtin edge, and a bare \"sqlite\" is not", () => {
+    const root = mkdtempSync(join(tmpdir(), "archstrict-scheme-builtin-"));
+    try {
+      mkdirSync(join(root, "src/consumer"), { recursive: true });
+      writeFileSync(
+        join(root, "src/consumer/index.ts"),
+        'import { DatabaseSync } from "node:sqlite";\nimport { test } from "node:test";\nimport "sqlite";\nexport { DatabaseSync, test };\n',
+      );
+      const graph = buildModuleGraph({ projectRoot: root, declaredModules });
+      const bySpecifier = new Map(graph.edges.map((e) => [e.specifier, e]));
+      expect(bySpecifier.get("node:sqlite")?.externalPackage).toBe("sqlite");
+      expect(bySpecifier.get("node:sqlite")?.resolvedFile).toBe("node:sqlite");
+      expect(bySpecifier.get("node:test")?.externalPackage).toBe("test");
+      expect(bySpecifier.has("sqlite")).toBe(false);
+      expect(graph.unresolvedSpecifierCount).toBe(1);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
 test("a script's string-named ambient module is not a module augmentation", () => {

@@ -70,8 +70,14 @@ import { forcedBasesOf, gitignoreStackAbove, isPathGitignored, nextIgnoreState, 
 // every backend project's own node:fs/node:path imports as unanalyzable.
 // Detected once here, not resolved: a builtin is synthesized as its own
 // external edge instead.
+//
+// `builtinModules` lists a scheme-only builtin (node:sqlite, node:test,
+// node:sea) with its prefix, since its bare name is free for an npm
+// package. So that prefixed form is a builtin as written, and a bare
+// `sqlite` still resolves as a package.
 const BUILTIN_MODULE_NAMES = new Set(builtinModules);
 function builtinModuleName(specifier: string): string | undefined {
+  if (specifier.startsWith("node:") && BUILTIN_MODULE_NAMES.has(specifier)) return specifier.slice("node:".length);
   const bare = specifier.replace(/^node:/, "");
   return BUILTIN_MODULE_NAMES.has(bare) ? bare : undefined;
 }
