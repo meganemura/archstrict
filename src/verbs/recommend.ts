@@ -3,6 +3,7 @@
 import { existsSync } from "node:fs";
 import { relative, resolve, sep } from "node:path";
 import { applyTodo, loadConfig, runRules, type AnyViolation } from "./check.js";
+import { AmbiguousClassifyError, classifyByGlob, mostSpecificMatch } from "../classify.js";
 import type { Config } from "../config.js";
 import { createConfigLocator } from "../config-pointer.js";
 import { fingerprintOf, relativizeForTodo } from "../todo-store.js";
@@ -87,6 +88,64 @@ type DeclaredName = { name: string; glob: ModuleGlob };
 
 function classifyEntries(declaredModules: readonly DeclaredName[], name: string, tags: string[]): { glob: string; tags: string[] }[] {
   return moduleGlobList(declaredModules.find((entry) => entry.name === name)!.glob).map((glob) => ({ glob, tags }));
+}
+
+type ClassifyEntry = { glob: string; tags: string[] };
+
+// The most specific classify entry wins a file outright (classify.ts), so a
+// candidate entry appended beside the config's own would tie with an entry of
+// the same specificity, or take away the tags a broader entry gives. `merged`
+// keeps every analyzed file's current tags and adds the candidate's, and
+// `shown` is the part of it the config does not already hold, so the
+// fragment describes the config that was measured. A file no single glob can
+// tag that way gets an exact-path entry, listed first: an equally specific
+// pair of entries earlier in the list would otherwise throw before the exact
+// entry is reached.
+function proposeClassify(graph: ModuleGraph, baseConfig: Config, added: readonly ClassifyEntry[]): { merged: ClassifyEntry[]; shown: ClassifyEntry[] } {
+  const base = baseConfig.classify ?? [];
+  const tagsByGlob = new Map<string, string[]>();
+  for (const entry of [...base, ...added]) tagsByGlob.set(entry.glob, unionTags(tagsByGlob.get(entry.glob) ?? [], entry.tags));
+  const globs = [...tagsByGlob.keys()].map(glob => ({ glob, value: glob }));
+  const wanted = new Map<string, string[]>();
+  const filesByWinner = new Map<string, string[]>();
+  const pinned: string[] = [];
+  const files = [...[...graph.modules.values()].flatMap(module => module.files), ...graph.outsideFiles].map(file => graph.relativePath(file));
+  for (const file of files) {
+    const want = classifyOrAmbiguous(() => unionTags(classifyByGlob(file, base) ?? [], classifyByGlob(file, added) ?? []));
+    if (want === undefined) continue;
+    wanted.set(file, want);
+    const winner = classifyOrAmbiguous(() => mostSpecificMatch(file, globs, (a, b) => a === b) ?? null);
+    if (winner === undefined) pinned.push(file);
+    else if (winner !== null) filesByWinner.set(winner, [...(filesByWinner.get(winner) ?? []), file]);
+  }
+  for (const [glob, winnerFiles] of filesByWinner) {
+    const tags = wanted.get(winnerFiles[0]!)!;
+    if (winnerFiles.every(file => tagKey(wanted.get(file)!) === tagKey(tags))) tagsByGlob.set(glob, tags);
+    else pinned.push(...winnerFiles);
+  }
+  const merged = [
+    ...pinned.map(file => ({ glob: file, tags: wanted.get(file)! })),
+    ...[...tagsByGlob].filter(([glob]) => !pinned.includes(glob)).map(([glob, tags]) => ({ glob, tags })),
+  ];
+  const unchanged = new Set(base.map(entry => `${entry.glob}\0${tagKey(entry.tags)}`));
+  return { merged, shown: merged.filter(entry => !unchanged.has(`${entry.glob}\0${tagKey(entry.tags)}`)) };
+}
+
+function unionTags(first: readonly string[], second: readonly string[]): string[] {
+  return [...new Set([...first, ...second])];
+}
+
+function tagKey(tags: readonly string[]): string {
+  return [...tags].sort().join("\0");
+}
+
+function classifyOrAmbiguous<T>(classify: () => T): T | undefined {
+  try {
+    return classify();
+  } catch (error) {
+    if (error instanceof AmbiguousClassifyError) return undefined;
+    throw error;
+  }
 }
 
 function moduleMatchesSegment(declaredModules: readonly DeclaredName[], name: string, pattern: RegExp): boolean {
@@ -293,12 +352,12 @@ function detectLayeredOrder(
     }
   }
   const support = forward / (forward + reverse);
-  const classify = order.flatMap(name => classifyEntries(declaredModules, name, [`role:${name}`]));
+  const classify = proposeClassify(graph, baseConfig, order.flatMap(name => classifyEntries(declaredModules, name, [`role:${name}`])));
   const because = `${forward} of ${forward + reverse} directed edges between these modules already match this order`;
   const orderRule = { tagNamespace: "role", sequence: { "": order }, direction: "downward-only" as const, because };
   const configFragment = [
     "classify: [",
-    ...classify.map(c => `  { glob: ${JSON.stringify(c.glob)}, tags: ${JSON.stringify(c.tags)} },`),
+    ...classify.shown.map(c => `  { glob: ${JSON.stringify(c.glob)}, tags: ${JSON.stringify(c.tags)} },`),
     "],",
     "edges: { order: [",
     `  { tagNamespace: "role", sequence: { "": ${JSON.stringify(order)} }, direction: "downward-only", because: ${JSON.stringify(because)} },`,
@@ -306,7 +365,7 @@ function detectLayeredOrder(
   ].join("\n");
   const proposedConfig: Config = {
     ...baseConfig,
-    classify: [...(baseConfig.classify ?? []), ...classify],
+    classify: classify.merged,
     edges: { ...baseConfig.edges, order: [...(baseConfig.edges?.order ?? []), orderRule] },
   };
   return {
@@ -350,12 +409,12 @@ function detectLeafKernels(
     const inCount = incoming.get(module.name) ?? 0;
     if (inCount === 0 || (outgoing.get(module.name) ?? 0) > 0) continue;
     const tag = `kind:${module.name}`;
-    const classify = classifyEntries(declaredModules, module.name, [tag]);
+    const classify = proposeClassify(graph, baseConfig, classifyEntries(declaredModules, module.name, [tag]));
     const because = `'${module.name}' is imported by ${inCount} real edge(s) and imports no other declared module today`;
     const allowDenyRule = { source: tag, targetNamespace: "kind", allow: [] as string[], because };
     const proposedConfig: Config = {
       ...baseConfig,
-      classify: [...(baseConfig.classify ?? []), ...classify],
+      classify: classify.merged,
       edges: { ...baseConfig.edges, allowDeny: [...(baseConfig.edges?.allowDeny ?? []), allowDenyRule] },
     };
     proposals.push({
@@ -364,7 +423,7 @@ function detectLeafKernels(
         support: 1,
         evidence: [`'${module.name}': 0 outgoing edges to another declared module; ${inCount} other module(s) import it`],
         configFragment: [
-          "classify: [", ...classify.map(c => `  { glob: ${JSON.stringify(c.glob)}, tags: ${JSON.stringify(c.tags)} },`), "],",
+          "classify: [", ...classify.shown.map(c => `  { glob: ${JSON.stringify(c.glob)}, tags: ${JSON.stringify(c.tags)} },`), "],",
           "edges: { allowDeny: [", `  { source: ${JSON.stringify(tag)}, targetNamespace: "kind", allow: [], because: ${JSON.stringify(because)} },`, "] },",
         ].join("\n"),
         addedViolations: countAddedViolations(graph, baseConfig, proposedConfig, "tag-boundary"),
@@ -486,17 +545,17 @@ function detectAppOverLibrary(
   if (forward === 0) return undefined; // no evidence an app area depends on a library area at all
   const total = forward + reverse;
   const ns = freeTagNamespace(baseConfig, "tier");
-  const classify = partitionClassify(declaredModules, `${ns}:lib`, appNames, `${ns}:app`);
+  const classify = proposeClassify(graph, baseConfig, partitionClassify(declaredModules, `${ns}:lib`, appNames, `${ns}:app`));
   const because = `library -> app: ${reverse} of ${total} edges; app -> library: ${forward}`;
   const orderRule = { tagNamespace: ns, sequence: { "": ["lib", "app"] }, direction: "downward-only" as const, because };
   const proposedConfig: Config = {
     ...baseConfig,
-    classify: [...(baseConfig.classify ?? []), ...classify],
+    classify: classify.merged,
     edges: { ...baseConfig.edges, order: [...(baseConfig.edges?.order ?? []), orderRule] },
   };
   const configFragment = [
     "classify: [",
-    ...classify.map(c => `  { glob: ${JSON.stringify(c.glob)}, tags: ${JSON.stringify(c.tags)} },`),
+    ...classify.shown.map(c => `  { glob: ${JSON.stringify(c.glob)}, tags: ${JSON.stringify(c.tags)} },`),
     "],",
     "edges: { order: [",
     `  { tagNamespace: ${JSON.stringify(ns)}, sequence: { "": ["lib","app"] }, direction: "downward-only", because: ${JSON.stringify(because)} },`,
@@ -562,17 +621,17 @@ function detectExternalPackageConfined(
   candidates.sort((a, b) => b.edgeCount - a.edgeCount || a.name.localeCompare(b.name));
   return candidates.slice(0, EXTERNAL_PACKAGE_PROPOSAL_CAP).map(({ name, module, edgeCount }) => {
     const ns = freeTagNamespace(baseConfig, "kind");
-    const classify = partitionClassify(declaredModules, `${ns}:rest`, [module], `${ns}:confined`);
+    const classify = proposeClassify(graph, baseConfig, partitionClassify(declaredModules, `${ns}:rest`, [module], `${ns}:confined`));
     const because = `'${name}' is imported ${edgeCount} time(s), all from '${module}'; no other module imports it today`;
     const allowDenyRule = { source: `${ns}:rest`, targetNamespace: "pkg", deny: [name], because };
     const proposedConfig: Config = {
       ...baseConfig,
-      classify: [...(baseConfig.classify ?? []), ...classify],
+      classify: classify.merged,
       edges: { ...baseConfig.edges, allowDeny: [...(baseConfig.edges?.allowDeny ?? []), allowDenyRule] },
     };
     const configFragment = [
       "classify: [",
-      ...classify.map(c => `  { glob: ${JSON.stringify(c.glob)}, tags: ${JSON.stringify(c.tags)} },`),
+      ...classify.shown.map(c => `  { glob: ${JSON.stringify(c.glob)}, tags: ${JSON.stringify(c.tags)} },`),
       "],",
       "edges: { allowDeny: [",
       `  { source: ${JSON.stringify(`${ns}:rest`)}, targetNamespace: "pkg", deny: ${JSON.stringify([name])}, because: ${JSON.stringify(because)} },`,
@@ -616,17 +675,17 @@ function detectTestCodeIsolation(
     const testToProd = edgesBetweenGroups(counts, [testName], prodNames);
     if (prodToTest > 0 || testToProd === 0) continue; // already reached from production, or no evidence it exercises any production module
     const ns = freeTagNamespace(baseConfig, "kind");
-    const classify = partitionClassify(declaredModules, `${ns}:prod`, [testName], `${ns}:test`);
+    const classify = proposeClassify(graph, baseConfig, partitionClassify(declaredModules, `${ns}:prod`, [testName], `${ns}:test`));
     const because = `'${testName}' is never imported by any of ${prodNames.length} production module(s) today; it imports ${testToProd} of them, real evidence it exercises production code`;
     const pointRule = { from: { tags: [`${ns}:prod`] }, to: { tags: [`${ns}:test`] }, because };
     const proposedConfig: Config = {
       ...baseConfig,
-      classify: [...(baseConfig.classify ?? []), ...classify],
+      classify: classify.merged,
       edges: { ...baseConfig.edges, point: [...(baseConfig.edges?.point ?? []), pointRule] },
     };
     const configFragment = [
       "classify: [",
-      ...classify.map(c => `  { glob: ${JSON.stringify(c.glob)}, tags: ${JSON.stringify(c.tags)} },`),
+      ...classify.shown.map(c => `  { glob: ${JSON.stringify(c.glob)}, tags: ${JSON.stringify(c.tags)} },`),
       "],",
       "edges: { point: [",
       `  { from: { tags: [${JSON.stringify(`${ns}:prod`)}] }, to: { tags: [${JSON.stringify(`${ns}:test`)}] }, because: ${JSON.stringify(because)} },`,
@@ -670,20 +729,20 @@ function detectHostPluginInversion(
   if (pluginToHost === 0) return undefined; // no evidence a plugin depends on the host at all
   const total = pluginToHost + hostToPlugin;
   const ns = freeTagNamespace(baseConfig, "kind");
-  const classify = [
+  const classify = proposeClassify(graph, baseConfig, [
     ...hostNames.flatMap(name => classifyEntries(declaredModules, name, [`${ns}:host`])),
     ...pluginNames.flatMap(name => classifyEntries(declaredModules, name, [`${ns}:plugin`])),
-  ];
+  ]);
   const because = `plugin -> host: ${pluginToHost} edge(s); host -> plugin: ${hostToPlugin} edge(s)`;
   const allowDenyRule = { source: `${ns}:host`, targetNamespace: ns, deny: ["plugin"], because };
   const proposedConfig: Config = {
     ...baseConfig,
-    classify: [...(baseConfig.classify ?? []), ...classify],
+    classify: classify.merged,
     edges: { ...baseConfig.edges, allowDeny: [...(baseConfig.edges?.allowDeny ?? []), allowDenyRule] },
   };
   const configFragment = [
     "classify: [",
-    ...classify.map(c => `  { glob: ${JSON.stringify(c.glob)}, tags: ${JSON.stringify(c.tags)} },`),
+    ...classify.shown.map(c => `  { glob: ${JSON.stringify(c.glob)}, tags: ${JSON.stringify(c.tags)} },`),
     "],",
     "edges: { allowDeny: [",
     `  { source: ${JSON.stringify(`${ns}:host`)}, targetNamespace: ${JSON.stringify(ns)}, deny: ["plugin"], because: ${JSON.stringify(because)} },`,
@@ -743,20 +802,20 @@ function detectFeatureIsolation(
     const crossFeature = edgesBetweenGroups(counts, featureNames, featureNames);
     const featureNs = freeTagNamespace(baseConfig, "feature");
     const kernelNs = freeTagNamespace(baseConfig, "kind");
-    const classify = [
+    const classify = proposeClassify(graph, baseConfig, [
       ...featureNames.flatMap(name => classifyEntries(declaredModules, name, [`${featureNs}:${name}`])),
       ...classifyEntries(declaredModules, kernelName, [`${kernelNs}:shared`]),
-    ];
+    ]);
     const because = `features -> kernel ('${kernelName}'): ${featureToKernel} edge(s); features -> each other: ${crossFeature} edge(s)`;
     const allowDenyRules = featureNames.map(name => ({ source: `${featureNs}:${name}`, targetNamespace: featureNs, allow: [] as string[], because }));
     const proposedConfig: Config = {
       ...baseConfig,
-      classify: [...(baseConfig.classify ?? []), ...classify],
+      classify: classify.merged,
       edges: { ...baseConfig.edges, allowDeny: [...(baseConfig.edges?.allowDeny ?? []), ...allowDenyRules] },
     };
     const configFragment = [
       "classify: [",
-      ...classify.map(c => `  { glob: ${JSON.stringify(c.glob)}, tags: ${JSON.stringify(c.tags)} },`),
+      ...classify.shown.map(c => `  { glob: ${JSON.stringify(c.glob)}, tags: ${JSON.stringify(c.tags)} },`),
       "],",
       "edges: { allowDeny: [",
       ...allowDenyRules.map(r => `  { source: ${JSON.stringify(r.source)}, targetNamespace: ${JSON.stringify(featureNs)}, allow: [], because: ${JSON.stringify(because)} },`),

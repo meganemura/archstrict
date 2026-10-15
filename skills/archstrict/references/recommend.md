@@ -52,7 +52,13 @@ Each proposal carries:
   covers every module but a small, named few (app over library, a package
   confined to one area, test code kept out of production), `classify` is
   one catch-all `"**"` glob for the default tag plus one entry per named
-  module - not one entry per module on the default side.
+  module - not one entry per module on the default side. With a config
+  that already has `classify` entries, the fragment's `classify` adds to
+  them: an entry whose glob the config already holds carries the config's
+  tags plus the new one (replace that entry), and an existing entry that
+  a file would otherwise lose the new tag through appears with both. A
+  file no single glob can tag that way gets its own exact-path entry.
+  `addedViolations` is measured on that combined `classify`.
 - `addedViolations` - how many violations of this proposal's own rule id
   the rule pipeline reports today, run in memory against the real graph.
   0 means no real edge violates it yet - not "safe to adopt blindly."

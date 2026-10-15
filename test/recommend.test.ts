@@ -590,4 +590,13 @@ test("a config whose singleton module has an exact classify entry gets proposals
     '  { glob: "src/app/**", tags: ["layer:app","role:app"] },',
     "],",
   ]);
+  const appOverLibrary = result.patternProposals.find(p => p.pattern === "app-over-library");
+  expect(appOverLibrary?.configFragment.split("\n").slice(0, 6)).toEqual([
+    "classify: [",
+    '  { glob: "src/build/build-error.ts", tags: ["layer:kernel","tier:lib"] },',
+    '  { glob: "src/build/**", tags: ["layer:build","tier:lib"] },',
+    '  { glob: "src/app/**", tags: ["layer:app","tier:app"] },',
+    '  { glob: "**", tags: ["tier:lib"] },',
+    "],",
+  ]);
 }));
