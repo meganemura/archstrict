@@ -291,6 +291,54 @@ const ALLOW_DENY_KEYS = [
 const ORDER_KEYS = ["tagNamespace", "within", "sequence", "direction", "edgeType", "importForm", "because"];
 const POINT_KEYS = ["from", "to", "edgeType", "importForm", "guard", "because"];
 
+const CONFIG_KEYS = [
+  "schemaVersion", "surface", "deprecated", "strict", "ignoredCycles", "because", "scope", "exclude",
+  "classify", "classifyByDirectoryName", "declaredModules", "mustBeEmpty", "edges",
+];
+
+// loadConfig only transpiles the file, so nothing else sees a misspelled
+// key: `tag` for `tags` left every file the entry covers untagged, and the
+// rules that read those tags then had nothing to judge. Shapes that are not
+// objects are left to the checks that own them. `edges` entries check their
+// own keys in assertEdgesShapeValid.
+export function assertConfigKeysKnown(raw: object): void {
+  const known = (value: unknown, keys: readonly string[], context: string) => {
+    if (isPlainObject(value)) assertKnownKeys(value, keys, context);
+  };
+  const each = (list: unknown, keys: readonly string[], context: string) => {
+    if (Array.isArray(list)) list.forEach((entry, i) => known(entry, keys, `${context}[${i}]`));
+  };
+  const config = raw as Record<string, unknown>;
+  // configPath is on the Config type, so a config can carry it and still
+  // typecheck; loadConfig overwrites it with the real path.
+  const { configPath: _configPath, ...topLevel } = config;
+  assertKnownKeys(topLevel, CONFIG_KEYS, "config");
+  each(config.classify, ["glob", "tags"], "config.classify");
+  known(config.classifyByDirectoryName, ["tagNamespace", "names"], "config.classifyByDirectoryName");
+  each(config.deprecated, ["from", "to", "count", "because"], "config.deprecated");
+  each(config.mustBeEmpty, ["glob", "because"], "config.mustBeEmpty");
+  each(config.declaredModules, ["name", "glob", "surface", "friends"], "config.declaredModules");
+  if (Array.isArray(config.declaredModules)) {
+    config.declaredModules.forEach((entry, i) => {
+      if (isPlainObject(entry)) each(entry.friends, ["file", "from", "because"], `config.declaredModules[${i}].friends`);
+    });
+  }
+  const edges = isPlainObject(config.edges) ? config.edges : {};
+  if (Array.isArray(edges.allowDeny)) {
+    edges.allowDeny.forEach((rule, i) => {
+      if (isPlainObject(rule)) each(rule.exceptions, ["from", "to", "because"], `config.edges.allowDeny[${i}].exceptions`);
+    });
+  }
+  if (Array.isArray(edges.point)) {
+    edges.point.forEach((rule, i) => {
+      if (!isPlainObject(rule)) return;
+      known(rule.from, ["tags", "exclude"], `config.edges.point[${i}].from`);
+      if (isPlainObject(rule.from)) known(rule.from.exclude, ["tags"], `config.edges.point[${i}].from.exclude`);
+      known(rule.to, ["tags"], `config.edges.point[${i}].to`);
+    });
+  }
+}
+
 export function assertEdgesShapeValid(config: Config): void {
   const edges: unknown = config.edges;
   if (edges === undefined) return;

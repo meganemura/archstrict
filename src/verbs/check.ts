@@ -10,7 +10,7 @@ import { compilerDirname, compilerJoin, compilerRealpath, compilerResolve } from
 import ts from "typescript";
 import { buildModuleGraphForRules, globResolutionDir, type ModuleGraph, type BuildOptions } from "../module-graph.js";
 import { dominantBypassModule, dominantBypassSentence } from "./map-shape.js";
-import { assertEdgesShapeValid, assertGlobsSupported, assertSchemaVersion, describeShape, type Config } from "../config.js";
+import { assertConfigKeysKnown, assertEdgesShapeValid, assertGlobsSupported, assertSchemaVersion, describeShape, type Config } from "../config.js";
 import { ReportError } from "../report-error.js";
 import { checkPublicSurfaceBypass, type Violation as PublicSurfaceViolation } from "../rules/public-surface.js";
 import {
@@ -353,6 +353,7 @@ export async function loadConfig(
   assertDeclaredModulesShapeValid(configPath, raw, verb);
   const config = { ...(raw as object), configPath } as Config;
   assertEdgesShapeValid(config);
+  assertConfigKeysKnown(raw);
   assertGlobsSupported(config, verb);
   return config;
 }
