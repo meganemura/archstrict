@@ -121,7 +121,7 @@ test("adding a real target outside allow removes the exhaustive finding", () => 
   }, { testCases: 20 });
 });
 
-test("a guard rule with no edge to judge is reported exactly when its source tags no file or its target namespace is unknown", () => {
+test("a guard rule with no edge to judge is reported exactly when its source tags no file, its target namespace is unknown, or a deny value in a classify namespace is not assigned", () => {
   const graph = buildModuleGraph({
     projectRoot: FIXTURE,
     declaredModules: ["a", "b", "c"].map((name) => ({ name, glob: `src/${name}/**`, surface: "index.ts" })),
@@ -129,6 +129,7 @@ test("a guard rule with no edge to judge is reported exactly when its source tag
   const rule = gs.record({
     source: gs.sampledFrom(["kind:a", "kind:b", "kind:ghost"]),
     targetNamespace: gs.sampledFrom(["kind", "pkg", "ghost"]),
+    deny: gs.sampledFrom(["a", "b", "x"]),
     guard: gs.booleans(),
   });
 
@@ -138,9 +139,9 @@ test("a guard rule with no edge to judge is reported exactly when its source tag
       configPath: "<test>",
       because: "property test",
       classify: [{ glob: "src/a/**", tags: ["kind:a"] }, { glob: "src/b/**", tags: ["kind:b"] }],
-      edges: { allowDeny: rules.map((r) => ({ ...r, deny: ["x"], because: "property test" })) },
+      edges: { allowDeny: rules.map((r) => ({ ...r, deny: [r.deny], because: "property test" })) },
     };
-    const expected = rules.flatMap((r, i) => !r.guard || r.source === "kind:ghost" || r.targetNamespace === "ghost" ? [`edges.allowDeny[${i}]`] : []);
+    const expected = rules.flatMap((r, i) => !r.guard || r.source === "kind:ghost" || r.targetNamespace === "ghost" || (r.targetNamespace === "kind" && r.deny === "x") ? [`edges.allowDeny[${i}]`] : []);
     const located = locateViolations(checkEmptyRuleSet(graph, config), config, createConfigLocator(config));
     assert.deepEqual(located.map((v) => (v.config as { pointer: string }).pointer), expected);
   });

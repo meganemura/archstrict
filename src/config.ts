@@ -248,6 +248,15 @@ function assertKnownKeys(value: Record<string, unknown>, known: readonly string[
   }
 }
 
+// A string "true" would read as a guard to the author and as no guard to rule 4.
+function assertGuardShape(entry: Record<string, unknown>, context: string): void {
+  if (entry.guard === undefined || typeof entry.guard === "boolean") return;
+  throw new ReportError(
+    `${context}.guard must be true or false, not ${describeShape(entry.guard)}`,
+    `set ${context}.guard to true or false in archstrict.config.ts, then run archstrict check`,
+  );
+}
+
 function assertEntries(value: unknown, keys: readonly string[], context: string): readonly Record<string, unknown>[] {
   if (value === undefined) return [];
   if (!Array.isArray(value)) {
@@ -293,7 +302,8 @@ export function assertEdgesShapeValid(config: Config): void {
   }
   assertKnownKeys(edges, ["allowDeny", "order", "point"], "config.edges");
 
-  for (const entry of assertEntries(edges.allowDeny, ALLOW_DENY_KEYS, "allowDeny")) {
+  for (const [i, entry] of assertEntries(edges.allowDeny, ALLOW_DENY_KEYS, "allowDeny").entries()) {
+    assertGuardShape(entry, `config.edges.allowDeny[${i}]`);
     // These shapes cannot reject any edge, even when coverage is nonzero.
     if (
       entry.allow === undefined &&
@@ -304,7 +314,7 @@ export function assertEdgesShapeValid(config: Config): void {
       );
     }
   }
-  assertEntries(edges.point, POINT_KEYS, "point");
+  for (const [i, entry] of assertEntries(edges.point, POINT_KEYS, "point").entries()) assertGuardShape(entry, `config.edges.point[${i}]`);
   for (const entry of assertEntries(edges.order, ORDER_KEYS, "order")) {
     const sequence: unknown = entry.sequence;
     if (sequence !== undefined && !isPlainObject(sequence)) {

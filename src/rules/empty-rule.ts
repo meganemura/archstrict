@@ -164,27 +164,34 @@ export function checkEmptyRuleSet(graph: ModuleGraph, config: Config): Violation
 }
 
 type GuardableRule =
-  | { source: string; targetNamespace: string; guard?: boolean }
+  | { source: string; targetNamespace: string; deny?: readonly string[]; guard?: boolean }
   | { from: FromToPredicate; to: FromToPredicate; guard?: boolean };
 
 // A guard's zero is only its clean state while the rule could still fire:
 // its source names a real file, and its target names a real file or a tag
-// namespace a target can carry. Any external import carries `pkg`. Returns what is missing, or undefined when nothing is.
+// classify can assign. A pkg target is left to the positive control, since
+// a ban on a package nobody installed yet is the point of a guard; so are
+// allow values, which name what is permitted rather than what is banned.
+// Returns what is missing, or undefined when nothing is.
 function guardGap(config: Config, files: readonly { rel: string; tags: Set<string> }[], rule: GuardableRule): string | undefined {
-  const namespaces = new Set(["pkg", ...(config.classify ?? []).flatMap((entry) => entry.tags.map(namespaceOf))]);
-  if (config.classifyByDirectoryName) namespaces.add(config.classifyByDirectoryName.tagNamespace);
+  const assigned = new Set((config.classify ?? []).flatMap((entry) => entry.tags));
+  const byName = config.classifyByDirectoryName;
+  if (byName) for (const name of byName.names) assigned.add(`${byName.tagNamespace}:${name}`);
+  const namespaces = new Set([...assigned].map(namespaceOf));
   if ("source" in rule) {
     if (!files.some((file) => file.tags.has(rule.source))) return `its source '${rule.source}' tags no file in scope`;
+    if (rule.targetNamespace === "pkg") return undefined;
     if (!namespaces.has(rule.targetNamespace)) return `its targetNamespace '${rule.targetNamespace}' is neither pkg nor a namespace classify assigns`;
-    return undefined;
+    const typo = (rule.deny ?? []).find((value) => !assigned.has(`${rule.targetNamespace}:${value}`));
+    return typo === undefined ? undefined : `its deny value '${typo}' is not a '${rule.targetNamespace}:' value classify assigns`;
   }
   if (!files.some((file) => matchesPredicate(rule.from, file.rel, file.tags))) return `its from '${formatPredicate(rule.from)}' matches no file in scope`;
   if (typeof rule.to === "string") {
     const to = compileGlob(rule.to);
     return files.some((file) => to.test(file.rel)) ? undefined : `its to '${rule.to}' matches no file in scope`;
   }
-  const unknown = rule.to.tags.find((tag) => !namespaces.has(namespaceOf(tag)));
-  return unknown === undefined ? undefined : `its to tag '${unknown}' is neither pkg nor a namespace classify assigns`;
+  const unknown = rule.to.tags.find((tag) => namespaceOf(tag) !== "pkg" && !assigned.has(tag));
+  return unknown === undefined ? undefined : `its to tag '${unknown}' is neither a pkg tag nor a tag classify assigns`;
 }
 
 function namespaceOf(tag: string): string {

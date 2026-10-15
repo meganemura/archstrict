@@ -59,6 +59,12 @@ Each proposal carries:
   a file would otherwise lose the new tag through appears with both. A
   file no single glob can tag that way gets its own exact-path entry.
   `addedViolations` is measured on that combined `classify`.
+  Each fragment is measured alone. To adopt two proposals whose fragments
+  name the same glob, give that entry the union of both tag lists. Paste a
+  fragment's `classify` entries as one block in the order shown: an
+  exact-path entry comes first, and it must stay ahead of the entries it
+  would otherwise tie with, because classify throws at the first
+  equally-specific pair it reaches.
 - `addedViolations` - how many violations of this proposal's own rule id
   the rule pipeline reports today, run in memory against the real graph.
   0 means no real edge violates it yet - not "safe to adopt blindly."
