@@ -34,6 +34,7 @@ const CLI_VERBS = [
   "simulate",
   "search",
   "hotspots",
+  "diagram",
   "mcp",
 ] as const;
 

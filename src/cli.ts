@@ -1,10 +1,11 @@
 #!/usr/bin/env node
-// Responsibility: parse argv and dispatch to a verb (init, check, todo, rules, agents, recommend, fix, simulate, search, hotspots, mcp).
+// Responsibility: parse argv and dispatch to a verb (init, check, todo, rules, agents, recommend, fix, simulate, search, hotspots, diagram, mcp).
 // Boundary: no rule logic here; verbs live in their own modules.
 // Help is printed from the usage table before dispatch. A help flag must not reach a verb that writes files.
 // Each verb is imported when it runs. The verbs reach the TypeScript compiler and the MCP SDK, and
 // loading them was 94% of a 0.5 s `--help`: a CPU profile of that run put the time in module
 // loading, not in any archstrict code. Help, an unknown verb, and a bad flag load none of them.
+import type { DiagramDetail, DiagramDirection, DiagramFormat, DiagramOptions } from "./verbs/diagram.js";
 import type { Change } from "./verbs/simulate.js";
 import { ReportError } from "./report-error.js";
 import { parseCheckArgv } from "./check-options.js";
@@ -60,6 +61,11 @@ const usage = {
   hotspots: {
     args: "[--since <git ref or date>] [--json]",
     sentence: "Rank modules by git change frequency, fan-in, and violations.",
+    writes: false,
+  },
+  diagram: {
+    args: "[--format mermaid|markdown] [--direction TB|BT|LR|RL] [--detail names|rules|reasons] [--focus <module>] [--json]",
+    sentence: "Draw archstrict.config.ts as a Mermaid flowchart on stdout.",
     writes: false,
   },
   mcp: {
@@ -311,6 +317,46 @@ async function runHotspots(args: string[]): Promise<number> {
   return 0;
 }
 
+// Parsed here, not in the verb: a bad flag must not load the TypeScript compiler that the verb reaches.
+// The `satisfies` lines keep these lists inside the verb's own option types.
+const DIAGRAM_FORMATS = ["mermaid", "markdown"] as const satisfies readonly DiagramFormat[];
+const DIAGRAM_DIRECTIONS = ["TB", "BT", "LR", "RL"] as const satisfies readonly DiagramDirection[];
+const DIAGRAM_DETAILS = ["names", "rules", "reasons"] as const satisfies readonly DiagramDetail[];
+
+function parseDiagramArgs(args: readonly string[]): { options: DiagramOptions; asJson: boolean } {
+  const fail = (): never => {
+    throw new Error(`usage: archstrict diagram ${usage.diagram.args}`);
+  };
+  const options: DiagramOptions = { format: "mermaid", direction: "TB", detail: "rules" };
+  const seen = new Set<string>();
+  let asJson = false;
+  for (let i = 0; i < args.length; i++) {
+    const flag = args[i]!;
+    if (flag === "--json") {
+      asJson = true;
+      continue;
+    }
+    const value = args[i + 1];
+    if (seen.has(flag) || value === undefined || value.startsWith("--")) return fail();
+    seen.add(flag);
+    i++;
+    if (flag === "--format" && (DIAGRAM_FORMATS as readonly string[]).includes(value)) options.format = value as DiagramFormat;
+    else if (flag === "--direction" && (DIAGRAM_DIRECTIONS as readonly string[]).includes(value)) options.direction = value as DiagramDirection;
+    else if (flag === "--detail" && (DIAGRAM_DETAILS as readonly string[]).includes(value)) options.detail = value as DiagramDetail;
+    else if (flag === "--focus") options.focus = value;
+    else return fail();
+  }
+  return { options, asJson };
+}
+
+async function runDiagram(args: string[]): Promise<number> {
+  const { options, asJson } = parseDiagramArgs(args);
+  const { diagram, formatDiagramText } = await import("./verbs/diagram.js");
+  const result = await diagram(process.cwd(), options);
+  process.stdout.write(asJson ? JSON.stringify(result, null, 2) + "\n" : formatDiagramText(result));
+  return 0;
+}
+
 // The connected transport's stdin listener keeps Node alive after this function returns.
 // A real subprocess stayed alive with stdin open and exited when stdin closed;
 // the host can also terminate it. A separate server-closed promise is unnecessary.
@@ -339,6 +385,7 @@ async function main(argv: string[]): Promise<number> {
     if (verb === "mcp") return await runMcp();
     if (verb === "search") return await runSearch(rest);
     if (verb === "hotspots") return await runHotspots(rest);
+    if (verb === "diagram") return await runDiagram(rest);
     if (verb === "simulate") return await runSimulate(rest);
     if (verb === "fix") return await runFix(rest);
     if (verb === "recommend") return await runRecommend(rest);
