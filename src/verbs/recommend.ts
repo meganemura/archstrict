@@ -356,15 +356,16 @@ function detectLayeredOrder(
     }
   }
   const support = forward / (forward + reverse);
-  const classify = proposeClassify(graph, baseConfig, order.flatMap(name => classifyEntries(declaredModules, name, [`role:${name}`])));
+  const ns = freeTagNamespace(baseConfig, "role");
+  const classify = proposeClassify(graph, baseConfig, order.flatMap(name => classifyEntries(declaredModules, name, [`${ns}:${name}`])));
   const because = `${forward} of ${forward + reverse} directed edges between these modules already match this order`;
-  const orderRule = { tagNamespace: "role", sequence: { "": order }, direction: "downward-only" as const, because };
+  const orderRule = { tagNamespace: ns, sequence: { "": order }, direction: "downward-only" as const, because };
   const configFragment = [
     "classify: [",
     ...classify.shown.map(c => `  { glob: ${JSON.stringify(c.glob)}, tags: ${JSON.stringify(c.tags)} },`),
     "],",
     "edges: { order: [",
-    `  { tagNamespace: "role", sequence: { "": ${JSON.stringify(order)} }, direction: "downward-only", because: ${JSON.stringify(because)} },`,
+    `  { tagNamespace: ${JSON.stringify(ns)}, sequence: { "": ${JSON.stringify(order)} }, direction: "downward-only", because: ${JSON.stringify(because)} },`,
     "] },",
   ].join("\n");
   const proposedConfig: Config = {
