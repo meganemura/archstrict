@@ -1,8 +1,5 @@
-// Properties of the diagram, over generated projects instead of hand-picked ones: the text that
-// reaches Mermaid carries no syntax, every edge joins two drawn nodes and is styled once, a
-// module sits in a layer exactly when all its files carry that tag, a selector lists exactly the
-// modules that hold a matching file, a focused render is part of the full one, and the file order
-// does not change the picture.
+// Properties of the diagram over generated projects: escaping, edge integrity, layer and selector
+// membership, focus as a subset, and file-order independence.
 import { describe, test } from "vitest";
 import assert from "node:assert/strict";
 import * as hegel from "@hegeldev/hegel";

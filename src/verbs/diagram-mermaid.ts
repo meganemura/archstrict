@@ -191,7 +191,6 @@ function noteLabel(note: Note, detail: DiagramDetail): string | null {
   return [`<b>order${escapeLabel(suffix)}</b>`, ...note.lines.map(escapeLabel), ...reason].join("<br/>");
 }
 
-// A fact the arrows cannot carry. It prints only when the diagram holds a rule it qualifies.
 const SEMANTIC_NOTES: readonly { readonly applies: (links: readonly Link[]) => boolean; readonly text: string }[] = [
   { applies: (links) => links.some((link) => link.kind === "allow"), text: "An allow list also forbids every other value of its tag namespace." },
   {

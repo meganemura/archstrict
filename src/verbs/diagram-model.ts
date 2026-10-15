@@ -338,11 +338,8 @@ export function buildDiagramModel(config: Config, rows: readonly FileRow[]): Dia
 }
 
 /**
- * Keep one module, every selector that holds a file of it, every link that touches the module or
- * one of those selectors, and the other end of each such link. The layer stack stays whole, with
- * every other module dropped, when the module or a kept link touches it. A layer chain is
- * structure, not a link that selects anything. Ids stay those of the full model, so a focused
- * render is a subset of the full one.
+ * Keep one module, its selectors, and the links that touch them with their other ends. Ids stay
+ * those of the full model, so a focused render is a subset of the full one.
  */
 export function focusModel(model: DiagramModel, name: string): DiagramModel {
   const focus = model.modules.find((module) => module.name === name);

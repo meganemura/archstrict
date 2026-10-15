@@ -1,6 +1,5 @@
 import type { Config } from "./archstrict.types.js";
 
-// A synthetic project that uses every config feature the diagram draws.
 export default {
   schemaVersion: 1,
   exclude: ["archstrict.config.ts", "archstrict.types.ts"],

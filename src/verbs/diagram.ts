@@ -1,8 +1,5 @@
-// Responsibility: draw archstrict.config.ts as a Mermaid flowchart, from the config and the list
-// of analyzed files alone.
-// Boundary: reads the config and walks the tree for file names (the walk `check` starts from), but
-// builds no import graph and no TypeScript program, and writes nothing: the document goes to
-// stdout, so a redirect is the only way to a file. What the config means is diagram-model.ts, and
+// Responsibility: draw archstrict.config.ts as a Mermaid flowchart from the config and file names.
+// Boundary: no import graph, no TypeScript program, no writes. Meaning is diagram-model.ts and
 // Mermaid syntax is diagram-mermaid.ts.
 import { basename, resolve } from "node:path";
 import { classifyFile } from "../classify.js";
@@ -19,7 +16,6 @@ export type DiagramOptions = {
   format: DiagramFormat;
   direction: DiagramDirection;
   detail: DiagramDetail;
-  /** A declared module name: draw that module and what governs it. */
   focus?: string;
 };
 
@@ -29,7 +25,6 @@ export type DiagramResult = {
   direction: DiagramDirection;
   detail: DiagramDetail;
   focus: string | null;
-  /** The document: Mermaid text, or markdown around it. */
   text: string;
   modules: { name: string; node: string; layer: string | null; tags: string[] }[];
   layers: { node: string; tag: string }[];
