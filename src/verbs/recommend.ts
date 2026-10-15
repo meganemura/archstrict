@@ -240,6 +240,7 @@ function detectLayeredOrder(
   // in `sequence` (order.ts's own downward-only direction lets a source
   // depend on its own layer or an earlier one, never a later one).
   const before = new Map<string, Set<string>>(names.map(n => [n, new Set<string>()]));
+  const linked = new Set<string>();
   let forward = 0;
   let reverse = 0;
   for (let i = 0; i < names.length; i++) {
@@ -249,6 +250,8 @@ function detectLayeredOrder(
       const ab = counts.get(a)?.get(b) ?? 0; // a imports b
       const ba = counts.get(b)?.get(a) ?? 0; // b imports a
       if (ab === 0 && ba === 0) continue;
+      linked.add(a);
+      linked.add(b);
       if (ab === ba) continue; // exactly balanced: no direction to read, so no constraint either way
       const [importer, dependency, majority, minority] = ab > ba ? [a, b, ab, ba] : [b, a, ba, ab];
       before.get(dependency)!.add(importer);
@@ -257,10 +260,15 @@ function detectLayeredOrder(
     }
   }
   if (forward === 0) return undefined; // no directional evidence between any pair at all
+  // A module with no edge to any other has no place in the order: a
+  // topological sort would still slot it somewhere, by name, and the
+  // proposal would then read as if the edges put it there. A balanced pair
+  // stays in, because its edges are real and the order has to account for them.
+  const unlinked = names.filter(n => !linked.has(n));
   // One constraint (dependency before importer) per edge `before` recorded above.
-  const indegree = new Map<string, number>(names.map(n => [n, 0]));
+  const indegree = new Map<string, number>(names.filter(n => linked.has(n)).map(n => [n, 0]));
   for (const importers of before.values()) for (const importer of importers) indegree.set(importer, indegree.get(importer)! + 1);
-  const remaining = new Set(names);
+  const remaining = new Set(linked);
   const order: string[] = [];
   while (remaining.size > 0) {
     const ready = [...remaining].filter(n => (indegree.get(n) ?? 0) === 0).sort();
@@ -296,6 +304,7 @@ function detectLayeredOrder(
       evidence: [
         `order supported by these modules' own real edges: ${order.join(" -> ")}`,
         `${forward} of ${forward + reverse} directed edges between them match this order (the rest would need fixing, or a deliberate skip)`,
+        ...(unlinked.length === 0 ? [] : [`left out, no edge to another module: ${unlinked.join(", ")}`]),
       ],
       configFragment,
       addedViolations: countAddedViolations(graph, baseConfig, proposedConfig, "tag-order"),

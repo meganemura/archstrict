@@ -32,6 +32,7 @@ may change commands, flags, config, or output shape. The version entry will desc
 
 ### Fixed
 
+- `archstrict recommend` leaves a module with no edge to another module out of the `layered-order` proposal and names it on a `left out` evidence line. Before, the topological sort placed such a module in the order by name, so the proposal read as if real edges put it there. A module whose only edges are a balanced pair stays in the order.
 - `node:sqlite`, `node:test`, `node:sea`, and `node:test/reporters` are builtin edges. `check` counted them as unresolved specifiers, because Node lists these scheme-only builtins only with the `node:` prefix. A bare `sqlite` still resolves as a package.
 - `archstrict todo` accepted any argument and ran its first-run freeze for `todo --dry-run`, writing `archstrict.todo.json`. An argument other than `--json` is now an error (`unknown option`), and nothing is written.
 

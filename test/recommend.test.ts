@@ -294,6 +294,20 @@ pattern proposals, ranked by evidence:
 `);
 }));
 
+test("layered-order: a module with no edge is left out of the order and named", async () => fixture(async (root, put) => {
+  put("src/core/index.ts", "export const core = 1;\n");
+  put("src/mid/index.ts", 'import "../core/index.ts";\nexport const mid = 1;\n');
+  put("src/top/index.ts", 'import "../mid/index.ts";\nexport const top = 1;\n');
+  put("src/alone/index.ts", "export const alone = 1;\n");
+  const result = await recommend(root);
+  const proposal = result.patternProposals.find(p => p.pattern === "layered-order");
+  expect(proposal).toBeDefined();
+  expect(proposal!.evidence.join(" ")).toContain("core -> mid -> top");
+  expect(proposal!.evidence).toContain("left out, no edge to another module: alone");
+  expect(proposal!.configFragment).toContain('sequence: { "": ["core","mid","top"] }');
+  expect(proposal!.configFragment).not.toContain("role:alone");
+}));
+
 test("layered-order: a reverse edge lowers support below 1 and the proposed order still reports it as an added violation", async () => fixture(async (root, put) => {
   put("src/core/index.ts", "export const core = 1;\n");
   put("src/mid/a.ts", 'import "../core/index.ts";\nexport const a = 1;\n');
