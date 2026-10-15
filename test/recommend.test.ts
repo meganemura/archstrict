@@ -622,3 +622,41 @@ test("layered-order picks a tag namespace the config does not already use", asyn
   ].join("\n"));
   expect(proposal?.addedViolations).toBe(0);
 }));
+
+test("every proposal and proposedClassify pick namespaces the config uses nowhere, edges included", async () => fixture(async (root, put) => {
+  put("src/core/index.ts", "export const core = 1;\n");
+  put("src/top/index.ts", 'import "../core/index.ts";\nexport const top = 1;\n');
+  put("archstrict.config.ts", `export default {
+    declaredModules: [{ name: "core", glob: "src/core/**" }, { name: "top", glob: "src/top/**" }],
+    edges: {
+      order: [{ tagNamespace: "role", sequence: { "": ["a", "b"] }, direction: "downward-only", because: "test" }],
+      allowDeny: [{ source: "kind:legacy", targetNamespace: "tier", deny: ["x"], because: "test" }],
+      point: [{ from: { tags: ["role2:a"], exclude: { tags: ["kind2:b"] } }, to: { tags: ["tier2:c"] }, because: "test" }],
+    },
+    because: "Keep the core free of callers.",
+  };`);
+  const result = await recommend(root);
+  const namespaces = (fragment: string) => [...new Set([...fragment.matchAll(/"([a-z0-9]+):/g)].map(m => m[1]))];
+  expect(namespaces(result.patternProposals.find(p => p.pattern === "layered-order")!.configFragment)).toEqual(["role3"]);
+  expect(namespaces(result.patternProposals.find(p => p.pattern === "leaf-kernel")!.configFragment)).toEqual(["kind3"]);
+  expect(result.proposedClassify).toEqual([
+    { glob: "src/core/**", tags: ["role3:core"] },
+    { glob: "src/top/**", tags: ["role3:top"] },
+  ]);
+}));
+
+test("proposedClassify adds to the config's own classify the way a proposal fragment does", async () => fixture(async (root, put) => {
+  put("src/core/index.ts", "export const core = 1;\n");
+  put("src/top/index.ts", 'import "../core/index.ts";\nexport const top = 1;\n');
+  put("archstrict.config.ts", `export default {
+    declaredModules: [{ name: "core", glob: "src/core/**" }, { name: "top", glob: "src/top/**" }],
+    classify: [{ glob: "src/core/**", tags: ["layer:kernel"] }, { glob: "src/core/index.ts", tags: ["layer:entry"] }],
+    because: "Keep the core free of callers.",
+  };`);
+  const result = await recommend(root);
+  expect(result.proposedClassify).toEqual([
+    { glob: "src/core/**", tags: ["layer:kernel", "role:core"] },
+    { glob: "src/core/index.ts", tags: ["layer:entry", "role:core"] },
+    { glob: "src/top/**", tags: ["role:top"] },
+  ]);
+}));
