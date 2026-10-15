@@ -119,3 +119,35 @@ test("the loader preserves optional edge filters and an order scope for every ru
   })};`);
   expect(config.edges).toEqual(edges);
 });
+
+test("an unknown key in any config entry is an error naming the key, the accepted keys, and the edit", async () => {
+  const path = "/project/archstrict.config.ts";
+  const module = { name: "a", glob: "src/a/**" };
+  const valid = { declaredModules: [module], because: "test" };
+  const cases: { config: object; context: string; key: string; accepted: string }[] = [
+    { config: { ...valid, clasify: [] }, context: "config", key: "clasify",
+      accepted: "schemaVersion, surface, deprecated, strict, ignoredCycles, because, scope, exclude, classify, classifyByDirectoryName, declaredModules, mustBeEmpty, edges" },
+    { config: { ...valid, classify: [{ glob: "src/**", tag: "layer:a" }] }, context: "config.classify[0]", key: "tag", accepted: "glob, tags" },
+    { config: { ...valid, classifyByDirectoryName: { tagNamespace: "env", name: ["node"] } }, context: "config.classifyByDirectoryName", key: "name", accepted: "tagNamespace, names" },
+    { config: { ...valid, declaredModules: [{ ...module, surfce: "index.ts" }] }, context: "config.declaredModules[0]", key: "surfce", accepted: "name, glob, surface, friends" },
+    { config: { ...valid, declaredModules: [{ ...module, friends: [{ file: "x.ts", form: "src/b/**", because: "test" }] }] },
+      context: "config.declaredModules[0].friends[0]", key: "form", accepted: "file, from, because" },
+    { config: { ...valid, deprecated: [{ from: "a", to: "a", count: 1, becuase: "test" }] }, context: "config.deprecated[0]", key: "becuase", accepted: "from, to, count, because" },
+    { config: { ...valid, mustBeEmpty: [{ glob: "src/old/**", because: "test", note: "x" }] }, context: "config.mustBeEmpty[0]", key: "note", accepted: "glob, because" },
+    { config: { ...valid, edges: { allowDeny: [{ source: "layer:a", targetNamespace: "layer", deny: ["b"], because: "test", exceptions: [{ from: "a", too: "b", because: "test" }] }] } },
+      context: "config.edges.allowDeny[0].exceptions[0]", key: "too", accepted: "from, to, because" },
+    { config: { ...valid, edges: { point: [{ from: { tags: ["layer:a"], exlude: { tags: ["layer:b"] } }, to: "src/**", because: "test" }] } },
+      context: "config.edges.point[0].from", key: "exlude", accepted: "tags, exclude" },
+    { config: { ...valid, edges: { point: [{ from: { tags: ["layer:a"], exclude: { tag: ["layer:b"] } }, to: "src/**", because: "test" }] } },
+      context: "config.edges.point[0].from.exclude", key: "tag", accepted: "tags" },
+    { config: { ...valid, edges: { point: [{ from: "src/**", to: { tags: ["layer:b"], exclude: { tags: ["layer:c"] } }, because: "test" }] } },
+      context: "config.edges.point[0].to", key: "exclude", accepted: "tags" },
+  ];
+  for (const { config, context, key, accepted } of cases) {
+    await expect(loadConfig(path, `export default ${JSON.stringify(config)};`), context).rejects.toMatchObject({
+      name: "ReportError",
+      message: `${context} has an unknown field '${key}' - supported fields are ${accepted}`,
+      do: `remove '${key}' from ${context} in archstrict.config.ts, then run archstrict check`,
+    });
+  }
+});
