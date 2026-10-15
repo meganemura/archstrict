@@ -142,6 +142,10 @@ export type Config = {
       // arguably not the same risk as a value import of it).
       edgeType?: "value" | "type" | "both";
       importForm?: "static" | "dynamic" | "both";
+      // A forward-looking ban on a module with no such edge yet. Rule 4
+      // accepts its zero evaluated edges only while the rule still names
+      // real files and a namespace a target can carry.
+      guard?: boolean;
       because: string;
     }[];
     order?: readonly {
@@ -165,6 +169,7 @@ export type Config = {
       to: string | { tags: readonly string[] };
       edgeType?: "value" | "type" | "both";
       importForm?: "static" | "dynamic" | "both";
+      guard?: boolean;
       because: string;
     }[];
   };
@@ -271,10 +276,11 @@ const ALLOW_DENY_KEYS = [
   "exceptions",
   "edgeType",
   "importForm",
+  "guard",
   "because",
 ];
 const ORDER_KEYS = ["tagNamespace", "within", "sequence", "direction", "edgeType", "importForm", "because"];
-const POINT_KEYS = ["from", "to", "edgeType", "importForm", "because"];
+const POINT_KEYS = ["from", "to", "edgeType", "importForm", "guard", "because"];
 
 export function assertEdgesShapeValid(config: Config): void {
   const edges: unknown = config.edges;

@@ -11,6 +11,8 @@ For each changed rule:
 4. Confirm that its `config.pointer` identifies the config entry you changed.
 5. Fix the config rule when either assertion fails. Do not weaken the positive control.
 
+A rule with `guard: true` evaluates zero edges while the code is clean, so this control is the only evidence that it fires.
+
 The examples below use modules named `app`, `domain`, `ui`, and `core`.
 Their surfaces are `index.ts`.
 The config classifies files with `role:app`, `role:domain`, and the `layer:core`, `layer:domain`, and `layer:ui` values.

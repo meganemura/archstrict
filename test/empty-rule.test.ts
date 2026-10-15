@@ -299,13 +299,15 @@ describe("a guard rule, which bans an import no file has yet", () => {
       point: [
         { from: "src/nowhere/**", to: { tags: ["role:app"] }, guard: true, because: "test" },
         { from: "src/db/**", to: "src/nowhere/**", guard: true, because: "test" },
+        { from: "src/db/**", to: { tags: ["rol:app"] }, guard: true, because: "test" },
       ],
     };
     expect(checkEmptyRuleSet(graphOf(root, config), config).map(v => v.evidence)).toEqual([
       "guard allowDeny rule 'role:absent -> pkg' matches no real edge in scope, and its source 'role:absent' tags no file in scope",
-      "guard allowDeny rule 'role:db -> pkgs' matches no real edge in scope, and no file or package carries a 'pkgs:' tag",
+      "guard allowDeny rule 'role:db -> pkgs' matches no real edge in scope, and its targetNamespace 'pkgs' is neither pkg nor a namespace classify assigns",
       "guard point rule 'src/nowhere/** -> {\"tags\":[\"role:app\"]}' matches no real edge in scope, and its from 'src/nowhere/**' matches no file in scope",
       "guard point rule 'src/db/** -> src/nowhere/**' matches no real edge in scope, and its to 'src/nowhere/**' matches no file in scope",
+      "guard point rule 'src/db/** -> {\"tags\":[\"rol:app\"]}' matches no real edge in scope, and its to tag 'rol:app' is neither pkg nor a namespace classify assigns",
     ]);
   }));
 });

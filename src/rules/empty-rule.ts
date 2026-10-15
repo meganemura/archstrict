@@ -8,9 +8,9 @@
 // Boundary: a config-vs-graph consistency check, not an edge check. No
 // I/O, no output formatting.
 import { assertDeprecatedModulesExist, type Config } from "../config.js";
-import { compileGlob } from "../classify.js";
+import { classifyFile, compileGlob } from "../classify.js";
 import { type ModuleGraph } from "../module-graph.js";
-import { checkEdgesCoverage, checkExhaustiveAllow } from "./constraints.js";
+import { checkEdgesCoverage, checkExhaustiveAllow, formatPredicate, matchesPredicate, type FromToPredicate } from "./constraints.js";
 import { withPointerSpecs } from "../config-pointer.js";
 
 export type Violation = {
@@ -120,20 +120,33 @@ export function checkEmptyRuleSet(graph: ModuleGraph, config: Config): Violation
   // value outside the list, after the source-group exemption. Otherwise,
   // the list guarantees a pass; the exhaustive-list check reports it below.
   // rules.md explains why a nonzero clean result still needs a positive
-  // control, which these checks cannot replace.
+  // control, which these checks cannot replace. A `guard` rule's zero is
+  // accepted while guardGap finds nothing missing.
   const coverageIndices = { allowDeny: 0, order: 0, point: 0 };
+  let fileTags: { rel: string; tags: Set<string> }[] | undefined;
+  const taggedFiles = () => fileTags ??= allFiles.map((file) => {
+    const rel = graph.relativePath(file);
+    return { rel, tags: classifyFile(rel, config) };
+  });
   for (const c of checkEdgesCoverage(graph, config)) {
     const entryIndex = coverageIndices[c.kind]++;
-    if (c.evaluated === 0) {
-      violations.push(
-        violation(
-          config,
-          `${c.kind} rule '${c.identifier}' matches no real edge in scope`,
-          `remove or correct this ${c.kind} entry in archstrict.config.ts's edges - its own source/target never applies to any real edge this project has (a workspace-sibling import may resolve as an external package rather than a project tag; see rules.md)`,
-          `edges.${c.kind}[${entryIndex}]`,
-        ),
-      );
-    }
+    if (c.evaluated !== 0) continue;
+    const rule = c.kind === "order" ? undefined : config.edges?.[c.kind]?.[entryIndex];
+    const gap = rule === undefined ? undefined : guardGap(config, taggedFiles(), rule);
+    if (rule?.guard === true && gap === undefined) continue;
+    const doText = `remove or correct this ${c.kind} entry in archstrict.config.ts's edges - its own source/target never applies to any real edge this project has (a workspace-sibling import may resolve as an external package rather than a project tag; see rules.md)`;
+    violations.push(
+      violation(
+        config,
+        rule?.guard === true
+          ? `guard ${c.kind} rule '${c.identifier}' matches no real edge in scope, and ${gap}`
+          : `${c.kind} rule '${c.identifier}' matches no real edge in scope`,
+        rule !== undefined && gap === undefined
+          ? `${doText}. If it bans an import no file has yet, set guard: true on it and prove it fires with archstrict simulate (see prove-rules.md)`
+          : doText,
+        `edges.${c.kind}[${entryIndex}]`,
+      ),
+    );
   }
 
   for (const { identifier, rule } of checkExhaustiveAllow(graph, config)) {
@@ -148,4 +161,32 @@ export function checkEmptyRuleSet(graph: ModuleGraph, config: Config): Violation
   }
 
   return violations;
+}
+
+type GuardableRule =
+  | { source: string; targetNamespace: string; guard?: boolean }
+  | { from: FromToPredicate; to: FromToPredicate; guard?: boolean };
+
+// A guard's zero is only its clean state while the rule could still fire:
+// its source names a real file, and its target names a real file or a tag
+// namespace a target can carry. Any external import carries `pkg`. Returns what is missing, or undefined when nothing is.
+function guardGap(config: Config, files: readonly { rel: string; tags: Set<string> }[], rule: GuardableRule): string | undefined {
+  const namespaces = new Set(["pkg", ...(config.classify ?? []).flatMap((entry) => entry.tags.map(namespaceOf))]);
+  if (config.classifyByDirectoryName) namespaces.add(config.classifyByDirectoryName.tagNamespace);
+  if ("source" in rule) {
+    if (!files.some((file) => file.tags.has(rule.source))) return `its source '${rule.source}' tags no file in scope`;
+    if (!namespaces.has(rule.targetNamespace)) return `its targetNamespace '${rule.targetNamespace}' is neither pkg nor a namespace classify assigns`;
+    return undefined;
+  }
+  if (!files.some((file) => matchesPredicate(rule.from, file.rel, file.tags))) return `its from '${formatPredicate(rule.from)}' matches no file in scope`;
+  if (typeof rule.to === "string") {
+    const to = compileGlob(rule.to);
+    return files.some((file) => to.test(file.rel)) ? undefined : `its to '${rule.to}' matches no file in scope`;
+  }
+  const unknown = rule.to.tags.find((tag) => !namespaces.has(namespaceOf(tag)));
+  return unknown === undefined ? undefined : `its to tag '${unknown}' is neither pkg nor a namespace classify assigns`;
+}
+
+function namespaceOf(tag: string): string {
+  return tag.split(":")[0]!;
 }

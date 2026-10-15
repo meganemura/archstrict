@@ -84,6 +84,7 @@ export type Config = {
       exceptions?: readonly { from: string; to: string; because: string }[];
       edgeType?: "value" | "type" | "both";
       importForm?: "static" | "dynamic" | "both";
+      guard?: boolean;
       because: string;
     }[];
     order?: readonly {
@@ -100,6 +101,7 @@ export type Config = {
       to: string | { tags: readonly string[] };
       edgeType?: "value" | "type" | "both";
       importForm?: "static" | "dynamic" | "both";
+      guard?: boolean;
       because: string;
     }[];
   };
