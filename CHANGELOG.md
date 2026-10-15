@@ -43,6 +43,7 @@ may change commands, flags, config, or output shape. The version entry will desc
 - `archstrict recommend` counts the edges of a balanced pair, two modules with the same edge count each way, in the `layered-order` support, and names the pair on its own evidence line. Before, support left those edges out and could read 100% beside added violations, because whichever way the order places the pair, one direction's edges break it.
 - `node:sqlite`, `node:test`, `node:sea`, and `node:test/reporters` are builtin edges. `check` counted them as unresolved specifiers, because Node lists these scheme-only builtins only with the `node:` prefix. A bare `sqlite` still resolves as a package.
 - `archstrict todo` accepted any argument and ran its first-run freeze for `todo --dry-run`, writing `archstrict.todo.json`. An argument other than `--json` is now an error (`unknown option`), and nothing is written.
+- The `@modelcontextprotocol/sdk` dependency is pinned at 1.32.1 instead of 1.30.0, outside the range of advisory GHSA-6qxp-vccf-f47h (`>=1.12.0 <1.31.0`). The MCP server and its tools are unchanged.
 
 ## 0.3.0 (2026-10-10)
 
