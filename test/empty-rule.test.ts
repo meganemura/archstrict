@@ -268,3 +268,44 @@ test.each(["type", "dynamic", "exception"] as const)("whole-graph values survive
   const graph = buildModuleGraph({ projectRoot: root, declaredModules: config.declaredModules! });
   expect(checkEmptyRuleSet(graph, config)).toEqual([]);
 }));
+
+describe("a guard rule, which bans an import no file has yet", () => {
+  const graphOf = (root: string, config: Config) => buildModuleGraph({ projectRoot: root, declaredModules: config.declaredModules! });
+
+  test("evaluating zero edges is clean when its source tags a real file and its target namespace is one a file can carry", () => roleProject((root, config) => {
+    config.edges = {
+      allowDeny: [
+        { source: "role:db", targetNamespace: "pkg", deny: ["some-sql-lib"], guard: true, because: "The database layer stays free of a SQL client." },
+        { source: "role:db", targetNamespace: "role", allow: ["shared"], guard: true, because: "The database layer reaches only shared code." },
+      ],
+      point: [{ from: { tags: ["role:db"] }, to: { tags: ["role:app"] }, guard: true, because: "The database layer never reaches the app." }],
+    };
+    expect(checkEmptyRuleSet(graphOf(root, config), config)).toEqual([]);
+  }));
+
+  test("without guard, the same zero is an empty-rule-set finding whose do names guard", () => roleProject((root, config) => {
+    config.edges = { allowDeny: [{ source: "role:db", targetNamespace: "pkg", deny: ["some-sql-lib"], because: "The database layer stays free of a SQL client." }] };
+    const violations = checkEmptyRuleSet(graphOf(root, config), config);
+    expect(violations.map(v => [v.rule, v.evidence])).toEqual([["empty-rule-set", "allowDeny rule 'role:db -> pkg' matches no real edge in scope"]]);
+    expect(violations[0]!.do).toBe("remove or correct this allowDeny entry in archstrict.config.ts's edges - its own source/target never applies to any real edge this project has (a workspace-sibling import may resolve as an external package rather than a project tag; see rules.md). If it bans an import no file has yet, set guard: true on it and prove it fires with archstrict simulate (see prove-rules.md)");
+  }));
+
+  test("a guard whose source tags no file, or whose target namespace no file can carry, is still an empty-rule-set finding", () => roleProject((root, config) => {
+    config.edges = {
+      allowDeny: [
+        { source: "role:absent", targetNamespace: "pkg", deny: ["some-sql-lib"], guard: true, because: "test" },
+        { source: "role:db", targetNamespace: "pkgs", deny: ["some-sql-lib"], guard: true, because: "test" },
+      ],
+      point: [
+        { from: "src/nowhere/**", to: { tags: ["role:app"] }, guard: true, because: "test" },
+        { from: "src/db/**", to: "src/nowhere/**", guard: true, because: "test" },
+      ],
+    };
+    expect(checkEmptyRuleSet(graphOf(root, config), config).map(v => v.evidence)).toEqual([
+      "guard allowDeny rule 'role:absent -> pkg' matches no real edge in scope, and its source 'role:absent' tags no file in scope",
+      "guard allowDeny rule 'role:db -> pkgs' matches no real edge in scope, and no file or package carries a 'pkgs:' tag",
+      "guard point rule 'src/nowhere/** -> {\"tags\":[\"role:app\"]}' matches no real edge in scope, and its from 'src/nowhere/**' matches no file in scope",
+      "guard point rule 'src/db/** -> src/nowhere/**' matches no real edge in scope, and its to 'src/nowhere/**' matches no file in scope",
+    ]);
+  }));
+});
