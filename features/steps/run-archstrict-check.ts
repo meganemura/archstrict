@@ -7,6 +7,11 @@ const CLI_PATH = fileURLToPath(new URL("../../dist/cli.js", import.meta.url));
 
 type ExecError = { status: number | null; stdout: string };
 
+// The scenario requires real files and the CLI's JSON output, so this spawns
+// the real CLI with --json rather than calling check() in-process, matching
+// cli.test.ts's own pattern. execFileSync throws on a nonzero exit (check
+// exits 1 whenever violations exist, by design), so a nonzero exit is caught
+// and read as data instead of letting the step fail on the expected case.
 export default defineStep({
   description: "Runs the built archstrict CLI's check verb against the scratch copy and parses its --json output.",
   patterns: ["archstrict check runs against the scratch copy", "archstrict check runs against the scratch copy again"],
@@ -27,8 +32,6 @@ export default defineStep({
     exitCode: z.number(),
   }),
   from: { root: [setupNukadokoScratch, "root"] },
-  rationale:
-    "The scenario requires real files and the CLI's JSON output, so this spawns the real CLI with --json rather than calling check() in-process, matching cli.test.ts's own pattern. execFileSync throws on a nonzero exit (check exits 1 whenever violations exist, by design), so a nonzero exit is caught and read as data instead of letting the step fail on the expected case.",
   run({}, { root }) {
     let stdout: string;
     let exitCode: number;

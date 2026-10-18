@@ -2,6 +2,13 @@ import { defineStep, z } from "nukadoko";
 import setupNukadokoScratch from "./setup-nukadoko-scratch.js";
 import runArchstrictCheck from "./run-archstrict-check.js";
 
+// Compares check's report against counts the setup step took directly off the
+// filesystem, not against hardcoded numbers - this stays correct across a
+// future nukadoko release with a different file count. init declares one
+// module per module directory AND one per loose root .ts file, so the module
+// count is moduleDirs.length + rootFileCount, and every one of those files is
+// covered - outsideFiles is 0, not rootFileCount, unlike before init's own
+// walk covered the loose files too.
 export default defineStep({
   description:
     "Asserts check's module/outside-file/unresolved-specifier counts against the scratch copy's own file layout, computed independently by the setup step.",
@@ -28,8 +35,6 @@ export default defineStep({
     outsideFiles: [runArchstrictCheck, "outsideFiles"],
     unresolvedSpecifiers: [runArchstrictCheck, "unresolvedSpecifiers"],
   },
-  rationale:
-    "Compares check's report against counts the setup step took directly off the filesystem, not against hardcoded numbers - this stays correct across a future nukadoko release with a different file count. init declares one module per module directory AND one per loose root .ts file, so the module count is moduleDirs.length + rootFileCount, and every one of those files is covered - outsideFiles is 0, not rootFileCount, unlike before init's own walk covered the loose files too.",
   run({}, args) {
     const expectedModules = args.moduleDirs.length + args.rootFileCount;
     if (args.modules !== expectedModules) {

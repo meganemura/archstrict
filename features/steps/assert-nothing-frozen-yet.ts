@@ -1,6 +1,15 @@
 import { defineStep, z } from "nukadoko";
 import runArchstrictCheck from "./run-archstrict-check.js";
 
+// init declares one module per directory that holds TypeScript source and one
+// per loose TypeScript source file, so every file the first check analyzes
+// already belongs to exactly one module: 0 uncovered-module violations, by
+// construction. No module here has any public surface of its own, so every
+// cross-module edge is rule 1's public-surface-bypass; a strongly-connected
+// pair of modules is rule 2's cycle; and a singleton file module exposing
+// another module's own internal type is rule 6's type-leak (this project's own
+// currently-implemented reading of that rule; see rules.md). A run this fresh
+// must report at least one violation and suppress none of them.
 export default defineStep({
   description:
     "Asserts the first check run found real violations, every one of them freezable (public-surface-bypass, cycle, or type-leak - the only rules any module here can produce), and froze none of them yet.",
@@ -25,8 +34,6 @@ export default defineStep({
     cycle: [runArchstrictCheck, "cycle"],
     typeLeak: [runArchstrictCheck, "typeLeak"],
   },
-  rationale:
-    "init declares one module per directory that holds TypeScript source and one per loose TypeScript source file, so every file the first check analyzes already belongs to exactly one module: 0 uncovered-module violations, by construction. No module here has any public surface of its own, so every cross-module edge is rule 1's public-surface-bypass; a strongly-connected pair of modules is rule 2's cycle; and a singleton file module exposing another module's own internal type is rule 6's type-leak (this project's own currently-implemented reading of that rule; see rules.md). A run this fresh must report at least one violation and suppress none of them.",
   run({}, { violations, todo, exitCode, uncoveredModule, publicSurfaceBypass, cycle, typeLeak }) {
     if (violations === 0) throw new Error("expected at least one violation on a fresh, unfrozen scratch copy");
     if (todo !== 0) throw new Error(`expected todo: 0 before archstrict todo ever ran, got ${todo}`);

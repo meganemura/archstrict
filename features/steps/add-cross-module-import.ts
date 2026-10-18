@@ -3,6 +3,12 @@ import { readdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import setupNukadokoScratch from "./setup-nukadoko-scratch.js";
 
+// A brand-new file with a brand-new import is exactly one new edge regardless
+// of how many edges already exist between the same two modules, so this needs
+// no survey of nukadoko's existing import graph to know the edit adds exactly
+// one violation: no module in the scratch copy has a public.ts, so any edge
+// into one is a bypass by definition, and this is a file that imported nothing
+// before.
 export default defineStep({
   description: "Adds one brand-new file with one cross-module import to the scratch copy, into a new module.",
   pattern: "one more cross-module import is added to the scratch copy",
@@ -13,8 +19,6 @@ export default defineStep({
     toModule: z.string(),
   }),
   from: { root: [setupNukadokoScratch, "root"], moduleDirs: [setupNukadokoScratch, "moduleDirs"] },
-  rationale:
-    "A brand-new file with a brand-new import is exactly one new edge regardless of how many edges already exist between the same two modules, so this needs no survey of nukadoko's existing import graph to know the edit adds exactly one violation: no module in the scratch copy has a public.ts, so any edge into one is a bypass by definition, and this is a file that imported nothing before.",
   run({}, { root, moduleDirs }) {
     const [fromModule, toModule] = moduleDirs;
     if (fromModule === undefined || toModule === undefined) {

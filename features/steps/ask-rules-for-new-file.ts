@@ -2,6 +2,8 @@ import { defineStep, z } from "nukadoko";
 import createTwoModuleProject from "./create-two-module-project.js";
 import { runArchstrictJson } from "./two-module-cli.js";
 
+// Asking before the file exists is the point: the answer has to come from the
+// config and the graph, not from the file.
 export default defineStep({
   description: "Runs `archstrict rules <new file> --json` for a file that does not exist yet and keeps its module and the surfaces it may import.",
   pattern: "the agent asks archstrict which rules govern a new file in orders",
@@ -15,7 +17,6 @@ export default defineStep({
   }),
   from: { root: [createTwoModuleProject, "root"], newFile: [createTwoModuleProject, "newFile"] },
   mutates: false,
-  rationale: "Asking before the file exists is the point: the answer has to come from the config and the graph, not from the file.",
   run({}, { root, newFile }) {
     const { exitCode, json } = runArchstrictJson(root, ["rules", newFile]);
     if (exitCode !== 0) throw new Error(`archstrict rules exited ${exitCode}: ${JSON.stringify(json)}`);

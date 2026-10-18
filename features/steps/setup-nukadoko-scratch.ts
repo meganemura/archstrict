@@ -65,6 +65,13 @@ function countUnresolvableSpecifiers(srcDir: string, nodeModulesDir: string): nu
 const NUKADOKO_SRC = fileURLToPath(new URL("../../node_modules/nukadoko/src", import.meta.url));
 const ARCHSTRICT_NODE_MODULES = fileURLToPath(new URL("../../node_modules", import.meta.url));
 
+// A symlinked node_modules lets nukadoko's own bare-specifier imports
+// (@cucumber/*, zod, allure-js-commons, ...) resolve inside the scratch copy
+// without a second npm install. moduleDirs, rootFileCount,
+// modulesWithoutIndexTs, and expectedUnresolvedSpecifiers are computed here,
+// independently of anything archstrict itself reports, so later Then steps
+// compare check's output against a count this step took directly off the
+// filesystem rather than trusting the same tool twice.
 export default defineStep({
   description:
     "Copies nukadoko's own published src/ into a scratch project - a snapshot with no public-surface convention, entirely disposable, and never written back to.",
@@ -87,8 +94,6 @@ export default defineStep({
         "bare specifiers naming neither a node builtin nor a package this environment has installed - nukadoko's own real source names at least one optional peer dependency (@modelcontextprotocol/client) not part of archstrict's own install, so this is legitimately nonzero",
       ),
   }),
-  rationale:
-    "A symlinked node_modules lets nukadoko's own bare-specifier imports (@cucumber/*, zod, allure-js-commons, ...) resolve inside the scratch copy without a second npm install. moduleDirs, rootFileCount, modulesWithoutIndexTs, and expectedUnresolvedSpecifiers are computed here, independently of anything archstrict itself reports, so later Then steps compare check's output against a count this step took directly off the filesystem rather than trusting the same tool twice.",
   run() {
     const root = mkdtempSync(join(tmpdir(), "archstrict-nukadoko-dogfood-"));
     cpSync(NUKADOKO_SRC, join(root, "src"), { recursive: true });
