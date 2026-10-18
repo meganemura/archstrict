@@ -17,8 +17,8 @@ export default defineStep({
   }),
   from: { root: [createTwoModuleProject, "root"], newFile: [createTwoModuleProject, "newFile"] },
   mutates: false,
-  run({}, { root, newFile }) {
-    const { exitCode, json } = runArchstrictJson(root, ["rules", newFile]);
+  async run({}, { root, newFile }) {
+    const { exitCode, json } = await runArchstrictJson(root, ["rules", newFile]);
     if (exitCode !== 0) throw new Error(`archstrict rules exited ${exitCode}: ${JSON.stringify(json)}`);
     const answer = json as { exists: boolean; module: string | null; importableFrom: { module: string; surfaceFiles: string[] }[] };
     return { exists: answer.exists, module: answer.module, importableFrom: answer.importableFrom };

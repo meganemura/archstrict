@@ -17,7 +17,7 @@ export default defineStep({
   returns: z.object({ exitCode: z.number().describe("check's exit code: 1 when a violation is reported"), violations }),
   from: { root: [createTwoModuleProject, "root"], newFile: [createTwoModuleProject, "newFile"] },
   mutates: true,
-  run({}, { root, newFile }) {
+  async run({}, { root, newFile }) {
     writeFileSync(
       join(root, newFile),
       'import { roundCents } from "../billing/invoice.ts";\n\nexport function checkoutTotal(value: number): number {\n  return roundCents(value);\n}\n',

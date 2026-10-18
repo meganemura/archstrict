@@ -14,7 +14,7 @@ export default defineStep({
   returns: z.object({ exitCode: z.number().describe("check's exit code after the fix"), violations }),
   from: { root: [createTwoModuleProject, "root"], newFile: [createTwoModuleProject, "newFile"], billingIndex: [createTwoModuleProject, "billingIndex"] },
   mutates: true,
-  run({}, { root, newFile, billingIndex }) {
+  async run({}, { root, newFile, billingIndex }) {
     writeFileSync(join(root, billingIndex), 'export { invoiceTotal, roundCents } from "./invoice.ts";\n');
     const path = join(root, newFile);
     writeFileSync(path, readFileSync(path, "utf8").replace('"../billing/invoice.ts"', '"../billing/index.ts"'));

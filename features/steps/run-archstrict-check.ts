@@ -1,17 +1,14 @@
-import { defineStep, z } from "nukadoko";
-import { execFileSync } from "node:child_process";
+import { defineStep, runCommand, z } from "nukadoko";
 import { fileURLToPath } from "node:url";
 import setupNukadokoScratch from "./setup-nukadoko-scratch.js";
 
 const CLI_PATH = fileURLToPath(new URL("../../dist/cli.js", import.meta.url));
 
-type ExecError = { status: number | null; stdout: string };
-
 // The scenario requires real files and the CLI's JSON output, so this spawns
 // the real CLI with --json rather than calling check() in-process, matching
-// cli.test.ts's own pattern. execFileSync throws on a nonzero exit (check
-// exits 1 whenever violations exist, by design), so a nonzero exit is caught
-// and read as data instead of letting the step fail on the expected case.
+// cli.test.ts's own pattern. check exits 1 whenever violations exist, by
+// design, so the exit code is read as data instead of failing the step on
+// the expected case.
 export default defineStep({
   description: "Runs the built archstrict CLI's check verb against the scratch copy and parses its --json output.",
   patterns: ["archstrict check runs against the scratch copy", "archstrict check runs against the scratch copy again"],
@@ -32,18 +29,10 @@ export default defineStep({
     exitCode: z.number(),
   }),
   from: { root: [setupNukadokoScratch, "root"] },
-  run({}, { root }) {
-    let stdout: string;
-    let exitCode: number;
-    try {
-      stdout = execFileSync(process.execPath, [CLI_PATH, "check", "--json"], { cwd: root, encoding: "utf8" });
-      exitCode = 0;
-    } catch (error) {
-      const execError = error as ExecError;
-      stdout = execError.stdout;
-      exitCode = execError.status ?? 1;
-    }
-    const parsed = JSON.parse(stdout);
+  async run({}, { root }) {
+    const result = await runCommand(process.execPath, [CLI_PATH, "check", "--json"], { cwd: root });
+    const exitCode = result.exitCode ?? 1;
+    const parsed = JSON.parse(result.stdout);
     return {
       modules: parsed.modules,
       modulesWithoutSurface: parsed.modulesWithoutSurface,

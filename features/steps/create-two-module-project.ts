@@ -22,7 +22,7 @@ export default defineStep({
     newFile: z.string().describe("the orders file the agent is about to create, relative to the root"),
   }),
   mutates: true,
-  run({ scratch }) {
+  async run({ scratch }) {
     const root = scratch.dir("archstrict-rules-scenario");
     mkdirSync(join(root, "src/billing"), { recursive: true });
     mkdirSync(join(root, "src/orders"), { recursive: true });
@@ -38,7 +38,7 @@ export default defineStep({
       "export function invoiceTotal(lines: number[]): number {\n  return lines.reduce((sum, line) => sum + line, 0);\n}\n\nexport function roundCents(value: number): number {\n  return Math.round(value * 100) / 100;\n}\n",
     );
     writeFileSync(join(root, "src/orders/index.ts"), "export function orderCount(): number {\n  return 0;\n}\n");
-    const init = runArchstrictJson(root, ["init"]);
+    const init = await runArchstrictJson(root, ["init"]);
     if (init.exitCode !== 0) throw new Error(`archstrict init exited ${init.exitCode}: ${JSON.stringify(init.json)}`);
     return { root, billingIndex: "src/billing/index.ts", billingInternal: "src/billing/invoice.ts", newFile: "src/orders/checkout.ts" };
   },

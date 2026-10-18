@@ -1,7 +1,6 @@
 import { defineStep, z } from "nukadoko";
-import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { builtinModules } from "node:module";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -94,8 +93,8 @@ export default defineStep({
         "bare specifiers naming neither a node builtin nor a package this environment has installed - nukadoko's own real source names at least one optional peer dependency (@modelcontextprotocol/client) not part of archstrict's own install, so this is legitimately nonzero",
       ),
   }),
-  run() {
-    const root = mkdtempSync(join(tmpdir(), "archstrict-nukadoko-dogfood-"));
+  run({ scratch }) {
+    const root = scratch.dir("archstrict-nukadoko-dogfood");
     cpSync(NUKADOKO_SRC, join(root, "src"), { recursive: true });
     symlinkSync(ARCHSTRICT_NODE_MODULES, join(root, "node_modules"));
     writeFileSync(

@@ -1,5 +1,4 @@
-import { defineStep, z } from "nukadoko";
-import { execFileSync } from "node:child_process";
+import { defineStep, runCommand, z } from "nukadoko";
 import { fileURLToPath } from "node:url";
 import setupNukadokoScratch from "./setup-nukadoko-scratch.js";
 
@@ -14,8 +13,9 @@ export default defineStep({
   args: z.object({ root: z.string() }),
   returns: z.object({ stdout: z.string() }),
   from: { root: [setupNukadokoScratch, "root"] },
-  run({}, { root }) {
-    const stdout = execFileSync(process.execPath, [CLI_PATH, "init"], { cwd: root, encoding: "utf8" });
-    return { stdout };
+  async run({}, { root }) {
+    const result = await runCommand(process.execPath, [CLI_PATH, "init"], { cwd: root });
+    if (result.exitCode !== 0) throw new Error(`archstrict init exited ${result.exitCode}: ${result.stderr}`);
+    return { stdout: result.stdout };
   },
 });
