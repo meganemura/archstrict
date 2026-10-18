@@ -23,7 +23,6 @@ export default defineStep({
     outsideFiles: z.number(),
     unresolvedSpecifiers: z.number(),
   }),
-  returns: z.object({}),
   mutates: false,
   from: {
     moduleDirs: [setupNukadokoScratch, "moduleDirs"],
@@ -53,6 +52,5 @@ export default defineStep({
         `expected ${args.expectedUnresolvedSpecifiers} unresolved specifiers (bare specifiers naming neither a node builtin nor an installed package), check reported ${args.unresolvedSpecifiers}`,
       );
     }
-    return {};
   },
 });

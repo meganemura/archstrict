@@ -15,7 +15,6 @@ export default defineStep({
     module: z.string().nullable(),
     importableFrom: z.array(z.object({ module: z.string(), surfaceFiles: z.array(z.string()) })),
   }),
-  returns: z.object({}),
   from: {
     root: [createTwoModuleProject, "root"],
     billingIndex: [createTwoModuleProject, "billingIndex"],
@@ -30,6 +29,5 @@ export default defineStep({
     const billing = importableFrom.find((entry) => entry.module === "billing");
     if (billing === undefined) throw new Error(`rules does not name billing: ${JSON.stringify(importableFrom)}`);
     if (JSON.stringify(billing.surfaceFiles) !== JSON.stringify([join(root, billingIndex)])) throw new Error(`billing's surface files are ${JSON.stringify(billing.surfaceFiles)}`);
-    return {};
   },
 });

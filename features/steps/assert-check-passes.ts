@@ -8,11 +8,9 @@ export default defineStep({
   description: "Asserts check exited 0 with no violation after the fix.",
   pattern: "check passes with no violation",
   args: z.object({ exitCode: z.number(), violations }),
-  returns: z.object({}),
   from: { exitCode: [followDoLine, "exitCode"], violations: [followDoLine, "violations"] },
   mutates: false,
   run({}, { exitCode, violations }) {
     if (exitCode !== 0 || violations.length !== 0) throw new Error(`check exited ${exitCode} with ${JSON.stringify(violations)}`);
-    return {};
   },
 });

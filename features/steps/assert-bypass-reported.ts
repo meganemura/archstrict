@@ -16,7 +16,6 @@ export default defineStep({
     exitCode: z.number(),
     violations,
   }),
-  returns: z.object({}),
   from: {
     root: [createTwoModuleProject, "root"],
     newFile: [createTwoModuleProject, "newFile"],
@@ -33,6 +32,5 @@ export default defineStep({
     if (violation!.rule !== "public-surface-bypass") throw new Error(`expected public-surface-bypass, got ${violation!.rule}`);
     if (violation!.path !== join(root, newFile) || violation!.line !== 1) throw new Error(`the violation is at ${violation!.path}:${violation!.line}`);
     if (!violation!.do.includes(billingIndex) || !violation!.do.includes(billingInternal)) throw new Error(`the do: line is ${violation!.do}`);
-    return {};
   },
 });
