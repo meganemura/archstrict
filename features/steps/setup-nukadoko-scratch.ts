@@ -19,15 +19,19 @@ function packageNameOf(specifier: string): string {
 
 // Every bare (non-relative) import/export-from specifier under `srcDir`,
 // naming neither a node builtin nor a package this environment actually has
-// installed - nukadoko's own real source names at least one such optional
-// peer dependency (@modelcontextprotocol/client, per its own mcp/index.ts
-// comment), so this is a real, expected count for a fresh install, not
-// archstrict failing to resolve something it should.
+// installed - nukadoko's own real source names its optional peer
+// dependencies (@modelcontextprotocol/client and playwright), which
+// archstrict does not install, so this is a real, expected count for a
+// fresh install, not archstrict failing to resolve something it should.
 function countUnresolvableSpecifiers(srcDir: string, nodeModulesDir: string): number {
-  // Only a real import/export line, not `from "..."` inside a comment or a
-  // prose string (this codebase is heavily commented, and a naive
-  // content-wide regex matched things like `// ...from "no browser"`).
-  const BARE_SPECIFIER = /from\s+["']([^."'][^"']*)["']/;
+  // Only a real import/export statement, not `from "..."` inside a comment
+  // or a prose string (this codebase is heavily commented, and a naive
+  // content-wide regex matched things like `// ...from "no browser"`). The
+  // statement starts a line with `import` or `export` and may span lines
+  // up to its `from`: nukadoko's own src/context/browser-evidence.ts lists
+  // its imported names one per line, so a per-line match missed its
+  // `} from "playwright"` line.
+  const BARE_SPECIFIER = /^[ \t]*(?:import|export)\b[^;"'`]*?\bfrom\s+["']([^."'][^"']*)["']/gm;
   let count = 0;
   function walk(dir: string) {
     for (const name of readdirSync(dir)) {
@@ -37,11 +41,7 @@ function countUnresolvableSpecifiers(srcDir: string, nodeModulesDir: string): nu
         continue;
       }
       if (!name.endsWith(".ts")) continue;
-      for (const line of readFileSync(full, "utf8").split("\n")) {
-        const trimmed = line.trimStart();
-        if (!trimmed.startsWith("import") && !trimmed.startsWith("export")) continue;
-        const match = BARE_SPECIFIER.exec(line);
-        if (match === null) continue;
+      for (const match of readFileSync(full, "utf8").matchAll(BARE_SPECIFIER)) {
         const specifier = match[1]!;
         const bare = specifier.replace(/^node:/, "");
         if (BUILTIN_MODULE_NAMES.has(bare)) continue;
@@ -90,7 +90,7 @@ export default defineStep({
     expectedUnresolvedSpecifiers: z
       .number()
       .describe(
-        "bare specifiers naming neither a node builtin nor a package this environment has installed - nukadoko's own real source names at least one optional peer dependency (@modelcontextprotocol/client) not part of archstrict's own install, so this is legitimately nonzero",
+        "bare specifiers naming neither a node builtin nor a package this environment has installed - nukadoko's own real source names its optional peer dependencies (@modelcontextprotocol/client, playwright), which are not part of archstrict's own install, so this is legitimately nonzero",
       ),
   }),
   run({ scratch }) {
