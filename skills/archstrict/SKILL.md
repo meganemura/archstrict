@@ -13,7 +13,7 @@ Every violation carries a rule id, `path:line:col`, the `evidence` (what was fou
 
 ## Workflow
 
-The CLI runs as `npx archstrict <verb>`, and a `do:` line leaves out the `npx` prefix. `archstrict --help`, `-h`, or `help` prints usage and runs no verb.
+The CLI runs as `npx archstrict <verb>`, and a `do:` line leaves out the `npx` prefix. `archstrict --help`, `-h`, or `help` prints usage and runs no verb. `archstrict --version` prints the installed version.
 
 Run `archstrict agents` to add the fixed pre-edit guidance to `AGENTS.md`; use `--remove` to remove it. That section is a few lines of project instructions, separate from this skill. See [agent instructions](references/agents-verb.md). The edit hooks run only in Claude Code; on any other host, `archstrict check` in CI is what catches a violation after an edit. The [README's Install section](https://github.com/meganemura/archstrict#install) says how each host gets the skill, the hooks, and the MCP server. `archstrict mcp` starts the stdio MCP server for this project. Its tools are `check`, `rules`, `search`, and `simulate`.
 

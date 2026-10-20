@@ -8,7 +8,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync, utimesSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { createArchstrictMcpServer } from "../src/mcp-server.js";
@@ -82,6 +82,10 @@ test("lists exactly four tools with their full input schemas", () => project(asy
   ]);
 }));
 
+test("the server reports the installed package version", () => project(async (_root, client) => {
+  const manifest = JSON.parse(readFileSync(join(repo, "package.json"), "utf8"));
+  expect(client.getServerVersion()).toEqual({ name: "archstrict", version: manifest.version });
+}));
 test("check equals the complete plain verb result", () => project(async (root, client) => {
   expect(await json(client, "check")).toEqual(await check(root, undefined, {}));
 }));

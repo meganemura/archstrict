@@ -16,7 +16,7 @@ Installed package: `node_modules/archstrict/skills/archstrict/SKILL.md` (this fi
 
 ## Commands
 
-`archstrict --help`, `-h`, or `help` prints usage and runs no verb.
+`archstrict --help`, `-h`, or `help` prints usage and runs no verb. `archstrict --version` prints the installed version.
 
 - `archstrict init [dir] [--json]` — declare one module per top-level directory holding TypeScript source (`.ts`, `.tsx`, `.mts`, `.cts`) and one per loose top-level source file of those extensions, so the first `check` covers every file by construction; write `archstrict.types.ts` and, if missing, `archstrict.config.ts` (`schemaVersion: 1`). The map is an inventory. Group files that change together (`glob` may be an array of paths in one directory), split a directory that holds almost every file, then add `edges`. `recommend` names a mega-module and a file-per-module inventory.
 - `archstrict check [file] [--json] [--rule <id>] [--module <name>] [--frozen]` — report violations for the whole project; a file argument only scopes the report. Up to 20 violations print in full; more print grouped counts with one example each, plus a `do:` per group. `--rule`/`--module` narrow the printed and JSON violations (repeatable); the exit code reflects the filtered set once a filter is given. `--frozen` also includes todo-matched violations, marked `frozen: true` and exempt from the exit code, so a re-architecting agent can read a module's frozen debt through the same filters instead of opening its todo JSON by hand

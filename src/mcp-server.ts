@@ -6,6 +6,7 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { CallToolRequestSchema, ListToolsRequestSchema, type Tool } from "@modelcontextprotocol/sdk/types.js";
+import { readFileSync } from "node:fs";
 import { ReportError } from "./report-error.js";
 import { createWarmGraph } from "./warm-graph.js";
 import { CHECK_FULL_LIST_LIMIT, check, groupedToolCheck, type CheckResult } from "./verbs/check.js";
@@ -59,7 +60,8 @@ export function createArchstrictMcpServer(projectRoot: string): Server {
   // One server spans many calls in the same process, unlike a one-shot CLI invocation.
   // Retain each file's import records across refresh calls; a new holder per call would lose that reuse.
   const warm = createWarmGraph();
-  const server = new Server({ name: "archstrict", version: "0.0.0" }, { capabilities: { tools: {} } });
+  const manifest: { version: string } = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+  const server = new Server({ name: "archstrict", version: manifest.version }, { capabilities: { tools: {} } });
   server.setRequestHandler(ListToolsRequestSchema, () => ({ tools }));
   server.setRequestHandler(CallToolRequestSchema, async request => {
     // A failed call must leave the session available for later calls. Convert bad input,

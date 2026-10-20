@@ -3,6 +3,16 @@
 The format follows Keep a Changelog, and the versions follow SemVer. Before 1.0, a minor version
 may change commands, flags, config, or output shape. The version entry will describe each change.
 
+## Unreleased
+
+### Added
+
+- `archstrict --version` prints the installed package version and exits 0. The usage table names it.
+
+### Fixed
+
+- The MCP server reported version `0.0.0` to its client. It now reports the installed package version.
+
 ## 0.4.0 (2026-10-16)
 
 ### Added

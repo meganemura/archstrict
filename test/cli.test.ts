@@ -95,6 +95,12 @@ registerHooks({
     }
   });
 
+  test("--version prints the installed package version, which help names", () => {
+    const manifest = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+    expect(execFileSync("node", [CLI_PATH, "--version"], { encoding: "utf8" })).toBe(`${manifest.version}\n`);
+    expect(execFileSync("node", [CLI_PATH, "--help"], { encoding: "utf8" })).toContain("archstrict --version: ");
+  });
+
   test("help prints each verb's usage and writes no file", () => {
     const root = mkdtempSync(join(tmpdir(), "archstrict-cli-help-"));
     try {

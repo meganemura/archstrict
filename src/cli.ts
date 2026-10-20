@@ -7,6 +7,7 @@
 // loading, not in any archstrict code. Help, an unknown verb, and a bad flag load none of them.
 import type { DiagramDetail, DiagramDirection, DiagramFormat, DiagramOptions } from "./verbs/diagram.js";
 import type { Change } from "./verbs/simulate.js";
+import { readFileSync } from "node:fs";
 import { ReportError } from "./report-error.js";
 import { parseCheckArgv } from "./check-options.js";
 
@@ -91,7 +92,14 @@ function usageLine(verb: VerbName): string {
 }
 
 function usageTable(): string {
-  return `usage:\n${verbNames.map((verb) => `  ${usageLine(verb)}`).join("\n")}\n`;
+  return `usage:\n${verbNames.map((verb) => `  ${usageLine(verb)}`).join("\n")}\n  archstrict --version: Print the installed version.\n`;
+}
+
+// Read from the package's own manifest, one directory above src/ and dist/,
+// so the answer is the version npm installed and cannot drift from it.
+function packageVersion(): string {
+  const manifest: { version: string } = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+  return manifest.version;
 }
 
 // `--help` and `-h` count anywhere. `help` counts only as the verb, so `search help` still searches.
@@ -367,6 +375,10 @@ async function runMcp(): Promise<number> {
 }
 
 async function main(argv: string[]): Promise<number> {
+  if (argv.length === 1 && argv[0] === "--version") {
+    process.stdout.write(`${packageVersion()}\n`);
+    return 0;
+  }
   if (isHelpRequest(argv)) {
     const verb = helpVerb(argv);
     process.stdout.write(verb === undefined ? usageTable() : `${usageLine(verb)}\n`);
