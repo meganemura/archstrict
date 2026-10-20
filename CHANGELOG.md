@@ -9,6 +9,10 @@ may change commands, flags, config, or output shape. The version entry will desc
 
 - `archstrict --version` prints the installed package version and exits 0. The usage table names it.
 
+### Changed
+
+- `recommend`'s `layered-order` proposal puts modules in layers instead of one module per step. It used to sort modules that no edge orders by name, so the proposed rule forbade imports between unrelated siblings that no real edge argued against: on nukadoko's 26 modules it proposed 26 steps where the edges support 11 layers. A layer of one module keeps that module's name as its tag value; a wider layer is named `level<n>`, and a new evidence line lists its members. A balanced pair that shares a layer no longer counts against `support`.
+
 ### Fixed
 
 - The MCP server reported version `0.0.0` to its client. It now reports the installed package version.

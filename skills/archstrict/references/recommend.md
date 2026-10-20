@@ -93,6 +93,14 @@ a project's framework or its `package.json` dependencies. A pair with no
 directional evidence, or a set of modules whose real edges cycle instead of
 order, is left out rather than forced into a proposal.
 
+`layered-order` places modules in layers, not one module per step: a
+module joins the lowest layer above everything it imports, so modules that
+no edge orders share a layer and may later import each other. A layer of
+one module carries that module's name as its tag value; a wider layer is
+named `level<n>` by its position, and an evidence line lists its members.
+A balanced pair (the same edge count each way) breaks nothing when it
+shares a layer, and counts against `support` when it does not.
+
 ## `surfaceProposals`
 
 One entry per declared module with no public surface file present today and

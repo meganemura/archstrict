@@ -308,7 +308,7 @@ test("layered-order: a module with no edge is left out of the order and named", 
   expect(proposal!.configFragment).not.toContain("role:alone");
 }));
 
-test("layered-order: a balanced pair counts against support and is named, so support agrees with the added violations", async () => fixture(async (root, put) => {
+test("layered-order: a balanced pair in one layer breaks nothing, and is named", async () => fixture(async (root, put) => {
   put("src/core/index.ts", "export const core = 1;\n");
   put("src/mid/index.ts", 'import "../core/index.ts";\nexport const mid = 1;\n');
   put("src/top/index.ts", 'import "../mid/index.ts";\nexport const top = 1;\n');
@@ -318,8 +318,66 @@ test("layered-order: a balanced pair counts against support and is named, so sup
   const proposal = result.patternProposals.find(p => p.pattern === "layered-order");
   expect(proposal).toBeDefined();
   expect(proposal!.evidence).toContain("no direction to read, the same edge count each way: core <-> side (1 each way)");
-  expect(proposal!.support).toBeCloseTo(3 / 4);
+  expect(proposal!.configFragment).toContain('sequence: { "": ["level1","mid","top"] }');
+  expect(proposal!.support).toBe(1);
+  expect(proposal!.addedViolations).toBe(0);
+}));
+
+test("layered-order: a balanced pair split across layers counts against support, so support agrees with the added violations", async () => fixture(async (root, put) => {
+  put("src/core/index.ts", "export const core = 1;\n");
+  put("src/mid/index.ts", 'import "../core/index.ts";\nexport const mid = 1;\n');
+  put("src/top/index.ts", 'import "../mid/index.ts";\nexport const top = 1;\n');
+  put("src/side/index.ts", 'import "../core/index.ts";\nimport "../mid/index.ts";\nexport const side = 1;\n');
+  put("src/core/back.ts", 'import "../side/index.ts";\nexport const back = 1;\n');
+  const result = await recommend(root);
+  const proposal = result.patternProposals.find(p => p.pattern === "layered-order");
+  expect(proposal).toBeDefined();
+  expect(proposal!.configFragment).toContain('sequence: { "": ["core","mid","level3"] }');
+  expect(proposal!.support).toBeCloseTo(4 / 5);
   expect(proposal!.addedViolations).toBe(1);
+}));
+
+test("layered-order: on any acyclic import graph, the layers add no violation and are as few as its longest chain allows", async () => {
+  await hegel.testAsync(async tc => {
+    const n = tc.draw(gen.integers({ minValue: 2, maxValue: 6 }));
+    // m{i} may import m{j} only for j < i, so the graph has no cycle.
+    const edges = tc.draw(gen.arrays(gen.tuples(gen.integers({ minValue: 1, maxValue: n - 1 }), gen.integers({ minValue: 0, maxValue: n - 2 })), { minSize: 1, maxSize: 10 }))
+      .filter(([from, to]) => to < from);
+    tc.assume(edges.length > 0);
+    await fixture(async (root, put) => {
+      for (let i = 0; i < n; i++) {
+        const imports = [...new Set(edges.filter(([from]) => from === i).map(([, to]) => to))];
+        put(`src/m${i}/index.ts`, [...imports.map(to => `import "../m${to}/index.ts";`), `export const m${i} = 1;`].join("\n") + "\n");
+      }
+      const proposal = (await recommend(root)).patternProposals.find(p => p.pattern === "layered-order");
+      assert.ok(proposal);
+      assert.equal(proposal.support, 1);
+      assert.equal(proposal.addedViolations, 0);
+      const depth = new Map<number, number>();
+      for (let i = 0; i < n; i++) {
+        depth.set(i, Math.max(0, ...edges.filter(([from]) => from === i).map(([, to]) => depth.get(to)! + 1)));
+      }
+      const linked = new Set(edges.flat());
+      const longest = Math.max(...[...linked].map(i => depth.get(i)!));
+      const sequence = /sequence: \{ "": (\[[^\]]*\]) \}/.exec(proposal.configFragment);
+      assert.ok(sequence);
+      assert.equal(JSON.parse(sequence[1]!).length, longest + 1);
+    });
+  }, { testCases: 25 });
+});
+
+test("layered-order: modules that no edge orders share a layer, so the rule forbids no import the edges do not", async () => fixture(async (root, put) => {
+  put("src/core/index.ts", "export const core = 1;\n");
+  put("src/left/index.ts", 'import "../core/index.ts";\nexport const left = 1;\n');
+  put("src/right/index.ts", 'import "../core/index.ts";\nexport const right = 1;\n');
+  put("src/top/index.ts", 'import "../left/index.ts";\nimport "../right/index.ts";\nexport const top = 1;\n');
+  const result = await recommend(root);
+  const proposal = result.patternProposals.find(p => p.pattern === "layered-order");
+  expect(proposal!.evidence).toContain("order supported by these modules' own real edges: core -> level2 -> top");
+  expect(proposal!.evidence).toContain("layers whose modules no edge orders among themselves: level2: left, right");
+  expect(proposal!.configFragment).toContain('{ glob: "src/left/**", tags: ["role:level2"] }');
+  expect(proposal!.configFragment).toContain('{ glob: "src/right/**", tags: ["role:level2"] }');
+  expect(proposal!.addedViolations).toBe(0);
 }));
 
 test("layered-order: a reverse edge lowers support below 1 and the proposed order still reports it as an added violation", async () => fixture(async (root, put) => {
@@ -420,10 +478,10 @@ test("text output stays within a bounded line budget on a 28-module project", as
   expect(result.patternProposals.length).toBeGreaterThan(0);
   expect(result.surfaceProposals.length).toBeGreaterThan(5); // more than the text cap, to exercise the "+N more" truncation
   const text = formatRecommendText(result);
-  // 110 lines is this fixture with one complete config fragment per shown
+  // 111 lines is this fixture with one complete config fragment per shown
   // proposal. The fragment stays complete because the reader pastes it.
   const lines = text.split("\n");
-  expect(lines.length).toBe(110);
+  expect(lines.length).toBe(111);
   // The three generic surface choices print once for the whole section,
   // not once per shown module, even though 5 modules are shown.
   expect(lines.filter(l => l.includes("add a barrel file")).length).toBe(1);

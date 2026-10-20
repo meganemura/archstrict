@@ -332,13 +332,6 @@ function detectLayeredOrder(
     }
   }
   if (forward === 0) return undefined; // no directional evidence between any pair at all
-  // Whichever way the order places a balanced pair, one direction's edges
-  // break it. Counting them keeps support and addedViolations telling the
-  // same story, instead of 100% support beside added violations.
-  for (const pair of balanced) {
-    forward += pair.each;
-    reverse += pair.each;
-  }
   // A module with no edge to any other has no place in the order: a
   // topological sort would still slot it somewhere, by name, and the
   // proposal would then read as if the edges put it there. A balanced pair
@@ -347,21 +340,42 @@ function detectLayeredOrder(
   // One constraint (dependency before importer) per edge `before` recorded above.
   const indegree = new Map<string, number>(names.filter(n => linked.has(n)).map(n => [n, 0]));
   for (const importers of before.values()) for (const importer of importers) indegree.set(importer, indegree.get(importer)! + 1);
+  // Layers, not one module per step: every module whose dependencies are
+  // all placed joins the same layer. A total order would also put a module
+  // before a sibling that no edge relates to it, by name, and the rule
+  // would then forbid that sibling's first import of it for no reason the
+  // edges give. A layer of one module is named after it; a wider layer is
+  // named by its position, and the evidence lists its members.
   const remaining = new Set(linked);
-  const order: string[] = [];
+  const layers: string[][] = [];
   while (remaining.size > 0) {
     const ready = [...remaining].filter(n => (indegree.get(n) ?? 0) === 0).sort();
     if (ready.length === 0) return undefined; // the majority graph itself has a cycle: no order to propose
-    const next = ready[0]!;
-    order.push(next);
-    remaining.delete(next);
-    for (const dependent of before.get(next) ?? []) {
-      if (remaining.has(dependent)) indegree.set(dependent, indegree.get(dependent)! - 1);
+    layers.push(ready);
+    for (const next of ready) remaining.delete(next);
+    for (const next of ready) {
+      for (const dependent of before.get(next) ?? []) {
+        if (remaining.has(dependent)) indegree.set(dependent, indegree.get(dependent)! - 1);
+      }
     }
   }
+  // A balanced pair that shares a layer breaks nothing, since a layer may
+  // import itself. One in two layers has one direction's edges break the
+  // order. Counting them keeps support and addedViolations telling the
+  // same story, instead of 100% support beside added violations.
+  const layerOf = new Map(layers.flatMap((members, index) => members.map(name => [name, index] as const)));
+  for (const pair of balanced) {
+    forward += pair.each;
+    if (layerOf.get(pair.a) === layerOf.get(pair.b)) forward += pair.each;
+    else reverse += pair.each;
+  }
+  const layerName = (members: readonly string[], index: number): string => members.length === 1 ? members[0]! : `level${index + 1}`;
+  const order = layers.map(layerName);
+  const wide = layers.flatMap((members, index) => members.length === 1 ? [] : [`${layerName(members, index)}: ${members.join(", ")}`]);
   const support = forward / (forward + reverse);
   const ns = freeTagNamespace(baseConfig, "role");
-  const classify = proposeClassify(graph, baseConfig, order.flatMap(name => classifyEntries(declaredModules, name, [`${ns}:${name}`])));
+  const classify = proposeClassify(graph, baseConfig, layers.flatMap((members, index) =>
+    members.flatMap(name => classifyEntries(declaredModules, name, [`${ns}:${layerName(members, index)}`]))));
   const because = `${forward} of ${forward + reverse} directed edges between these modules already match this order`;
   const orderRule = { tagNamespace: ns, sequence: { "": order }, direction: "downward-only" as const, because };
   const configFragment = [
@@ -383,6 +397,7 @@ function detectLayeredOrder(
       support,
       evidence: [
         `order supported by these modules' own real edges: ${order.join(" -> ")}`,
+        ...(wide.length === 0 ? [] : [`layers whose modules no edge orders among themselves: ${wide.join("; ")}`]),
         `${forward} of ${forward + reverse} directed edges between them match this order (the rest would need fixing, or a deliberate skip)`,
         ...(balanced.length === 0 ? [] : [`no direction to read, the same edge count each way: ${balanced.map(p => `${p.a} <-> ${p.b} (${p.each} each way)`).join(", ")}`]),
         ...(unlinked.length === 0 ? [] : [`left out, no edge to another module: ${unlinked.join(", ")}`]),
