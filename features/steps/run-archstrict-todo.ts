@@ -12,9 +12,9 @@ export default defineStep({
   pattern: "archstrict todo runs against the scratch copy",
   args: z.object({ root: z.string() }),
   returns: z.object({
-    firstRun: z.boolean(),
-    added: z.number(),
-    pruned: z.number(),
+    firstRun: z.boolean().describe("true when this run created archstrict.todo.json and froze the current violations"),
+    added: z.number().describe("the number of violations this run froze; 0 on every run after the first"),
+    pruned: z.number().describe("the number of frozen entries this run removed because no current violation matches them"),
   }),
   from: { root: [setupNukadokoScratch, "root"] },
   async run({}, { root }) {

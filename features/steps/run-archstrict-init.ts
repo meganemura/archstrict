@@ -11,7 +11,7 @@ export default defineStep({
   description: "Runs the built archstrict CLI's init verb against the scratch copy.",
   pattern: "archstrict init runs against the scratch copy",
   args: z.object({ root: z.string() }),
-  returns: z.object({ stdout: z.string() }),
+  returns: z.object({ stdout: z.string().describe("init's text report: the files it wrote and the modules it declared") }),
   from: { root: [setupNukadokoScratch, "root"] },
   async run({}, { root }) {
     const result = await runCommand(process.execPath, [CLI_PATH, "init"], { cwd: root });

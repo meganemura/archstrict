@@ -19,8 +19,8 @@ export default defineStep({
   args: z.object({ root: z.string(), moduleDirs: z.array(z.string()) }),
   returns: z.object({
     addedFile: z.string().describe("the new file's path"),
-    fromModule: z.string(),
-    toModule: z.string(),
+    fromModule: z.string().describe("the module directory under src/ that holds the new file"),
+    toModule: z.string().describe("the module directory under src/ that the new import reaches into, past its index.ts"),
   }),
   from: { root: [setupNukadokoScratch, "root"], moduleDirs: [setupNukadokoScratch, "moduleDirs"] },
   run({}, { root, moduleDirs }) {
