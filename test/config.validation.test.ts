@@ -151,3 +151,28 @@ test("an unknown key in any config entry is an error naming the key, the accepte
     });
   }
 });
+
+test("a point side that is neither a glob nor a tag predicate is an error naming the field and the shape", async () => {
+  const path = "/project/archstrict.config.ts";
+  const valid = { declaredModules: [{ name: "a", glob: "src/a/**" }], because: "test" };
+  const cases: { point: object; message: string; do: string }[] = [
+    { point: { from: { tags: ["layer:a"], exclude: ["layer:b"] }, to: "src/**" },
+      message: "config.edges.point[0].from.exclude must be a tag predicate { tags: [...] }, not an array",
+      do: `set config.edges.point[0].from.exclude to { tags: [...] } (e.g. exclude: { tags: ["engine:tsrs"] }) in archstrict.config.ts, then run archstrict check` },
+    { point: { from: { tags: ["layer:a"], exclude: { tags: "layer:b" } }, to: "src/**" },
+      message: "config.edges.point[0].from.exclude.tags must be an array of tag strings, not string",
+      do: `set config.edges.point[0].from.exclude.tags to an array of tags (e.g. ["engine:tsrs"]) in archstrict.config.ts, then run archstrict check` },
+    { point: { from: "src/**", to: { tags: "pkg:x" } },
+      message: "config.edges.point[0].to.tags must be an array of tag strings, not string",
+      do: `set config.edges.point[0].to.tags to an array of tags (e.g. ["layer:core"]) in archstrict.config.ts, then run archstrict check` },
+    { point: { from: ["layer:a"], to: "src/**" },
+      message: "config.edges.point[0].from must be a glob string or a tag predicate { tags: [...] }, not an array",
+      do: "set config.edges.point[0].from to a glob or { tags: [...] } in archstrict.config.ts, then run archstrict check" },
+  ];
+  for (const { point, message, do: next } of cases) {
+    const config = { ...valid, edges: { point: [{ ...point, because: "test" }] } };
+    await expect(loadConfig(path, `export default ${JSON.stringify(config)};`), message).rejects.toMatchObject({
+      name: "ReportError", message, do: next,
+    });
+  }
+});

@@ -257,6 +257,39 @@ function assertGuardShape(entry: Record<string, unknown>, context: string): void
   );
 }
 
+// A point side is a glob or a tag predicate. An `exclude` written as a
+// bare tag list, the shape `tags` itself takes, reached the rule as an
+// array and stopped check with a TypeError that named no field.
+function assertTagList(value: unknown, context: string, example: string): void {
+  if (Array.isArray(value) && value.every((tag) => typeof tag === "string")) return;
+  throw new ReportError(
+    `${context} must be an array of tag strings, not ${describeShape(value)}`,
+    `set ${context} to an array of tags (e.g. ${example}) in archstrict.config.ts, then run archstrict check`,
+  );
+}
+
+function assertPointSideShape(side: unknown, context: string, allowExclude: boolean): void {
+  if (typeof side === "string") return;
+  if (!isPlainObject(side)) {
+    throw new ReportError(
+      `${context} must be a glob string or a tag predicate { tags: [...] }, not ${describeShape(side)}`,
+      `set ${context} to a glob or { tags: [...] } in archstrict.config.ts, then run archstrict check`,
+    );
+  }
+  // An unknown key names the typo; it is reported before the missing tags it causes.
+  assertKnownKeys(side, allowExclude ? ["tags", "exclude"] : ["tags"], context);
+  assertTagList(side.tags, `${context}.tags`, `["layer:core"]`);
+  if (!allowExclude || side.exclude === undefined) return;
+  if (!isPlainObject(side.exclude)) {
+    throw new ReportError(
+      `${context}.exclude must be a tag predicate { tags: [...] }, not ${describeShape(side.exclude)}`,
+      `set ${context}.exclude to { tags: [...] } (e.g. exclude: { tags: ["engine:tsrs"] }) in archstrict.config.ts, then run archstrict check`,
+    );
+  }
+  assertKnownKeys(side.exclude, ["tags"], `${context}.exclude`);
+  assertTagList(side.exclude.tags, `${context}.exclude.tags`, `["engine:tsrs"]`);
+}
+
 function assertEntries(value: unknown, keys: readonly string[], context: string): readonly Record<string, unknown>[] {
   if (value === undefined) return [];
   if (!Array.isArray(value)) {
@@ -362,7 +395,11 @@ export function assertEdgesShapeValid(config: Config): void {
       );
     }
   }
-  for (const [i, entry] of assertEntries(edges.point, POINT_KEYS, "point").entries()) assertGuardShape(entry, `config.edges.point[${i}]`);
+  for (const [i, entry] of assertEntries(edges.point, POINT_KEYS, "point").entries()) {
+    assertGuardShape(entry, `config.edges.point[${i}]`);
+    assertPointSideShape(entry.from, `config.edges.point[${i}].from`, true);
+    assertPointSideShape(entry.to, `config.edges.point[${i}].to`, false);
+  }
   for (const entry of assertEntries(edges.order, ORDER_KEYS, "order")) {
     const sequence: unknown = entry.sequence;
     if (sequence !== undefined && !isPlainObject(sequence)) {

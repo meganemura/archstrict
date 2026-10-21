@@ -9,6 +9,10 @@ may change commands, flags, config, or output shape. The version entry will desc
 
 - `ARCHSTRICT_ENGINE=tsrs` runs the edge walk (parsing each analyzed file, listing its imports, and resolving them) on [tsrs](https://www.npmjs.com/package/tsrs), a native port of the TypeScript 7 compiler. typescript 6.0.3 stays the default. Every verb, the MCP server, and the edit hooks read the variable; an unset or empty value selects `typescript`, and any other value is an error with a `do:` line, in text and as `--json` `{ error, do }`. Rule 6 (`type-leak`), `search`, `fix`, and everything else that needs the type checker stay on typescript 6.0.3, as do each file's module format and each import's resolution mode. tsrs is not a dependency: install `tsrs@0.14.1-ts7.1.0-dev.20260929` exactly; another version is refused. tsrs has binaries for linux x64 and arm64 (glibc and musl) and darwin arm64 only; elsewhere archstrict stops and names the platform, and it never falls back to the default engine on its own. A tsconfig that sets `baseUrl` or the node10 or classic resolution is refused under tsrs, because TypeScript 7 resolves fewer imports there and reports no error. On archstrict, nukadoko, and solarsql both engines gave the same edges. The edge cache records the engine, so a switch rebuilds it. See `skills/archstrict/references/engine.md`.
 
+### Fixed
+
+- A `point` side written in the wrong shape stopped `check` with `Cannot read properties of undefined (reading 'every')`, which named no field. The common case is `exclude: ["tag"]`, the shape `tags` takes, where `exclude` is `{ tags: [...] }`. Config loading now refuses a `from` or `to` that is neither a glob nor `{ tags: [...] }`, a `tags` that is not an array of strings, and an `exclude` that is not `{ tags: [...] }`, naming the field, the shape it got, and the edit.
+
 ## 0.5.0 (2026-10-21)
 
 ### Added
