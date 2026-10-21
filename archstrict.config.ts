@@ -137,6 +137,9 @@ export default {
     { glob: "src/verbs/**", tags: ["layer:verbs"] },
     { glob: "src/rules/**", tags: ["layer:rules"] },
     { glob: "src/*.ts", tags: ["layer:core"] },
+    // The one file that may load tsrs (ARCHSTRICT_ENGINE=tsrs). It keeps its
+    // layer tag; the engine tag is what the point rules below exclude.
+    { glob: "src/edge-engine-tsrs.ts", tags: ["layer:core", "engine:tsrs"] },
   ],
   edges: {
     order: [
@@ -188,6 +191,34 @@ export default {
         to: { tags: ["pkg:@modelcontextprotocol/sdk"] },
         because:
           "the MCP SDK stays in the mcp adapter; the CLI reaches that adapter through mcp-server.ts",
+      },
+      // tsrs is an opt-in devDependency with no Windows binary. A second
+      // file that imports it would load it on the default path, or stop
+      // the build where it is not installed.
+      {
+        from: { tags: ["layer:core"], exclude: { tags: ["engine:tsrs"] } },
+        to: { tags: ["pkg:tsrs"] },
+        because: "tsrs is loaded only by edge-engine-tsrs.ts, so the default engine never needs it installed",
+      },
+      {
+        from: { tags: ["layer:rules"] },
+        to: { tags: ["pkg:tsrs"] },
+        because: "tsrs is loaded only by edge-engine-tsrs.ts, so the default engine never needs it installed",
+      },
+      {
+        from: { tags: ["layer:verbs"] },
+        to: { tags: ["pkg:tsrs"] },
+        because: "tsrs is loaded only by edge-engine-tsrs.ts, so the default engine never needs it installed",
+      },
+      {
+        from: { tags: ["layer:mcp"] },
+        to: { tags: ["pkg:tsrs"] },
+        because: "tsrs is loaded only by edge-engine-tsrs.ts, so the default engine never needs it installed",
+      },
+      {
+        from: { tags: ["layer:cli"] },
+        to: { tags: ["pkg:tsrs"] },
+        because: "tsrs is loaded only by edge-engine-tsrs.ts, so the default engine never needs it installed",
       },
     ],
   },
