@@ -189,7 +189,9 @@ export async function simulate(
     resolvableFileListOverride: listOverride,
   };
   const simulatedPrepared = prepareGraph(graphOptions);
-  const graph = buildModuleGraphForRules(graphOptions, { host, dirtyFiles: new Set(contents.keys()), persistCache: false });
+  const graph = buildModuleGraphForRules(graphOptions, {
+    host, overlayFiles: contents, dirtyFiles: new Set(contents.keys()), persistCache: false,
+  });
   // graph.edges above already came from this same `host` (buildPreparedGraph's
   // own per-file walk reads through it, then drops each SourceFile once
   // walked - it never keeps one around to inspect). This does not force

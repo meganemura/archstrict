@@ -111,11 +111,14 @@ export default {
       name: "core",
       glob: "src/*.ts",
       // Files other modules import. augmentation-cache.ts, edge-cache.ts,
-      // and gitignore.ts stay private: only the graph builder uses them.
+      // the two edge engines, and gitignore.ts stay private: only the graph
+      // builder uses them. edge-engine-choice.ts is public because the CLI
+      // reads the engine choice and ends the engine around every verb.
       surface: [
         "classify.ts",
         "config-pointer.ts",
         "config.ts",
+        "edge-engine-choice.ts",
         "module-candidates.ts",
         "module-graph.ts",
         "project-path.ts",

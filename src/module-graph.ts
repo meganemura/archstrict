@@ -58,6 +58,7 @@ import { ReportError } from "./report-error.js";
 import { buildTypeClosure, computeSyntacticNamedDeclarations, type TypeClosureInputs } from "./type-closure.js";
 import { checkTypeLeaks, type Violation as TypeLeakViolation } from "./type-leak.js";
 import { compilerJoin, compilerDirname, compilerRealpath, makeProjectRelativePosix, toTypeScriptPath, type ProjectRelativePath } from "./project-path.js";
+import { edgeEngineFromEnvironment } from "./edge-engine-choice.js";
 import { moduleAugmentationSpecifiers, openEdgeSession, scriptKindForFile, type EdgeResolution,
   type FileImportWalk, type ImportRecord, type ModuleAugmentationSpecifier, type Position } from "./edge-engine.js";
 import { forcedBasesOf, gitignoreStackAbove, isPathGitignored, nextIgnoreState, withGitignoreFile,
@@ -1259,9 +1260,13 @@ type GraphBuildOverrides = {
   // same case the default, host.readFile-based walk below treats as: the
   // file is skipped entirely, exactly as a Program that failed to read a
   // root file simply omits it from getSourceFiles()). `defaultWalk` is
-  // the build's own walk through its engine session, so a cache miss
+  // the build's own walk through the selected engine, so a cache miss
   // parses exactly as an uncached build would.
   fileWalk?: (fileName: string, defaultWalk: (fileName: string) => FileImportWalk | undefined) => FileImportWalk | undefined;
+  // simulate's change set, beside the overlay `host` that already
+  // carries it: the tsrs engine has no CompilerHost, so it needs the
+  // changed files themselves to resolve against them.
+  overlayFiles?: ReadonlyMap<string, string | null>;
   // Test-only: forces `ensureProgram`'s own round loop to keep finding a
   // (fake) missing file forever, so a test can exercise the round bound
   // and the whole-project fallback without needing a closure rule gap
@@ -1316,10 +1321,12 @@ type GraphCommons = {
   optionsForContainingFile(containingFile: string, redirectedReference?: ts.ResolvedProjectReference): ts.CompilerOptions;
   sourceFileOptionsFor(fileName: string): { compilerOptions: ts.CompilerOptions; impliedNodeFormat: ts.ResolutionMode };
   resolveModule(specifier: string, containingFile: string, mode: ts.ResolutionMode, redirectedReference?: ts.ResolvedProjectReference): ts.ResolvedModuleWithFailedLookupLocations;
-  // The edge walk's own resolution, through its engine session. Rule 6's
+  // The edge walk's own resolution, through the selected engine. Rule 6's
   // closure host and its augmentation guards use `resolveModule` above,
   // which is always typescript 6.0.3: they need a CompilerHost answer.
   resolveEdge(specifier: string, containingFile: string, mode: ts.ResolutionMode): EdgeResolution;
+  // The engine's cache identity (edge-engine.ts's EdgeSession.cacheTag).
+  edgeEngineTag: string;
   // Ends the edge walk's engine session. Called once every analyzed file
   // is walked and resolved; nothing after the walk needs the engine.
   closeEdgeWalk(): void;
@@ -1355,13 +1362,15 @@ function makeGraphCommons(prepared: ReturnType<typeof prepareGraph>, overrides: 
     return cache;
   };
 
-  // The edge walk's engine session (edge-engine.ts) parses and resolves
-  // for the edge walk only. Opened here, before any file is read.
-  const edgeSession = openEdgeSession({ host, resolutionCacheFor });
+  // The selected engine (ARCHSTRICT_ENGINE) parses and resolves for the
+  // edge walk only. Opened here, before any file is read, so an unknown
+  // engine name or a tsrs that cannot load stops the build up front.
+  const edgeSession = openEdgeSession({ host, resolutionCacheFor, overlayFiles: overrides.overlayFiles });
 
-  // A file's implied format is a package.json lookup, not a parse, so it
-  // is computed here and handed to the session: the edge cache stores it
-  // beside the file, and every engine reads one answer for it.
+  // A file's implied format is a package.json lookup, not a parse, and
+  // stays typescript 6.0.3's answer with either engine: the edge cache
+  // stores it beside the file, and a format that moved with the engine
+  // would invalidate every entry on a switch for no difference in edges.
   const defaultFileWalk = (fileName: string): FileImportWalk | undefined => {
     const text = host.readFile(fileName);
     if (text === undefined) return undefined;
@@ -1449,7 +1458,7 @@ function makeGraphCommons(prepared: ReturnType<typeof prepareGraph>, overrides: 
     edgeSession.resolve(specifier, containingFile, optionsForContainingFile(containingFile), mode);
 
   return { host, resolutionCacheFor, optionsForContainingFile, sourceFileOptionsFor, resolveModule, analyzedSet,
-    resolveEdge, closeEdgeWalk: () => edgeSession.close(),
+    resolveEdge, edgeEngineTag: edgeSession.cacheTag, closeEdgeWalk: () => edgeSession.close(),
     defaultFileWalk, scanModuleAugmentations, augmentationScanMetadata };
 }
 
@@ -1983,7 +1992,7 @@ function hash(value: unknown): string {
 const ARCHSTRICT_VERSION: string = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
 
 // A hash of the built files whose own code produces a cache entry
-// (this file, edge-cache.ts, and edge-engine.ts, read from beside
+// (this file, edge-cache.ts, and the two edge engines, read from beside
 // `import.meta.url` - the same directory a build writes them to), computed
 // once per process. A package version bump is not the only way this
 // project's own walker or resolver logic changes: a local build after an
@@ -1994,7 +2003,7 @@ const ARCHSTRICT_VERSION: string = JSON.parse(readFileSync(new URL("../package.j
 // changes while one process is running.
 const CODE_VERSION_HASH: string = (() => {
   try {
-    const sources = ["module-graph.js", "edge-cache.js", "edge-engine.js"].map((name) => readFileSync(new URL(name, import.meta.url), "utf8"));
+    const sources = ["module-graph.js", "edge-cache.js", "edge-engine.js", "edge-engine-tsrs.js"].map((name) => readFileSync(new URL(name, import.meta.url), "utf8"));
     return createHash("sha256").update(sources.join("\u0000")).digest("hex");
   } catch {
     // A test importing this module from its own .ts source (never built
@@ -2061,7 +2070,8 @@ export function graphBuildFingerprint(options: BuildOptions, prepared: ReturnTyp
   const buildOptionsHash = hash({ declaredModules: options.declaredModules,
     exclude: options.exclude, surface: prepared.surface });
   const metadata = cacheMetadata(projectRoot, options);
-  return { tsconfigHash, buildOptionsHash, metadata, archstrictVersion: ARCHSTRICT_VERSION };
+  // A walk cached under one engine is not that file's walk under the other.
+  return { tsconfigHash, buildOptionsHash, metadata, archstrictVersion: ARCHSTRICT_VERSION, edgeEngine: edgeEngineFromEnvironment() };
 }
 
 const LOCKFILE_NAMES = ["package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lock", "bun.lockb"] as const;
@@ -2244,7 +2254,8 @@ export function buildModuleGraphForRules(options: BuildOptions, overrides: Graph
   // modeled here as "no old entry for any file", which the per-file logic
   // below already treats as a full reparse+resolve of that file.
   const versionOk = cached !== undefined && cached.archstrictVersion === ARCHSTRICT_VERSION &&
-    cached.codeVersionHash === CODE_VERSION_HASH && cached.typescriptVersion === TYPESCRIPT_VERSION;
+    cached.codeVersionHash === CODE_VERSION_HASH && cached.typescriptVersion === TYPESCRIPT_VERSION &&
+    cached.edgeEngine === commons.edgeEngineTag;
   const oldOptionsTable = versionOk ? cached.optionsTable : [];
 
   // Every file's own effective options and implied module format - cheap
@@ -2432,7 +2443,8 @@ export function buildModuleGraphForRules(options: BuildOptions, overrides: Graph
     const deletedPaths = new Set<string>();
     if (versionOk) for (const oldPath of Object.keys(cached.files)) if (!Object.hasOwn(newFiles, oldPath)) deletedPaths.add(oldPath);
     writeEdgeCache(path, projectRoot,
-      { archstrictVersion: ARCHSTRICT_VERSION, codeVersionHash: CODE_VERSION_HASH, typescriptVersion: TYPESCRIPT_VERSION, optionsTable, resolutionFingerprint: fingerprint, files: newFiles },
+      { archstrictVersion: ARCHSTRICT_VERSION, codeVersionHash: CODE_VERSION_HASH, typescriptVersion: TYPESCRIPT_VERSION,
+        edgeEngine: commons.edgeEngineTag, optionsTable, resolutionFingerprint: fingerprint, files: newFiles },
       versionOk ? cached.shards : undefined, dirtyPaths, deletedPaths, !versionOk || !resolutionsValid);
   }
 

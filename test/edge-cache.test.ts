@@ -135,7 +135,7 @@ test("rules writes a per-file cache entry and reuses it without a per-file walk 
   expect(ts.createProgram).not.toHaveBeenCalled();
   expect(calls.checker).not.toHaveBeenCalled();
   const cache = readCache(root);
-  expect(cache.schema).toBe(11);
+  expect(cache.schema).toBe(12);
   expect(cache.files[path]!.mtimeMs).toBe(statSync(path).mtimeMs);
   expect(cache.files[path]!.imports[0]!.specifier).toBe("../b/index.js");
   const resolution = cache.files[path]!.resolutions["../b/index.js\u000099"];
@@ -400,7 +400,7 @@ test("a shard's own encoding round-trips its entries exactly", async () => {
       }
       const path = join(root, "node_modules/.cache/archstrict/edges.json");
       writeEdgeCache(path, root,
-        { archstrictVersion: "1", codeVersionHash: "h", typescriptVersion: "t", optionsTable: ["{}", '{"x":1}'], resolutionFingerprint: "f", files },
+        { archstrictVersion: "1", codeVersionHash: "h", typescriptVersion: "t", edgeEngine: "typescript", optionsTable: ["{}", '{"x":1}'], resolutionFingerprint: "f", files },
         undefined, new Set(Object.keys(files)), new Set(), true);
       const decoded = readEdgeCache(path, root);
       expect(decoded?.files).toEqual(files);
@@ -519,16 +519,16 @@ test("version mismatches, malformed caches and declaration changes rebuild", asy
   expect(facts(buildModuleGraphForRules(changed))).toEqual(facts(buildModuleGraph(changed)));
 }));
 
-test("a schema 10 edge cache is a miss under schema 11", async () => project((root, options) => {
+test("a schema 11 edge cache is a miss under schema 12", async () => project((root, options) => {
   buildModuleGraphForRules(options);
   const path = cachePath(root);
   const cache = JSON.parse(readFileSync(path, "utf8"));
-  cache.schema = 10;
+  cache.schema = 11;
   writeFileSync(path, JSON.stringify(cache));
   vi.clearAllMocks();
   buildModuleGraphForRules(options);
   expect(ts.createSourceFile).toHaveBeenCalled();
-  expect(JSON.parse(readFileSync(path, "utf8")).schema).toBe(11);
+  expect(JSON.parse(readFileSync(path, "utf8")).schema).toBe(12);
 }));
 
 // A corrupt cache file is a silent miss, never an error - the run behaves
@@ -540,7 +540,7 @@ test("a corrupt cache file is ignored, not an error", async () => project((root,
   writeFileSync(path, "{not json");
   const graph = buildModuleGraphForRules(options);
   expect(graph.edges.some((edge) => edge.toModule === "b")).toBe(true);
-  expect(JSON.parse(readFileSync(path, "utf8")).schema).toBe(11);
+  expect(JSON.parse(readFileSync(path, "utf8")).schema).toBe(12);
 }));
 
 test("package exports changes refresh both target edges and derived surfaces, re-resolving without re-parsing the unedited importer", async () => project((root, options) => {

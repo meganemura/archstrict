@@ -61,6 +61,7 @@
     "@vitest/coverage-v8": "5.0.0",
     "nukadoko": "0.18.0",
     "stryker-agent-reporter": "0.1.0",
+    "tsrs": "0.14.1-ts7.1.0-dev.20260929",
     "vitest": "5.0.0"
   },
   "engines": {

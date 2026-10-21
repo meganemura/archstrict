@@ -50,8 +50,9 @@ export function createWarmGraph(): { refresh(options: BuildOptions): ModuleGraph
         fingerprint = currentFingerprint;
       }
       const host = ts.createCompilerHost(prepared.compilerOptions);
-      // A miss walks through the build's own default walk, so a cached
-      // walk and a fresh one come from the same engine session.
+      // A miss walks through the build's own default walk, the selected
+      // engine included, so a cached walk and a fresh one are the same
+      // engine's answer.
       const fileWalk = (fileName: string, defaultWalk: (fileName: string) => FileImportWalk | undefined): FileImportWalk | undefined => {
         const path = resolve(fileName);
         const mtimeMs = mtime(path);

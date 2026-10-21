@@ -95,6 +95,10 @@
 //   never would have; covered by `codeVersionHash` and `typescriptVersion`,
 //   together with `archstrictVersion`, any one mismatch dropping the
 //   whole cache.
+// - The edge engine (ARCHSTRICT_ENGINE) that parsed and resolved every
+//   entry - covered by `edgeEngine`, the engine name and, for tsrs, its
+//   version; a mismatch drops the whole cache the same way, so a switch
+//   never reads one engine's answers back as the other's.
 // - Which shard a given file's own entry landed in, and whether that
 //   shard's own bytes on disk still match what this cache last wrote -
 //   covered by the header's own per-shard content hash (above); a shard
@@ -127,7 +131,7 @@ import { makeAbsolutePosix, makeProjectRelativePosix, type ProjectRelativePath }
 // Bumped whenever the on-disk shape (header or shard encoding) changes -
 // an old cache is then a silent miss (parseHeader rejects the unknown
 // schema number), never a crash on a shape this code no longer produces.
-const CACHE_SCHEMA = 11;
+const CACHE_SCHEMA = 12;
 
 // Fixed, not derived from project size - see this module's own header.
 // module-graph.ts's own per-file loop marks a shard dirty by this same
@@ -195,6 +199,9 @@ export type EdgeCache = {
   archstrictVersion: string;
   codeVersionHash: string;
   typescriptVersion: string;
+  // The edge engine that parsed and resolved every entry (edge-engine.ts's
+  // EdgeSession.cacheTag); entries from the other engine are dropped.
+  edgeEngine: string;
   // Each distinct effective ts.CompilerOptions object, JSON-stringified
   // once - see this module's own header.
   optionsTable: string[];
@@ -249,6 +256,7 @@ type ParsedHeader = {
   archstrictVersion: string;
   codeVersionHash: string;
   typescriptVersion: string;
+  edgeEngine: string;
   optionsTable: string[];
   resolutionFingerprint: string;
   shards: (ShardHeaderEntry | null)[];
@@ -261,13 +269,13 @@ function isShardHeaderEntry(value: unknown): value is ShardHeaderEntry {
 function parseHeader(value: unknown): ParsedHeader | undefined {
   if (!record(value) || value.schema !== CACHE_SCHEMA) return undefined;
   if (typeof value.archstrictVersion !== "string" || typeof value.codeVersionHash !== "string" ||
-      typeof value.typescriptVersion !== "string" || !strings(value.optionsTable) ||
+      typeof value.typescriptVersion !== "string" || typeof value.edgeEngine !== "string" || !strings(value.optionsTable) ||
       typeof value.resolutionFingerprint !== "string") return undefined;
   if (!Array.isArray(value.shards) || value.shards.length !== SHARD_COUNT ||
       !value.shards.every((s) => s === null || isShardHeaderEntry(s))) return undefined;
   return {
     archstrictVersion: value.archstrictVersion, codeVersionHash: value.codeVersionHash,
-    typescriptVersion: value.typescriptVersion, optionsTable: value.optionsTable,
+    typescriptVersion: value.typescriptVersion, edgeEngine: value.edgeEngine, optionsTable: value.optionsTable,
     resolutionFingerprint: value.resolutionFingerprint, shards: value.shards as (ShardHeaderEntry | null)[],
   };
 }
@@ -455,7 +463,7 @@ export function readEdgeCache(path: string, projectRoot: string): EdgeCache | un
   }
   return {
     schema: CACHE_SCHEMA, archstrictVersion: header.archstrictVersion, codeVersionHash: header.codeVersionHash,
-    typescriptVersion: header.typescriptVersion, optionsTable: header.optionsTable,
+    typescriptVersion: header.typescriptVersion, edgeEngine: header.edgeEngine, optionsTable: header.optionsTable,
     resolutionFingerprint: header.resolutionFingerprint, files, shards: header.shards,
   };
 }
@@ -466,7 +474,7 @@ export function readEdgeCache(path: string, projectRoot: string): EdgeCache | un
 // write never finished).
 //
 // `forceAll`: true the moment `archstrictVersion`/`codeVersionHash`/
-// `typescriptVersion` mismatched, or the resolution fingerprint moved -
+// `typescriptVersion`/`edgeEngine` mismatched, or the resolution fingerprint moved -
 // either one can change every file's own entry, so every shard that has
 // any current file is rewritten regardless of `dirtyPaths`.
 // `dirtyPaths`/`deletedPaths`: every file whose own entry changed this
@@ -478,7 +486,7 @@ export function writeEdgeCache(
   path: string,
   projectRoot: string,
   cache: {
-    archstrictVersion: string; codeVersionHash: string; typescriptVersion: string;
+    archstrictVersion: string; codeVersionHash: string; typescriptVersion: string; edgeEngine: string;
     optionsTable: string[]; resolutionFingerprint: string; files: Record<string, CachedFileEntry>;
   },
   oldShards: readonly (ShardHeaderEntry | null)[] | undefined,
@@ -534,7 +542,7 @@ export function writeEdgeCache(
 
   const header = {
     schema: CACHE_SCHEMA, archstrictVersion: cache.archstrictVersion, codeVersionHash: cache.codeVersionHash,
-    typescriptVersion: cache.typescriptVersion, optionsTable: cache.optionsTable,
+    typescriptVersion: cache.typescriptVersion, edgeEngine: cache.edgeEngine, optionsTable: cache.optionsTable,
     resolutionFingerprint: cache.resolutionFingerprint, shards,
   };
   const temporary = `${path}.${randomUUID()}.tmp`;

@@ -1,13 +1,18 @@
 // Responsibility: the edge walk's engine seam - parse one analyzed file,
 // list its import/export/dynamic-import/import-type specifiers, and resolve
-// each one to a file. typescript 6.0.3 implements it; module-graph.ts
-// reaches the parse and the resolver only through an EdgeSession, so
-// another engine can implement the same session.
+// each one to a file. Two engines implement it: typescript 6.0.3 (the
+// default, and the code this walk always ran) and tsrs (opt-in through
+// ARCHSTRICT_ENGINE=tsrs, edge-engine-tsrs.ts; the choice itself is
+// edge-engine-choice.ts).
 // Boundary: per-file syntax and per-specifier resolution only. Module
 // membership, builtins, caches, and the edge records themselves stay in
 // module-graph.ts. Rule 6, search, fix, and everything else that needs a
-// ts.Program, the checker, or a CompilerHost stay outside this seam.
+// ts.Program, the checker, or a CompilerHost stay on typescript 6.0.3 with
+// either engine: tsrs answers each checker call over IPC, which measured 6
+// to 13 times slower than the in-process checker for rule 6's walk.
 import ts from "typescript";
+import { edgeEngineFromEnvironment, type EdgeEngineName } from "./edge-engine-choice.js";
+import { openTsrsEdgeSession } from "./edge-engine-tsrs.js";
 
 export type Position = { line: number; column: number };
 
@@ -20,12 +25,21 @@ export type EdgeSessionInputs = {
   // exactly as the edge walk did before the seam existed.
   host: ts.ModuleResolutionHost;
   resolutionCacheFor(options: ts.CompilerOptions): ts.ModuleResolutionCache;
+  // simulate's in-memory change set (null deletes a file). The typescript
+  // engine already sees it through `host`; tsrs has no host, so it gets the
+  // same files as a filesystem layer over the disk.
+  overlayFiles?: ReadonlyMap<string, string | null>;
 };
 
 // One graph build's use of an engine. `close` releases what the build
-// opened.
+// opened (tsrs resolvers, a snapshot); the tsrs server process itself
+// outlives a session so a long-lived MCP server does not respawn it per
+// call - edge-engine-choice.ts's closeEdgeEngine ends it.
 export type EdgeSession = {
-  readonly engine: "typescript";
+  readonly engine: EdgeEngineName;
+  // Part of the edge cache's identity: an entry one engine wrote is never
+  // read back as the other engine's answer.
+  readonly cacheTag: string;
   walkFile(
     fileName: string,
     text: string,
@@ -37,8 +51,8 @@ export type EdgeSession = {
   close(): void;
 };
 
-export function openEdgeSession(inputs: EdgeSessionInputs): EdgeSession {
-  return openTypescriptEdgeSession(inputs);
+export function openEdgeSession(inputs: EdgeSessionInputs, env: NodeJS.ProcessEnv = process.env): EdgeSession {
+  return edgeEngineFromEnvironment(env) === "tsrs" ? openTsrsEdgeSession(inputs) : openTypescriptEdgeSession(inputs);
 }
 
 // Converts an engine's result to the cached shape. Both engines use it, so
@@ -46,6 +60,7 @@ export function openEdgeSession(inputs: EdgeSessionInputs): EdgeSession {
 export function edgeResolutionOf(resolved: {
   resolvedFileName: string; isExternalLibraryImport?: boolean | undefined; packageId?: { name: string } | undefined;
 } | null | undefined): EdgeResolution {
+  // tsrs answers an unresolved specifier with null, typescript with undefined.
   return resolved === undefined || resolved === null ? "unresolved" : {
     resolvedFile: resolved.resolvedFileName,
     ...(resolved.isExternalLibraryImport ? { isExternalLibraryImport: true as const } : {}),
@@ -57,6 +72,7 @@ function openTypescriptEdgeSession(inputs: EdgeSessionInputs): EdgeSession {
   const { host, resolutionCacheFor } = inputs;
   return {
     engine: "typescript",
+    cacheTag: "typescript",
     walkFile: (fileName, text, languageVersion, compilerOptions, impliedNodeFormat) =>
       parseFileForImports(fileName, text, languageVersion, compilerOptions, impliedNodeFormat),
     // No redirected project reference: the edge walk resolves every
