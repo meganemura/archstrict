@@ -58,6 +58,8 @@ import { ReportError } from "./report-error.js";
 import { buildTypeClosure, computeSyntacticNamedDeclarations, type TypeClosureInputs } from "./type-closure.js";
 import { checkTypeLeaks, type Violation as TypeLeakViolation } from "./type-leak.js";
 import { compilerJoin, compilerDirname, compilerRealpath, makeProjectRelativePosix, toTypeScriptPath, type ProjectRelativePath } from "./project-path.js";
+import { moduleAugmentationSpecifiers, openEdgeSession, scriptKindForFile, type EdgeResolution,
+  type FileImportWalk, type ImportRecord, type ModuleAugmentationSpecifier, type Position } from "./edge-engine.js";
 import { forcedBasesOf, gitignoreStackAbove, isPathGitignored, nextIgnoreState, withGitignoreFile,
   type GitignoreStack, type IgnoreState } from "./gitignore.js";
 
@@ -86,7 +88,11 @@ function builtinModuleName(specifier: string): string | undefined {
   return BUILTIN_MODULE_NAMES.has(bare) ? bare : undefined;
 }
 
-export type Position = { line: number; column: number };
+// The per-file walk and its record shapes moved into the engine seam
+// (edge-engine.ts); these names stay importable from here, where every
+// existing caller already reads them.
+export { parseFileForImports, scriptKindForFile, walkFileImports } from "./edge-engine.js";
+export type { FileImportWalk, ImportRecord, ModuleAugmentationSpecifier, Position } from "./edge-engine.js";
 
 function resolutionPositionKey(file: string, position: Position): string {
   return `${file}\0${position.line}\0${position.column}`;
@@ -654,40 +660,6 @@ function effectiveSurface(
 ): string | readonly string[] {
   if (dm.surface !== undefined) return dm.surface;
   return deriveSurfaceFromExports(moduleDir) ?? globalDefaultSurface;
-}
-
-// A named import/export clause is type-only either as a whole
-// (`import type { X } from "..."`) or per specifier
-// (`import { type X } from "..."`, the modifier on one named binding
-// rather than the whole declaration) - TypeScript allows both forms, and
-// only the first was ever checked here (measured directly: a minimal
-// two-module fixture whose only edge is `import { type X } from "../b"`
-// reported `isTypeOnly: false`, producing a false-positive cycle with a
-// real value edge the other way). A default import binding
-// (`import Foo, { type X } from "..."`) can never be per-specifier
-// type-only itself, so its presence always makes the whole import a real
-// value reference regardless of any named specifier's own modifier; same
-// for a namespace import (`import * as X`), which has no per-specifier
-// form at all. So: type-only only when the whole declaration says so, OR
-// every named specifier does and neither a default nor a namespace
-// binding exists on the same declaration.
-function isEffectivelyTypeOnlyImport(importClause: ts.ImportClause | undefined): boolean {
-  if (importClause === undefined) return false; // a side-effect-only `import "./x"` is a real reference
-  if (importClause.isTypeOnly) return true;
-  if (importClause.name !== undefined) return false;
-  const bindings = importClause.namedBindings;
-  if (bindings === undefined || ts.isNamespaceImport(bindings)) return false;
-  return bindings.elements.length > 0 && bindings.elements.every((el) => el.isTypeOnly);
-}
-
-// The export-side twin of isEffectivelyTypeOnlyImport - `export { type X }
-// from "..."` has the identical per-specifier-vs-whole-declaration
-// distinction `export type { X } from "..."` already gets right.
-function isEffectivelyTypeOnlyExport(node: ts.ExportDeclaration): boolean {
-  if (node.isTypeOnly) return true;
-  const clause = node.exportClause;
-  if (clause === undefined || !ts.isNamedExports(clause)) return false;
-  return clause.elements.length > 0 && clause.elements.every((el) => el.isTypeOnly);
 }
 
 // Exported (not just used internally by prepareGraph) so init's own fresh-
@@ -1277,233 +1249,6 @@ export function buildModuleGraph(options: BuildOptions): ModuleGraph {
   return buildPreparedGraph(prepareGraph(options));
 }
 
-// One import/export/dynamic-import specifier found while walking a single
-// file, before resolution - resolution needs the file's own nearest
-// compiler options and a live host, neither of which this record carries,
-// so it is a pure, resolution-independent fact about the file's own
-// syntax. warm-graph.ts caches exactly this shape (keyed by file path and
-// mtime) to skip re-parsing an unchanged file while still resolving every
-// specifier afresh on each refresh.
-export type ImportRecord = {
-  specifier: string;
-  fromPosition: Position;
-  isTypeOnly: boolean;
-  isDynamic: boolean;
-  // undefined moduleKind vs resolutionMode strings: same TS enum
-  // (ResolutionMode is ModuleKind.CommonJS | ModuleKind.ESNext |
-  // undefined) - undefined under a resolution strategy that does not
-  // vary by usage (classic, and node10/"node" without package.json
-  // exports/imports resolution), and defined under node16/nodenext and
-  // bundler, which pick export conditions by it. Computed here,
-  // from the real AST node (the one place that still has it - see this
-  // module's own header on staying AST-free past this walk), so the
-  // resolver never re-parses a file just to learn a specifier's own mode.
-  mode: ts.ResolutionMode;
-};
-
-export type ModuleAugmentationSpecifier = {
-  specifier: string;
-  mode: ts.ResolutionMode;
-};
-
-export type FileImportWalk = {
-  imports: ImportRecord[];
-  unsupportedSyntaxCount: number;
-  // Both read by type-closure.ts's own ambient-root rule (R6): a file
-  // with neither import nor export binds its own top-level names into
-  // the global scope, the same as a `declare global` or a
-  // `declare module "literal name"` body does from inside a real module.
-  // Computed once here, from real syntax, so the closure never re-parses
-  // a file just to answer this - see walkFileImports' own header.
-  isScript: boolean;
-  hasAmbientDeclarations: boolean;
-  // A module augmentation can add names outside a focused Program. A later
-  // reparse is refused because this walk already has the required syntax.
-  hasModuleAugmentation: boolean;
-  // The guard resolves only these syntax-owned targets. Treating every
-  // augmentation as local is refused because external packages are common.
-  moduleAugmentationSpecifiers: ModuleAugmentationSpecifier[];
-};
-
-// A top-level string-named module declaration carries the only syntax the
-// scoped safety guard needs. Keeping this extraction separate is required
-// because non-analyzed files must not pay for the full import walk.
-function moduleAugmentationSpecifiers(
-  sf: ts.SourceFile,
-  compilerOptions: ts.CompilerOptions,
-  includeScripts: boolean,
-): ModuleAugmentationSpecifier[] {
-  // A script declaration defines an ambient module. The analyzed-file walk
-  // refuses to label it as an augmentation because the script is a root.
-  if (!includeScripts && !ts.isExternalModule(sf)) return [];
-  const result: ModuleAugmentationSpecifier[] = [];
-  for (const statement of sf.statements) {
-    if (!ts.isModuleDeclaration(statement) || !ts.isStringLiteral(statement.name)) continue;
-    result.push({
-      specifier: statement.name.text,
-      mode: ts.getModeForUsageLocation(sf, statement.name, compilerOptions),
-    });
-  }
-  return result;
-}
-
-// TypeScript's own default (ensureScriptKind, applied when a caller of
-// ts.createSourceFile omits scriptKind) already maps every analyzed
-// extension this way - .tsx to TSX, everything else (.ts/.mts/.cts) to
-// plain TS, since ts.ScriptKind itself has no separate Mts/Cts member.
-// Made explicit here rather than left to that implicit default: this
-// project's per-file parse is deliberate about which of TypeScript's own
-// two source dialects (JSX-capable or not) it invokes, not a place that
-// should silently follow whatever TypeScript's own default happens to be
-// this version. Exported: warm-graph.ts's own per-file cache parses a
-// file the same way, outside this module's own buildPreparedGraph.
-export function scriptKindForFile(fileName: string): ts.ScriptKind {
-  return fileName.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
-}
-
-// The per-file half of the edge walk: every import/export/dynamic-import/
-// import-type specifier syntax recognizes, plus a count of syntax it doesn't
-// (require(), import x = require(...)) - no resolution, no Program, no
-// module graph. Kept separate from buildPreparedGraph's own resolution
-// loop below so warm-graph.ts can memoize exactly this part.
-// `compilerOptions` is this file's own effective options (compilerOptionsForFile,
-// not necessarily the project root's) - passed through unchanged to
-// ts.getModeForUsageLocation for every specifier, so the mode recorded
-// here is the same one the resolver (buildPreparedGraph's own
-// resolveModule) will resolve that same specifier under. `sf` must have
-// been parsed with `setParentNodes: true`: getModeForUsageLocation reads
-// `usage.parent` (and, for `import type ... with { "resolution-mode" }`,
-// `usage.parent.parent`) - measured directly, a parent-less literal makes
-// it throw rather than return undefined.
-export function walkFileImports(sf: ts.SourceFile, compilerOptions: ts.CompilerOptions): FileImportWalk {
-  const imports: ImportRecord[] = [];
-  let unsupportedSyntaxCount = 0;
-
-  ts.forEachChild(sf, function walk(node) {
-    let specifier: ts.Expression | undefined;
-    let isTypeOnly = false;
-    let isDynamic = false;
-
-    if (ts.isImportDeclaration(node)) {
-      specifier = node.moduleSpecifier;
-      isTypeOnly = isEffectivelyTypeOnlyImport(node.importClause);
-    } else if (ts.isExportDeclaration(node) && node.moduleSpecifier !== undefined) {
-      specifier = node.moduleSpecifier;
-      isTypeOnly = isEffectivelyTypeOnlyExport(node);
-    } else if (
-      ts.isCallExpression(node) &&
-      node.expression.kind === ts.SyntaxKind.ImportKeyword &&
-      node.arguments[0] !== undefined &&
-      ts.isStringLiteral(node.arguments[0])
-    ) {
-      specifier = node.arguments[0];
-      isDynamic = true;
-    } else if (
-      ts.isImportTypeNode(node) &&
-      ts.isLiteralTypeNode(node.argument) &&
-      ts.isStringLiteral(node.argument.literal)
-    ) {
-      // `import("./x").Y` in a type position: a real type dependency on
-      // the target file, not syntax that merely mentions a module name.
-      // Recorded as type-only (never dynamic - "dynamic" here means the
-      // runtime `import()` expression, which this is not) so rule 1
-      // (public-surface bypass) and the edge constraints see it; without
-      // this, `import("../b/internal.js").T` reached past a surface unseen.
-      specifier = node.argument.literal;
-      isTypeOnly = true;
-    } else if (
-      ts.isImportEqualsDeclaration(node) &&
-      ts.isExternalModuleReference(node.moduleReference)
-    ) {
-      // `import x = require("./y")`: a CommonJS-only form, outside the
-      // ESM scope this project analyzes.
-      unsupportedSyntaxCount++;
-    } else if (
-      ts.isCallExpression(node) &&
-      ts.isIdentifier(node.expression) &&
-      node.expression.text === "require"
-    ) {
-      unsupportedSyntaxCount++;
-    }
-
-    if (specifier !== undefined && ts.isStringLiteral(specifier)) {
-      const start = specifier.getStart(sf);
-      const { line, character } = sf.getLineAndCharacterOfPosition(start);
-      imports.push({
-        specifier: specifier.text,
-        fromPosition: { line: line + 1, column: character + 1 },
-        isTypeOnly,
-        isDynamic,
-        mode: ts.getModeForUsageLocation(sf, specifier, compilerOptions),
-      });
-    }
-
-    ts.forEachChild(node, walk);
-  });
-
-  const isScript = !ts.isExternalModule(sf);
-  const hasAmbientDeclarations = sf.statements.some((statement) =>
-    isGlobalAugmentationOrAmbientModule(statement) || (isScript && isTopLevelDeclaration(statement)));
-  const augmentations = moduleAugmentationSpecifiers(sf, compilerOptions, false);
-  return {
-    imports, unsupportedSyntaxCount, isScript, hasAmbientDeclarations,
-    hasModuleAugmentation: augmentations.length > 0,
-    moduleAugmentationSpecifiers: augmentations,
-  };
-}
-
-// Parses one file and walks it for imports, in one place both real parse
-// paths (buildPreparedGraph's own default walk, and warm-graph.ts's own
-// cached one) call, so both compute the same resolution mode the same
-// way. `impliedNodeFormat` (needed before the mode of any specifier
-// inside can be known - see walkFileImports' own header) depends on the
-// nearest package.json's own "type" field for a .ts/.tsx/.js/.jsx file
-// (fixed by extension alone for .mts/.cts/.mjs/.cjs); `host` supplies the
-// fileExists/readFile that lookup needs, and `packageJsonInfoCache`
-// (a ts.ModuleResolutionCache's own getPackageJsonInfoCache(), or
-// undefined) lets a caller that already has one avoid re-reading the
-// same package.json for every ambiguous file - undefined costs an extra
-// read per such file, never a wrong answer. `setExternalModuleIndicator`
-// is deliberately NOT set here (unlike a real ts.Program, which sets it
-// via getSetExternalModuleIndicator): that indicator, not
-// impliedNodeFormat, decides `isScript` (via ts.isExternalModule) for a
-// file with no import/export syntax of its own, and setting it would
-// reclassify an import-less "type": "module" file as a module in a way
-// this fix's own scope (resolution mode only - see this module's header)
-// must not touch.
-export function parseFileForImports(
-  fileName: string,
-  text: string,
-  languageVersion: ts.ScriptTarget,
-  host: ts.ModuleResolutionHost,
-  compilerOptions: ts.CompilerOptions,
-  packageJsonInfoCache: ts.PackageJsonInfoCache | undefined,
-): FileImportWalk {
-  const impliedNodeFormat = ts.getImpliedNodeFormatForFile(fileName, packageJsonInfoCache, host, compilerOptions);
-  const sf = ts.createSourceFile(fileName, text, { languageVersion, impliedNodeFormat }, true, scriptKindForFile(fileName));
-  return walkFileImports(sf, compilerOptions);
-}
-
-// `declare global { ... }` (GlobalAugmentation) or `declare module "literal
-// name"` (a StringLiteral name) - binds names no import ever names,
-// unlike a plain `namespace X {}`/`declare namespace X {}` (an Identifier
-// name), which is an ordinary, reachable local declaration.
-function isGlobalAugmentationOrAmbientModule(statement: ts.Statement): boolean {
-  return ts.isModuleDeclaration(statement) &&
-    (statement.name.kind === ts.SyntaxKind.StringLiteral || (statement.flags & ts.NodeFlags.GlobalAugmentation) !== 0);
-}
-
-// Every top-level statement shape type-closure.ts's own per-file summary
-// treats as a named declaration - mirrored here only to decide whether a
-// script file actually binds anything into the global scope, not to
-// summarize its own references (that stays type-closure.ts's own job).
-function isTopLevelDeclaration(statement: ts.Statement): boolean {
-  return ts.isInterfaceDeclaration(statement) || ts.isTypeAliasDeclaration(statement) || ts.isClassDeclaration(statement) ||
-    ts.isFunctionDeclaration(statement) || ts.isEnumDeclaration(statement) || ts.isModuleDeclaration(statement) ||
-    ts.isVariableStatement(statement) ||
-    (ts.isImportEqualsDeclaration(statement) && !ts.isExternalModuleReference(statement.moduleReference));
-}
-
 type GraphBuildOverrides = {
   host?: ts.CompilerHost;
   oldProgram?: ts.Program;
@@ -1513,8 +1258,10 @@ type GraphBuildOverrides = {
   // Returning undefined means "this file has no readable content" (the
   // same case the default, host.readFile-based walk below treats as: the
   // file is skipped entirely, exactly as a Program that failed to read a
-  // root file simply omits it from getSourceFiles()).
-  fileWalk?: (fileName: string) => FileImportWalk | undefined;
+  // root file simply omits it from getSourceFiles()). `defaultWalk` is
+  // the build's own walk through its engine session, so a cache miss
+  // parses exactly as an uncached build would.
+  fileWalk?: (fileName: string, defaultWalk: (fileName: string) => FileImportWalk | undefined) => FileImportWalk | undefined;
   // Test-only: forces `ensureProgram`'s own round loop to keep finding a
   // (fake) missing file forever, so a test can exercise the round bound
   // and the whole-project fallback without needing a closure rule gap
@@ -1569,6 +1316,13 @@ type GraphCommons = {
   optionsForContainingFile(containingFile: string, redirectedReference?: ts.ResolvedProjectReference): ts.CompilerOptions;
   sourceFileOptionsFor(fileName: string): { compilerOptions: ts.CompilerOptions; impliedNodeFormat: ts.ResolutionMode };
   resolveModule(specifier: string, containingFile: string, mode: ts.ResolutionMode, redirectedReference?: ts.ResolvedProjectReference): ts.ResolvedModuleWithFailedLookupLocations;
+  // The edge walk's own resolution, through its engine session. Rule 6's
+  // closure host and its augmentation guards use `resolveModule` above,
+  // which is always typescript 6.0.3: they need a CompilerHost answer.
+  resolveEdge(specifier: string, containingFile: string, mode: ts.ResolutionMode): EdgeResolution;
+  // Ends the edge walk's engine session. Called once every analyzed file
+  // is walked and resolved; nothing after the walk needs the engine.
+  closeEdgeWalk(): void;
   analyzedSet: ReadonlySet<string>;
   defaultFileWalk(fileName: string): FileImportWalk | undefined;
   scanModuleAugmentations(fileName: string): ModuleAugmentationSpecifier[] | undefined;
@@ -1601,11 +1355,19 @@ function makeGraphCommons(prepared: ReturnType<typeof prepareGraph>, overrides: 
     return cache;
   };
 
+  // The edge walk's engine session (edge-engine.ts) parses and resolves
+  // for the edge walk only. Opened here, before any file is read.
+  const edgeSession = openEdgeSession({ host, resolutionCacheFor });
+
+  // A file's implied format is a package.json lookup, not a parse, so it
+  // is computed here and handed to the session: the edge cache stores it
+  // beside the file, and every engine reads one answer for it.
   const defaultFileWalk = (fileName: string): FileImportWalk | undefined => {
     const text = host.readFile(fileName);
     if (text === undefined) return undefined;
     const options = compilerOptionsForFile(fileName);
-    return parseFileForImports(fileName, text, languageVersion, host, options, resolutionCacheFor(options).getPackageJsonInfoCache());
+    const impliedNodeFormat = ts.getImpliedNodeFormatForFile(fileName, resolutionCacheFor(options).getPackageJsonInfoCache(), host, options);
+    return edgeSession.walkFile(fileName, text, languageVersion, options, impliedNodeFormat);
   };
 
   // Most non-analyzed project files contain no augmentation. Reading their
@@ -1681,7 +1443,13 @@ function makeGraphCommons(prepared: ReturnType<typeof prepareGraph>, overrides: 
     return ts.resolveModuleName(specifier, containingFile, options, host, resolutionCacheFor(options), redirectedReference, mode);
   };
 
+  // The edge walk never passes a redirected project reference, so its
+  // options are the containing file's own (optionsForContainingFile).
+  const resolveEdge = (specifier: string, containingFile: string, mode: ts.ResolutionMode): EdgeResolution =>
+    edgeSession.resolve(specifier, containingFile, optionsForContainingFile(containingFile), mode);
+
   return { host, resolutionCacheFor, optionsForContainingFile, sourceFileOptionsFor, resolveModule, analyzedSet,
+    resolveEdge, closeEdgeWalk: () => edgeSession.close(),
     defaultFileWalk, scanModuleAugmentations, augmentationScanMetadata };
 }
 
@@ -1857,15 +1625,7 @@ function walkAllFiles(prepared: ReturnType<typeof prepareGraph>, commons: GraphC
       // thing gating that path before was this project's own code,
       // not TypeScript.
       const builtin = builtinModuleName(imp.specifier);
-      const resolution = builtin !== undefined ? undefined : (() => {
-        const resolved = commons.resolveModule(imp.specifier, fileName, imp.mode);
-        const rm = resolved.resolvedModule;
-        return rm === undefined ? ("unresolved" as const) : {
-          resolvedFile: rm.resolvedFileName,
-          ...(rm.isExternalLibraryImport ? { isExternalLibraryImport: true as const } : {}),
-          ...(rm.packageId?.name !== undefined ? { packageName: rm.packageId.name } : {}),
-        };
-      })();
+      const resolution = builtin !== undefined ? undefined : commons.resolveEdge(imp.specifier, fileName, imp.mode);
       const outcome = edgeFor(fileName, fromModule, imp, resolution, resolveModuleForFile, projectRoot);
       if (outcome !== undefined && "edge" in outcome) edges.push(outcome.edge);
       else if (outcome !== undefined) { unresolvedSpecifierCount++; unresolvedSpecifiers.push(outcome.unresolvedSpecifier); }
@@ -2206,7 +1966,13 @@ function assembleGraph(prepared: ReturnType<typeof prepareGraph>, commons: Graph
 
 export function buildPreparedGraph(prepared: ReturnType<typeof prepareGraph>, overrides: GraphBuildOverrides = {}): PreparedModuleGraph {
   const commons = makeGraphCommons(prepared, overrides);
-  const walked = walkAllFiles(prepared, commons, overrides.fileWalk ?? commons.defaultFileWalk);
+  const fileWalk = overrides.fileWalk;
+  let walked: WalkResult;
+  try {
+    walked = walkAllFiles(prepared, commons, fileWalk === undefined ? commons.defaultFileWalk : (fileName) => fileWalk(fileName, commons.defaultFileWalk));
+  } finally {
+    commons.closeEdgeWalk();
+  }
   return assembleGraph(prepared, commons, walked, overrides);
 }
 
@@ -2216,19 +1982,19 @@ function hash(value: unknown): string {
 
 const ARCHSTRICT_VERSION: string = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
 
-// A hash of the two built files whose own code produces a cache entry
-// (this file and edge-cache.ts, read from beside `import.meta.url` - the
-// same directory a build writes both to), computed once per process. A
-// package version bump is not the only way this project's own walker or
-// resolver logic changes: a local build after an uncommitted edit to
-// either file changes neither ARCHSTRICT_VERSION nor the package.json
+// A hash of the built files whose own code produces a cache entry
+// (this file, edge-cache.ts, and edge-engine.ts, read from beside
+// `import.meta.url` - the same directory a build writes them to), computed
+// once per process. A package version bump is not the only way this
+// project's own walker or resolver logic changes: a local build after an
+// uncommitted edit to any of them changes neither ARCHSTRICT_VERSION nor the package.json
 // this process reads, but does change what a cache entry means - reading
 // an old entry back under new code would replay an answer the new code
-// never produced. Read once, not per build: neither file's own content
+// never produced. Read once, not per build: no file's own content
 // changes while one process is running.
 const CODE_VERSION_HASH: string = (() => {
   try {
-    const sources = ["module-graph.js", "edge-cache.js"].map((name) => readFileSync(new URL(name, import.meta.url), "utf8"));
+    const sources = ["module-graph.js", "edge-cache.js", "edge-engine.js"].map((name) => readFileSync(new URL(name, import.meta.url), "utf8"));
     return createHash("sha256").update(sources.join("\u0000")).digest("hex");
   } catch {
     // A test importing this module from its own .ts source (never built
@@ -2549,106 +2315,105 @@ export function buildModuleGraphForRules(options: BuildOptions, overrides: Graph
   // case for every file at once, the moment `resolutionsValid` is false.
   const dirtyPaths = new Set<string>();
 
-  for (const file of rootNames) {
-    const stat = stats.get(file);
-    const oldEntry = versionOk ? cached.files[file] : undefined;
-    const optionsIndex = optionsIndexByFile.get(file)!;
-    const impliedNodeFormat = impliedFormatByFile.get(file);
-    const parseValid = !overrides.dirtyFiles?.has(file) &&
-      fileParseValid(oldEntry, stat, optionsJsonByFile.get(file)!, oldOptionsTable, impliedNodeFormat);
-    if (!parseValid) { dirty = true; dirtyPaths.add(file); }
+  // The engine session ends with the walk, a failed one included.
+  try {
+    for (const file of rootNames) {
+      const stat = stats.get(file);
+      const oldEntry = versionOk ? cached.files[file] : undefined;
+      const optionsIndex = optionsIndexByFile.get(file)!;
+      const impliedNodeFormat = impliedFormatByFile.get(file);
+      const parseValid = !overrides.dirtyFiles?.has(file) &&
+        fileParseValid(oldEntry, stat, optionsJsonByFile.get(file)!, oldOptionsTable, impliedNodeFormat);
+      if (!parseValid) { dirty = true; dirtyPaths.add(file); }
 
-    let imports: ImportRecord[];
-    let unsupportedForFile: number;
-    let isScript: boolean;
-    let hasAmbientDeclarations: boolean;
-    let hasModuleAugmentation: boolean;
-    let moduleAugmentationSpecifiers: ModuleAugmentationSpecifier[];
-    let unreadable: true | undefined;
-    if (parseValid) {
-      ({ imports, unsupportedSyntaxCount: unsupportedForFile, isScript, hasAmbientDeclarations,
-        hasModuleAugmentation, moduleAugmentationSpecifiers, unreadable } = oldEntry);
-    } else if (stat === undefined) {
-      // Listed by the scan, gone (or unstattable) by the time this build
-      // reached it - a race, not a real file to analyze this build.
-      continue;
-    } else {
-      const walked = commons.defaultFileWalk(file);
-      if (walked === undefined) {
-        imports = []; unsupportedForFile = 0; isScript = false; hasAmbientDeclarations = false;
-        hasModuleAugmentation = false; moduleAugmentationSpecifiers = []; unreadable = true;
-      } else {
+      let imports: ImportRecord[];
+      let unsupportedForFile: number;
+      let isScript: boolean;
+      let hasAmbientDeclarations: boolean;
+      let hasModuleAugmentation: boolean;
+      let moduleAugmentationSpecifiers: ModuleAugmentationSpecifier[];
+      let unreadable: true | undefined;
+      if (parseValid) {
         ({ imports, unsupportedSyntaxCount: unsupportedForFile, isScript, hasAmbientDeclarations,
-          hasModuleAugmentation, moduleAugmentationSpecifiers } = walked);
-      }
-    }
-
-    if (unreadable) {
-      // Permission changes do not alter mtime or size. Omitting this entry
-      // makes the next build retry the read instead of preserving an empty
-      // answer after the file becomes readable.
-      continue;
-    }
-
-    fileFlags.set(file, { isScript, hasAmbientDeclarations, hasModuleAugmentation, moduleAugmentationSpecifiers });
-    const fromModule = resolveModuleForFile(file);
-    if (fromModule === undefined) outsideFiles.push(file);
-    else { modules.get(fromModule)?.files.push(file); unsupportedSyntaxCount += unsupportedForFile; }
-
-    // Every walked file's own specifiers are resolved here, whether or
-    // not it currently belongs to a declared module - a file outside
-    // every module today can belong to one after a `declaredModules`
-    // edit alone, with its own mtime, size, and resolution fingerprint
-    // all unchanged; a resolution recorded only for module-owned files
-    // would leave that file with no record at all, and reading a missing
-    // key as "unresolved" below would misreport it as unresolved forever
-    // instead of resolving it once, right here.
-    //
-    // A changed file's own specifiers are always re-resolved (mustResolve
-    // is true whenever parseValid is false); otherwise, reused outright
-    // while resolutionsValid, or freshly resolved (project-wide, but from
-    // each file's own already-cached `imports`, never a reparse) the
-    // moment any covered input moved. Either way, a specifier with no
-    // prior record (this file's own membership changed, or any other
-    // reason a key could be missing) is resolved here rather than assumed
-    // unresolved - a cache entry records exactly the specifiers it
-    // actually resolved, never a gap silently read back as a negative
-    // answer.
-    const mustResolve = !parseValid || !resolutionsValid;
-    const priorResolutions: Record<string, CachedResolution> = parseValid ? oldEntry.resolutions : {};
-    const resolutions: Record<string, CachedResolution> = {};
-    for (const imp of imports) {
-      const key = resolutionKey(imp);
-      const builtin = builtinModuleName(imp.specifier);
-      let resolution: CachedResolution | undefined;
-      if (builtin === undefined) {
-        if (!mustResolve && Object.hasOwn(priorResolutions, key)) {
-          resolution = priorResolutions[key]!; // Object.hasOwn just confirmed this key is present
+          hasModuleAugmentation, moduleAugmentationSpecifiers, unreadable } = oldEntry);
+      } else if (stat === undefined) {
+        // Listed by the scan, gone (or unstattable) by the time this build
+        // reached it - a race, not a real file to analyze this build.
+        continue;
+      } else {
+        const walked = commons.defaultFileWalk(file);
+        if (walked === undefined) {
+          imports = []; unsupportedForFile = 0; isScript = false; hasAmbientDeclarations = false;
+          hasModuleAugmentation = false; moduleAugmentationSpecifiers = []; unreadable = true;
         } else {
-          const resolved = commons.resolveModule(imp.specifier, file, imp.mode);
-          const rm = resolved.resolvedModule;
-          resolution = rm === undefined ? "unresolved" : {
-            resolvedFile: rm.resolvedFileName,
-            ...(rm.isExternalLibraryImport ? { isExternalLibraryImport: true as const } : {}),
-            ...(rm.packageId?.name !== undefined ? { packageName: rm.packageId.name } : {}),
-          };
+          ({ imports, unsupportedSyntaxCount: unsupportedForFile, isScript, hasAmbientDeclarations,
+            hasModuleAugmentation, moduleAugmentationSpecifiers } = walked);
         }
-        resolutions[key] = resolution;
       }
-      if (fromModule !== undefined) {
-        const outcome = edgeFor(file, fromModule, imp, resolution, resolveModuleForFile, projectRoot);
-        if (outcome !== undefined && "edge" in outcome) edges.push(outcome.edge);
-        else if (outcome !== undefined) { unresolvedSpecifierCount++; unresolvedSpecifiers.push(outcome.unresolvedSpecifier); }
-      }
-    }
 
-    // `stat` is defined here regardless of branch: `parseValid` requires
-    // it (fileParseValid), and the reparse branch above already `continue`s
-    // when it's undefined.
-    newFiles[file] = { mtimeMs: stat!.mtimeMs, size: stat!.size, optionsIndex,
-      ...(impliedNodeFormat !== undefined ? { impliedNodeFormat } : {}),
-      imports, unsupportedSyntaxCount: unsupportedForFile, isScript, hasAmbientDeclarations,
-      hasModuleAugmentation, moduleAugmentationSpecifiers, resolutions };
+      if (unreadable) {
+        // Permission changes do not alter mtime or size. Omitting this entry
+        // makes the next build retry the read instead of preserving an empty
+        // answer after the file becomes readable.
+        continue;
+      }
+
+      fileFlags.set(file, { isScript, hasAmbientDeclarations, hasModuleAugmentation, moduleAugmentationSpecifiers });
+      const fromModule = resolveModuleForFile(file);
+      if (fromModule === undefined) outsideFiles.push(file);
+      else { modules.get(fromModule)?.files.push(file); unsupportedSyntaxCount += unsupportedForFile; }
+
+      // Every walked file's own specifiers are resolved here, whether or
+      // not it currently belongs to a declared module - a file outside
+      // every module today can belong to one after a `declaredModules`
+      // edit alone, with its own mtime, size, and resolution fingerprint
+      // all unchanged; a resolution recorded only for module-owned files
+      // would leave that file with no record at all, and reading a missing
+      // key as "unresolved" below would misreport it as unresolved forever
+      // instead of resolving it once, right here.
+      //
+      // A changed file's own specifiers are always re-resolved (mustResolve
+      // is true whenever parseValid is false); otherwise, reused outright
+      // while resolutionsValid, or freshly resolved (project-wide, but from
+      // each file's own already-cached `imports`, never a reparse) the
+      // moment any covered input moved. Either way, a specifier with no
+      // prior record (this file's own membership changed, or any other
+      // reason a key could be missing) is resolved here rather than assumed
+      // unresolved - a cache entry records exactly the specifiers it
+      // actually resolved, never a gap silently read back as a negative
+      // answer.
+      const mustResolve = !parseValid || !resolutionsValid;
+      const priorResolutions: Record<string, CachedResolution> = parseValid ? oldEntry.resolutions : {};
+      const resolutions: Record<string, CachedResolution> = {};
+      for (const imp of imports) {
+        const key = resolutionKey(imp);
+        const builtin = builtinModuleName(imp.specifier);
+        let resolution: CachedResolution | undefined;
+        if (builtin === undefined) {
+          if (!mustResolve && Object.hasOwn(priorResolutions, key)) {
+            resolution = priorResolutions[key]!; // Object.hasOwn just confirmed this key is present
+          } else {
+            resolution = commons.resolveEdge(imp.specifier, file, imp.mode);
+          }
+          resolutions[key] = resolution;
+        }
+        if (fromModule !== undefined) {
+          const outcome = edgeFor(file, fromModule, imp, resolution, resolveModuleForFile, projectRoot);
+          if (outcome !== undefined && "edge" in outcome) edges.push(outcome.edge);
+          else if (outcome !== undefined) { unresolvedSpecifierCount++; unresolvedSpecifiers.push(outcome.unresolvedSpecifier); }
+        }
+      }
+
+      // `stat` is defined here regardless of branch: `parseValid` requires
+      // it (fileParseValid), and the reparse branch above already `continue`s
+      // when it's undefined.
+      newFiles[file] = { mtimeMs: stat!.mtimeMs, size: stat!.size, optionsIndex,
+        ...(impliedNodeFormat !== undefined ? { impliedNodeFormat } : {}),
+        imports, unsupportedSyntaxCount: unsupportedForFile, isScript, hasAmbientDeclarations,
+        hasModuleAugmentation, moduleAugmentationSpecifiers, resolutions };
+    }
+  } finally {
+    commons.closeEdgeWalk();
   }
 
   // Do not label an analysis with mtimes/sizes from a concurrent edit.

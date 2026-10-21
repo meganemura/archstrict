@@ -121,7 +121,7 @@ import { readFileSync, mkdirSync, writeFileSync, renameSync, rmSync } from "node
 import { dirname, join } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import type ts from "typescript";
-import type { ImportRecord, ModuleAugmentationSpecifier } from "./module-graph.js";
+import type { ImportRecord, ModuleAugmentationSpecifier } from "./edge-engine.js";
 import { makeAbsolutePosix, makeProjectRelativePosix, type ProjectRelativePath } from "./project-path.js";
 
 // Bumped whenever the on-disk shape (header or shard encoding) changes -

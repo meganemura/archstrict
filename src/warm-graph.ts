@@ -18,7 +18,7 @@
 import ts from "typescript";
 import { statSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { buildPreparedGraph, prepareGraph, graphBuildFingerprint, parseFileForImports,
+import { buildPreparedGraph, prepareGraph, graphBuildFingerprint,
   type BuildOptions, type FileImportWalk, type ModuleGraph } from "./module-graph.js";
 
 function mtime(path: string): number | undefined {
@@ -50,22 +50,16 @@ export function createWarmGraph(): { refresh(options: BuildOptions): ModuleGraph
         fingerprint = currentFingerprint;
       }
       const host = ts.createCompilerHost(prepared.compilerOptions);
-      const languageVersion = prepared.compilerOptions.target ?? ts.ScriptTarget.ESNext;
-      // One package.json lookup cache per refresh: a cold refresh parses
-      // every file, and each .ts/.tsx file's format depends on its nearest
-      // package.json "type". Without it, every file re-reads each
-      // package.json up its directory chain.
-      const packageJsonInfoCache = ts.createModuleResolutionCache(prepared.projectRoot,
-        host.getCanonicalFileName.bind(host), prepared.compilerOptions).getPackageJsonInfoCache();
-      const fileWalk = (fileName: string): FileImportWalk | undefined => {
+      // A miss walks through the build's own default walk, so a cached
+      // walk and a fresh one come from the same engine session.
+      const fileWalk = (fileName: string, defaultWalk: (fileName: string) => FileImportWalk | undefined): FileImportWalk | undefined => {
         const path = resolve(fileName);
         const mtimeMs = mtime(path);
         if (mtimeMs === undefined) return undefined;
         const cached = cache.get(path);
         if (cached?.mtimeMs === mtimeMs) return cached.walk;
-        const text = host.readFile(fileName);
-        if (text === undefined) return undefined;
-        const walk = parseFileForImports(fileName, text, languageVersion, host, prepared.compilerOptionsForFile(fileName), packageJsonInfoCache);
+        const walk = defaultWalk(fileName);
+        if (walk === undefined) return undefined;
         cache.set(path, { mtimeMs, walk });
         return walk;
       };

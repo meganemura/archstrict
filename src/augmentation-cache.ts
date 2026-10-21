@@ -6,7 +6,7 @@ import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node
 import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 import type ts from "typescript";
-import type { ModuleAugmentationSpecifier } from "./module-graph.js";
+import type { ModuleAugmentationSpecifier } from "./edge-engine.js";
 
 // An unknown shape is a silent miss. Trying to decode an older shape is
 // refused because a stale negative answer can suppress a required fallback.
