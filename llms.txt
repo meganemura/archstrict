@@ -31,3 +31,5 @@ Installed package: `node_modules/archstrict/skills/archstrict/SKILL.md` (this fi
 - `archstrict mcp` — start the stdio MCP server. Its tools are `check`, `rules`, `search`, and `simulate`
 
 A config or missing-file failure prints a `do:` line naming the command to run. With `--json` that failure is `{ "error": "<message>", "do": "<command>" }`.
+
+The edge walk (parse each analyzed file, list its imports, resolve them) runs on typescript 6.0.3 by default. Set `ARCHSTRICT_ENGINE=tsrs` to run it on tsrs, a native TypeScript 7 port, for every verb, the MCP server, and the hooks. Type-leak, `search`, `fix`, and anything else that needs the type checker stay on typescript 6.0.3. Install tsrs with `npm install --save-dev --save-exact tsrs@0.14.1-ts7.1.0-dev.20260929`; another version is refused. tsrs has binaries for linux x64 and arm64 and darwin arm64 only, and a project whose tsconfig sets `baseUrl` or the node10 or classic resolution is refused. Any other `ARCHSTRICT_ENGINE` value is an error with a `do:` line. Details: [skills/archstrict/references/engine.md](skills/archstrict/references/engine.md).

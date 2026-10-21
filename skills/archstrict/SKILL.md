@@ -26,6 +26,8 @@ Before creating a file, run `archstrict rules <path> [--json]` to inspect its mo
 5. **`strict` a module** (in `archstrict.config.ts`'s `strict: string[]`) once it has no todo entries of its own, to keep it that way: a strict module can never gain a new entry, and any existing one is itself a violation (`clean-module-has-todo`) - staying clean means no debt, not debt frozen at whatever existed when the module was marked.
 6. **The PostToolUse hook** runs automatically after an Edit/Write/MultiEdit on a TypeScript source file (`.ts`, `.tsx`, `.mts`, `.cts`), if this project has archstrict installed (`node_modules/.bin/archstrict`) - no separate step. It says nothing when the edited file has no violation or archstrict isn't installed here at all. Troubleshooting: [references/hook.md](references/hook.md).
 
+The edge walk (reading each file's imports and resolving them) runs on typescript 6.0.3 by default. `ARCHSTRICT_ENGINE=tsrs` runs it on tsrs, a native TypeScript 7 port, for every verb, the MCP server, and the hooks; type-leak, `search`, and `fix` stay on typescript 6.0.3. tsrs is a separate install pinned to one version, and it has no binary for Windows or Intel macOS. See [edge engine](references/engine.md).
+
 After adoption is clean, use `archstrict hotspots [--since <git ref or date>] [--json]` to find high-change modules and boundary pairs that change together. Follow the [re-architecture workflow](references/rearchitect.md) to name a move, simulate it, and verify its numeric effect.
 
 ## The first map is an inventory
