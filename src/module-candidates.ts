@@ -30,6 +30,10 @@ type CandidateGroup = {
   // How many analyzed files this group covers - 1 for a file group,
   // otherwise every analyzed file under the directory.
   fileCount: number;
+  // The analyzed paths in this group, project-relative. init names child
+  // directories from these. The count stays fileCount so a caller that
+  // only needs the number does not walk the list.
+  rels: string[];
 };
 
 type DeclaredModuleEntry = { name: string; glob: string; surface?: string };
@@ -66,9 +70,10 @@ export function groupAnalyzedFiles(files: readonly string[], anchors: readonly s
     const existing = groups.get(rel);
     if (existing !== undefined) {
       existing.fileCount++;
+      existing.rels.push(file);
       continue;
     }
-    groups.set(rel, { kind, rel, anchor, onDiskName: first, fileCount: 1 });
+    groups.set(rel, { kind, rel, anchor, onDiskName: first, fileCount: 1, rels: [file] });
   }
   return [...groups.values()].sort((a, b) => byteSort(a.rel, b.rel));
 }

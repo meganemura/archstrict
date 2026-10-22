@@ -42,7 +42,7 @@ import {
 } from "../module-candidates.js";
 import { compileGlob } from "../classify.js";
 import { SCHEMA_VERSION } from "../config.js";
-import { dominantByFiles } from "./map-shape.js";
+import { childDirectoryAdvice, childDirectoryCounts, dominantByFiles } from "./map-shape.js";
 import { ReportError } from "../report-error.js";
 import { loadConfig } from "./check.js";
 
@@ -653,7 +653,12 @@ export async function init(projectRoot: string, rawDir?: string): Promise<InitRe
   }
   const dominant = dominantByFiles(allGroups.map((group) => ({ name: group.entry.name, files: group.fileCount })));
   if (dominant !== undefined) {
-    const note = `module '${dominant.name}' holds ${dominant.files} of ${dominant.totalFiles} analyzed files. Split it into directories that change together before archstrict todo, so hotspots stay readable.`;
+    const group = allGroups.find((candidate) => candidate.entry.name === dominant.name);
+    const moduleDir = group?.kind === "dir" ? group.rel : "";
+    const children = group === undefined ? [] : childDirectoryCounts(moduleDir, group.rels);
+    const advice = childDirectoryAdvice(dominant.name, moduleDir, children);
+    const sentence = advice.charAt(0).toUpperCase() + advice.slice(1);
+    const note = `module '${dominant.name}' holds ${dominant.files} of ${dominant.totalFiles} analyzed files. ${sentence} before archstrict todo, so hotspots stay readable.`;
     messageLines.push(note);
     notes.push(note);
   }

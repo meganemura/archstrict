@@ -1238,6 +1238,34 @@ export default {
     });
   });
 
+  test("a fresh mega-module note names real child directories", async () => {
+    const { root, put } = scratchProject("archstrict-init-children-");
+    try {
+      for (const name of ["a", "b"]) put(`src/app/api/${name}.ts`, "export const value = 1;\n");
+      put("src/app/db/pool.ts", "export const value = 1;\n");
+      for (const name of ["c", "d", "e", "f", "g"]) put(`src/app/${name}.ts`, "export const value = 1;\n");
+      const result = await init(root);
+      const note = result.notes.find((line) => line.includes("module 'app'"));
+      expect(note).toBe(
+        "module 'app' holds 8 of 8 analyzed files. Split 'app' on a child directory, for example { name: \"api\", glob: \"src/app/api/**\" }, { name: \"db\", glob: \"src/app/db/**\" } before archstrict todo, so hotspots stay readable.",
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a fresh mega-module of sibling files says it has no child directory", async () => {
+    const { root, put } = scratchProject("archstrict-init-siblings-");
+    try {
+      for (const name of ["a", "b", "c", "d", "e", "f", "g", "h"]) put(`src/app/${name}.ts`, "export const value = 1;\n");
+      const result = await init(root);
+      const note = result.notes.find((line) => line.includes("module 'app'"));
+      expect(note).toContain("'app' has no child directory. Group the sibling files that change together");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   // init --json: the same three shapes check and todo's own --json already
   // follow (a result, a re-run's own result, or { error, do }), so an agent
   // parsing one of those three verbs' output already knows this shape.
