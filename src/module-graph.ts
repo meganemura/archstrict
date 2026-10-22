@@ -75,12 +75,20 @@ import { forcedBasesOf, gitignoreStackAbove, isPathGitignored, nextIgnoreState, 
 // external edge instead.
 //
 // A scheme-only builtin has no bare form, since its bare name is free for an
-// npm package: `node:sqlite` is a builtin and `sqlite` is a package. Node 24
-// lists these in `builtinModules` with the prefix; Node 22 leaves them out
-// (measured on 22 in CI), and the project's runtime decides what it imports,
-// not the Node that runs archstrict. So the known ones are named here too.
+// npm package: `node:sqlite` is a builtin and `sqlite` is a package, and the
+// same split holds for `node:ffi` and `ffi`. Node 26 documents these five as
+// the modules that must be imported with the `node:` prefix. Node 22 leaves
+// every `node:` name out of `builtinModules` (measured on 22 in CI), and the
+// project's runtime decides what it imports, not the Node that runs
+// archstrict. So the known ones are named here too.
 const BUILTIN_MODULE_NAMES = new Set(builtinModules);
-const SCHEME_ONLY_BUILTINS = new Set(["node:sea", "node:sqlite", "node:test", "node:test/reporters"]);
+const SCHEME_ONLY_BUILTINS = new Set([
+  "node:ffi",
+  "node:sea",
+  "node:sqlite",
+  "node:test",
+  "node:test/reporters",
+]);
 function builtinModuleName(specifier: string): string | undefined {
   if (SCHEME_ONLY_BUILTINS.has(specifier) || (specifier.startsWith("node:") && BUILTIN_MODULE_NAMES.has(specifier))) {
     return specifier.slice("node:".length);

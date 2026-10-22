@@ -3,6 +3,12 @@
 The format follows Keep a Changelog, and the versions follow SemVer. Before 1.0, a minor version
 may change commands, flags, config, or output shape. The version entry will describe each change.
 
+## Unreleased
+
+### Fixed
+
+- `node:ffi` is a builtin edge. Node 26's modules that must use the `node:` prefix are `node:ffi`, `node:sea`, `node:sqlite`, `node:test`, and `node:test/reporters`. `check` on Node 22 does not see `node:ffi` in `module.builtinModules`, so that import was an unresolved specifier. A bare `ffi` import is still a package.
+
 ## 0.6.0 (2026-10-21)
 
 ### Added
