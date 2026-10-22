@@ -154,7 +154,33 @@ describe("declaredModules[].surface derived from a real package.json exports map
     });
   });
 
-  test("a plain ./dist/index.js map offers index.ts because adding it resolves every entry", () => {
+  test("a plain ./dist/index.js map offers index.ts when the module's files sit in that directory", () => {
+    withTempProject((root) => {
+      const dir = join(root, "packages", "lib");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "util.ts"), "export const main = 1;\n");
+      writeFileSync(join(dir, "package.json"), JSON.stringify({
+        name: "lib",
+        exports: { ".": { types: "./dist/index.d.ts", default: "./dist/index.js" } },
+      }));
+      writeApp(root, "../lib/util.ts");
+
+      const graph = buildModuleGraph({
+        projectRoot: root,
+        declaredModules: [
+          { name: "lib", glob: "packages/lib/**" },
+          { name: "app", glob: "packages/app/**" },
+        ],
+        surface: "index.ts",
+      });
+      expect(graph.modules.get("lib")!.exportsBarrel).toBe("index.ts");
+      expect(checkPublicSurfaceBypass(graph)[0]!.do).toBe(
+        'package.json exports for \'lib\' did not resolve to a source file. Add packages/lib/index.ts that re-exports what other modules use and import it instead of packages/lib/util.ts, or set surface: "util.ts" on \'lib\' in archstrict.config.ts, or stop importing packages/lib/util.ts',
+      );
+    });
+  });
+
+  test("a ./dist/index.js map does not offer a root index.ts when source already lives under src/", () => {
     withTempProject((root) => {
       writeLib(root, {
         exports: { ".": { types: "./dist/index.d.ts", default: "./dist/index.js" } },
@@ -170,11 +196,9 @@ describe("declaredModules[].surface derived from a real package.json exports map
         surface: "index.ts",
       });
       expect(graph.modules.get("lib")!.exportsBarrel).toBe("index.ts");
-      const violations = checkPublicSurfaceBypass(graph);
-      expect(violations).toHaveLength(1);
-      expect(violations[0]!.do).toBe(
-        'package.json exports for \'lib\' did not resolve to a source file. Add packages/lib/index.ts that re-exports what other modules use and import it instead of packages/lib/src/index.ts, or set surface: "src/index.ts" on \'lib\' in archstrict.config.ts, or stop importing packages/lib/src/index.ts',
-      );
+      const command = checkPublicSurfaceBypass(graph)[0]!.do;
+      expect(command).toContain('Set surface: "src/index.ts" on \'lib\' in archstrict.config.ts');
+      expect(command).not.toContain("Add ");
     });
   });
 
@@ -268,7 +292,7 @@ describe("declaredModules[].surface derived from a real package.json exports map
 });
 
 describe("check notes an unresolved exports map", () => {
-  test("the text names the module and offers index.ts when that file would resolve the map", async () => {
+  test("the text names the module and does not offer index.ts for a src layout", async () => {
     const root = mkdtempSync(join(tmpdir(), "archstrict-surface-exports-"));
     try {
       writeLib(root, {
@@ -291,9 +315,9 @@ describe("check notes an unresolved exports map", () => {
       expect(text).toContain(
         "note: package.json exports for 'lib' did not resolve to a source file, so check kept the default surface name",
       );
-      expect(text).toContain("Add packages/lib/index.ts that re-exports what other modules use");
+      expect(text).not.toContain("Add packages/lib/index.ts");
       expect(JSON.stringify(result)).toContain("did not resolve to a source file");
-      expect(JSON.stringify(result)).toContain("Add packages/lib/index.ts that re-exports what other modules use");
+      expect(JSON.stringify(result)).not.toContain("Add packages/lib/index.ts");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

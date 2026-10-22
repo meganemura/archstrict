@@ -157,11 +157,13 @@ function remediation(
   const importedName = moduleRelative(moduleDir, targetRel);
   // The default surface name is a fallback here, not a file the package
   // publishes. Offer index.ts only when adding it would make the exports
-  // map resolve. Any other missing entry stays a surface setting.
+  // map resolve and every analyzed file already sits in the module
+  // directory. A file under src/ means ./dist/index.js did not guess the
+  // real source, so a new root barrel would be a second entry point.
   if (targetModule.exportsUnresolved === true) {
     const lead = `package.json exports for '${targetModule.name}' did not resolve to a source file.`;
     const setSurface = `set surface: ${JSON.stringify(importedName)} on '${targetModule.name}' in archstrict.config.ts, or stop importing ${targetRel}`;
-    if (targetModule.exportsBarrel === "index.ts") {
+    if (targetModule.exportsBarrel === "index.ts" && filesSitInModuleDirectory(targetModule, relativePath)) {
       const addedPath = moduleDir === "" ? "index.ts" : `${moduleDir}/index.ts`;
       return `${lead} Add ${addedPath} that re-exports what other modules use and import it instead of ${targetRel}, or ${setSurface}`;
     }
@@ -176,6 +178,17 @@ function remediation(
 // case tells the reader to add that file. A module that configured a
 // different surface file is told to add that file: adding index.ts would
 // not make the retargeted import legal.
+function filesSitInModuleDirectory(module: Module, relativePath: ProjectRelativePath): boolean {
+  if (module.files.length === 0) return false;
+  const dir = relativePath(module.dir);
+  const prefix = dir === "" ? "" : `${dir}/`;
+  return module.files.every((file) => {
+    const rel = relativePath(file);
+    const rest = prefix === "" ? rel : rel.startsWith(prefix) ? rel.slice(prefix.length) : rel;
+    return !rest.includes("/");
+  });
+}
+
 function surfaceFileToAdd(surfaceList: readonly string[]): string {
   if (surfaceList.includes("index.ts")) return "index.ts";
   const plain = surfaceList.find((name) => !/[*?{}[\]]/.test(name));
