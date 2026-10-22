@@ -5,6 +5,10 @@ may change commands, flags, config, or output shape. The version entry will desc
 
 ## Unreleased
 
+### Breaking
+
+- A `classify` glob that matches files but never supplies their tags is an `empty-rule-set` violation. The most specific glob still wins, by literal prefix length and then by fewer wildcards. The report names the glob that loses every file it matches. A glob that wins for at least one file, or that loses only to an entry with the same tags, stays silent. Migration: give the losing glob a longer literal prefix, or fewer wildcards at the same prefix (`src/app/*.test.ts` beside `src/app/**`, instead of `**/*.test.ts`), or remove the entry. See `skills/archstrict/references/rules.md`.
+
 ### Fixed
 
 - A public-surface bypass whose `package.json` `exports` map did not resolve to a source file no longer says to add the missing default surface file. The `do` says to set `surface` to a source file. `check` prints a note naming that module when a bypass targets it.

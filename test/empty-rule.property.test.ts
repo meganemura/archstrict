@@ -1,7 +1,8 @@
-// Property: a classify glob is flagged exactly when it matches no real file
-// in scope (a declared module's own file, or an outsideFiles entry) —
-// checked against an independently computed expected set, not against
-// checkEmptyRuleSet re-deriving its own answer. The same holds for a
+// Property: a classify glob is flagged when it matches no real file in
+// scope (a declared module's own file, or an outsideFiles entry). A glob
+// that matches files is flagged when a longer-prefix entry with different
+// tags covers every file it matches, and stays quiet when it still wins
+// a file or the winner carries the same tags. The same holds for a
 // deprecated entry against a hand-written edge set of the cycles fixture.
 import { describe, test } from "vitest";
 import assert from "node:assert/strict";
@@ -11,6 +12,7 @@ import { fileURLToPath } from "node:url";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { compileGlob } from "../src/classify.js";
 import { buildModuleGraph } from "../src/module-graph.js";
 import { checkEmptyRuleSet } from "../src/rules/empty-rule.js";
 import { createConfigLocator, locateViolations } from "../src/config-pointer.js";
@@ -61,6 +63,44 @@ describe("checkEmptyRuleSet (property)", () => {
         assert.ok(v.rule === "empty-rule-set");
         assert.ok(expectedEmptyGlobs.some(({ glob }) => v.evidence.includes(`'${glob}'`)));
       }
+    });
+  });
+
+  test("a classify entry that matches files is flagged exactly when a more specific entry supplies different tags for every match", () => {
+    const graph = buildModuleGraph({
+      projectRoot: FIXTURE,
+      declaredModules: [
+        { name: "a", glob: "src/a/**", surface: "index.ts" },
+        { name: "b", glob: "src/b/**", surface: "index.ts" },
+        { name: "c", glob: "src/c/**", surface: "index.ts" },
+      ],
+    });
+    const rels = [...graph.modules.values()].flatMap((module) => module.files).concat(graph.outsideFiles).map((file) => graph.relativePath(file));
+    const specific = gs.sampledFrom(["src/a/**", "src/b/**", "src/c/**"] as const);
+    const broadTag = gs.sampledFrom(["kind:broad", "kind:same"] as const);
+    assert.deepEqual(rels.map((rel) => rel.split("/")[1]).sort(), ["a", "b", "c"]);
+
+    hegel.test((tc) => {
+      const covered = tc.draw(gs.arrays(specific, { minSize: 0, maxSize: 3 }));
+      const tag = tc.draw(broadTag);
+      const classify = [
+        ...covered.map((glob) => ({ glob, tags: ["kind:same"] })),
+        { glob: "src/**", tags: [tag] },
+      ];
+      const config: Config = { configPath: "<test>", because: "property test", classify };
+      const violations = checkEmptyRuleSet(graph, config);
+      const everyDirectoryCovered = ["src/a/**", "src/b/**", "src/c/**"].every((glob) => covered.includes(glob));
+      const broadLoses = tag === "kind:broad" && everyDirectoryCovered;
+
+      if (!broadLoses) {
+        assert.deepEqual(violations, []);
+        return;
+      }
+      const count = rels.filter((rel) => compileGlob("src/**").test(rel)).length;
+      assert.equal(violations.length, 1);
+      assert.equal(violations[0]!.evidence, `classify glob 'src/**' matches ${count} files but a more specific glob supplies their tags`);
+      const [located] = locateViolations(violations, config, createConfigLocator(config));
+      assert.equal((located!.config as { pointer: string }).pointer, `classify[${covered.length}]`);
     });
   });
 

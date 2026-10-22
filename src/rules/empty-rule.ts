@@ -69,21 +69,39 @@ export function checkEmptyRuleSet(graph: ModuleGraph, config: Config): Violation
 
   const violations: Violation[] = [];
 
-  // Every classify glob must match at least one real, in-scope file - the
-  // classification-layer's own version of "a kind that matches no
-  // module": a glob that matches nothing is a config typo or a stale
-  // entry, either way a rule that checks nothing must not look like a
-  // pass.
+  // Every classify glob must match at least one real, in-scope file, and
+  // must supply the tags of at least one file it matches. A glob that
+  // matches nothing is a typo or a stale entry. A glob that matches files
+  // but loses every one of them to a more specific entry applies no tags,
+  // which is the same omission: the file keeps the broader entry's tags
+  // and this entry looks like it worked. Who wins stays most-specific
+  // (longest literal prefix, then fewest wildcards). That precedence is
+  // also how a file picks its module, so a losing glob is reported here
+  // instead of being promoted. A tie on specificity is a config error
+  // raised when the file is classified, not this report.
   const allFiles = [...graph.modules.values()].flatMap((m) => m.files).concat(graph.outsideFiles);
-  for (const [entryIndex, entry] of (config.classify ?? []).entries()) {
+  const classify = config.classify ?? [];
+  for (const [entryIndex, entry] of classify.entries()) {
     const glob = compileGlob(entry.glob);
-    const matchesAny = allFiles.some((file) => glob.test(graph.relativePath(file)));
-    if (!matchesAny) {
+    const matched = allFiles.filter((file) => glob.test(graph.relativePath(file)));
+    if (matched.length === 0) {
       violations.push(
         violation(
           config,
           `classify glob '${entry.glob}' matches no file in scope`,
           `remove this classify entry from archstrict.config.ts, or point its glob at real files`,
+          `classify[${entryIndex}]`,
+        ),
+      );
+      continue;
+    }
+    if (matched.every((file) => classifyGlobLoses(graph.relativePath(file), entry, classify))) {
+      const files = matched.length === 1 ? "file" : "files";
+      violations.push(
+        violation(
+          config,
+          `classify glob '${entry.glob}' matches ${matched.length} ${files} but a more specific glob supplies their tags`,
+          `lengthen this glob's literal prefix, or use fewer wildcards at the same prefix, so it wins for the files it should tag, or remove the entry from classify in archstrict.config.ts`,
           `classify[${entryIndex}]`,
         ),
       );
@@ -196,4 +214,41 @@ function guardGap(config: Config, files: readonly { rel: string; tags: Set<strin
 
 function namespaceOf(tag: string): string {
   return tag.split(":")[0]!;
+}
+
+function sameTagList(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((tag, index) => tag === b[index]);
+}
+
+// True when some other matching entry is strictly more specific and its
+// tags are the ones the file receives. Equal specificity is left alone:
+// agreeing tags already apply, and disagreeing tags throw when the file
+// is classified.
+function classifyGlobLoses(
+  rel: string,
+  entry: { glob: string; tags: readonly string[] },
+  entries: readonly { glob: string; tags: readonly string[] }[],
+): boolean {
+  const own = compileGlob(entry.glob);
+  let best = own;
+  let bestTags = entry.tags;
+  let tiedWithDifferentTags = false;
+  for (const other of entries) {
+    const compiled = compileGlob(other.glob);
+    if (!compiled.test(rel)) continue;
+    const longerPrefix = compiled.literalPrefixLength > best.literalPrefixLength;
+    const fewerWildcards = compiled.literalPrefixLength === best.literalPrefixLength && compiled.wildcardCount < best.wildcardCount;
+    if (longerPrefix || fewerWildcards) {
+      best = compiled;
+      bestTags = other.tags;
+      tiedWithDifferentTags = false;
+      continue;
+    }
+    const tied = compiled.literalPrefixLength === best.literalPrefixLength && compiled.wildcardCount === best.wildcardCount;
+    if (tied && !sameTagList(other.tags, bestTags)) tiedWithDifferentTags = true;
+  }
+  if (tiedWithDifferentTags) return false;
+  const beaten = best.literalPrefixLength > own.literalPrefixLength
+    || (best.literalPrefixLength === own.literalPrefixLength && best.wildcardCount < own.wildcardCount);
+  return beaten && !sameTagList(bestTags, entry.tags);
 }

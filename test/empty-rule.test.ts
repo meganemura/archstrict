@@ -59,6 +59,58 @@ describe("checkEmptyRuleSet", () => {
     expect(checkEmptyRuleSet(graph, config)).toHaveLength(0);
   });
 
+  test("a classify glob that matches files but loses every one of them to a more specific glob is a violation", () => {
+    const root = mkdtempSync(join(tmpdir(), "archstrict-classify-shadow-"));
+    try {
+      mkdirSync(join(root, "src", "app"), { recursive: true });
+      writeFileSync(join(root, "src", "app", "payment.ts"), "export const price = 1;\n");
+      writeFileSync(join(root, "src", "app", "payment.test.ts"), "export const testPrice = 1;\n");
+      writeFileSync(join(root, "tsconfig.json"), "{}");
+      const declaredModules = [{ name: "app", glob: "src/app/**", surface: "payment.ts" }];
+      const graph = buildModuleGraph({ projectRoot: root, declaredModules });
+      const losing: Config = {
+        configPath: join(root, "archstrict.config.ts"),
+        because: "test config",
+        declaredModules,
+        classify: [
+          { glob: "src/app/**", tags: ["kind:prod"] },
+          { glob: "**/*.test.ts", tags: ["kind:test"] },
+        ],
+      };
+
+      const violations = checkEmptyRuleSet(graph, losing);
+      expect(violations).toHaveLength(1);
+      expect(violations[0]).toMatchObject({
+        rule: "empty-rule-set",
+        evidence: "classify glob '**/*.test.ts' matches 1 file but a more specific glob supplies their tags",
+      });
+      expect(violations[0]!.do).toContain("literal prefix");
+      expect(violations[0]!.because).toMatch(/\S/);
+      const [located] = locateViolations(violations, losing, createConfigLocator(losing));
+      expect(located!.config).toMatchObject({ pointer: "classify[1]", role: "fired" });
+
+      const winning: Config = {
+        ...losing,
+        classify: [
+          { glob: "src/app/**", tags: ["kind:prod"] },
+          { glob: "src/app/*.test.ts", tags: ["kind:test"] },
+        ],
+      };
+      expect(checkEmptyRuleSet(graph, winning)).toHaveLength(0);
+
+      const sameTags: Config = {
+        ...losing,
+        classify: [
+          { glob: "src/app/**", tags: ["kind:prod"] },
+          { glob: "**/*.test.ts", tags: ["kind:prod"] },
+        ],
+      };
+      expect(checkEmptyRuleSet(graph, sameTags)).toHaveLength(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("a deprecated edge whose actual count has fallen to zero is a violation", () => {
     const graph = buildModuleGraph({
       projectRoot: FIXTURE,

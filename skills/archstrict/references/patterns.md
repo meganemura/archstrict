@@ -446,9 +446,10 @@ tag it with a glob sharing its own directory's full literal prefix -
 most-specific-glob-wins precedence ties on prefix length and then prefers
 the fewer-wildcard entry (one `*` beats `**`'s two), giving the test file
 `kind:test` and every other file in the directory `kind:prod`. A
-project-wide glob like `**/*.test.ts` does not work for this: its own
+project-wide glob like `**/*.test.ts` does not apply its tags: its own
 literal prefix is empty, so the directory's own production glob always
-outranks it, and the file stays `kind:prod`. The point rule above,
+outranks it, the file stays `kind:prod`, and `check` reports that glob
+as `empty-rule-set`. The point rule above,
 unchanged, already reads `kind:test` from either shape once the file is
 tagged that way. Removing the `exclude` entry also brings back the test
 file's own `public-surface-bypass` findings (rule 1): any import in it
