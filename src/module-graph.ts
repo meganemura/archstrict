@@ -175,10 +175,11 @@ export type Module = {
   // display formatting (singular vs. plural) is rule 1's own job.
   surfaceName: string | readonly string[];
   // Present only when package.json exports exists and an entry did not
-  // resolve to a source file. surfaceName is then the project default,
-  // which may name a file the package does not publish. Rule 1's do must
-  // not tell the reader to add that file.
+  // resolve to a source file. surfaceName is then the project default.
+  // exportsBarrel is set when adding index.ts at the module root would
+  // make every entry resolve. Otherwise rule 1 does not name that file.
   exportsUnresolved?: true;
+  exportsBarrel?: "index.ts";
   // Rule 1's own "friend" exception - `fileGlob` is a project-relative
   // glob (resolved from the config's own module-relative `file`, the same
   // way `surfaceFiles` resolves `surface`), public to exactly the
@@ -584,7 +585,7 @@ const BUILT_TO_SOURCE_EXTENSIONS: readonly [string, readonly string[]][] = [
 // real file - a project whose own build output lives somewhere other
 // than a literal "dist/" directory, or under some other convention
 // entirely, is simply not derivable this way, not guessed wrong.
-function resolveExportsEntry(value: unknown, moduleDir: string): string | undefined {
+function resolveExportsEntry(value: unknown, moduleDir: string, alsoExists?: string): string | undefined {
   const candidates: string[] = [];
   if (typeof value === "string") {
     candidates.push(value);
@@ -612,7 +613,7 @@ function resolveExportsEntry(value: unknown, moduleDir: string): string | undefi
             replacements.map((replacement) => stripped.replace(/^dist\//, "").slice(0, -ext.length) + replacement),
           );
     for (const guess of guesses) {
-      if (existsSync(join(moduleDir, guess))) return guess;
+      if (guess === alsoExists || existsSync(join(moduleDir, guess))) return guess;
     }
   }
   return undefined;
@@ -623,10 +624,12 @@ function resolveExportsEntry(value: unknown, moduleDir: string): string | undefi
 // resolve, or JSON that did not parse. `unresolved` is a map that names
 // an entry which did not resolve to a source file on disk. One such entry
 // drops the whole derivation. `resolved` is every remaining entry.
+// `indexTsResolves` is true when pretending index.ts exists at the module
+// root makes every entry resolve. That is the plain ./dist/index.js layout.
 type ExportsDerivation =
   | { readonly status: "absent" }
   | { readonly status: "resolved"; readonly files: readonly string[] }
-  | { readonly status: "unresolved" };
+  | { readonly status: "unresolved"; readonly indexTsResolves: boolean };
 
 // Every real, sanctioned entry point a package.json's own `exports` map
 // names, resolved back to its own real source file. `absent` and
@@ -672,7 +675,13 @@ function deriveSurfaceFromExports(moduleDir: string): ExportsDerivation {
     if (key === "./package.json") continue; // a real file, but never TypeScript source
     if (value === null) continue; // explicitly blocked by the package's own author - not a leak candidate
     const source = resolveExportsEntry(value, moduleDir);
-    if (source === undefined) return { status: "unresolved" };
+    if (source === undefined) {
+      const indexTsResolves = Object.entries(subpaths).every(([entryKey, entryValue]) => {
+        if (entryKey === "./package.json" || entryValue === null) return true;
+        return resolveExportsEntry(entryValue, moduleDir, "index.ts") !== undefined;
+      });
+      return { status: "unresolved", indexTsResolves };
+    }
     if (!resolved.includes(source)) resolved.push(source);
   }
   return resolved.length > 0 ? { status: "resolved", files: resolved } : { status: "absent" };
@@ -687,11 +696,15 @@ function surfaceChoice(
   dm: DeclaredModule,
   moduleDir: string,
   globalDefaultSurface: string | readonly string[],
-): { surface: string | readonly string[]; exportsUnresolved: boolean } {
+): { surface: string | readonly string[]; exportsUnresolved: boolean; exportsBarrel?: "index.ts" } {
   if (dm.surface !== undefined) return { surface: dm.surface, exportsUnresolved: false };
   const derived = deriveSurfaceFromExports(moduleDir);
   if (derived.status === "resolved") return { surface: derived.files, exportsUnresolved: false };
-  return { surface: globalDefaultSurface, exportsUnresolved: derived.status === "unresolved" };
+  return {
+    surface: globalDefaultSurface,
+    exportsUnresolved: derived.status === "unresolved",
+    ...(derived.status === "unresolved" && derived.indexTsResolves ? { exportsBarrel: "index.ts" as const } : {}),
+  };
 }
 
 function effectiveSurface(
@@ -1073,6 +1086,7 @@ function buildDeclaredModules(
           surfaceFiles: [],
           surfaceName: choice.surface,
           ...(choice.exportsUnresolved ? { exportsUnresolved: true as const } : {}),
+          ...(choice.exportsBarrel !== undefined ? { exportsBarrel: choice.exportsBarrel } : {}),
           friends: (dm.friends ?? []).map((f) => ({
             fileGlob: shape.kind === "single"
               ? moduleRelativeGlob(projectRoot, shape.glob, f.file, existsForClassification)

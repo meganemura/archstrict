@@ -156,9 +156,16 @@ function remediation(
   const moduleDir = relativePath(targetModule.dir);
   const importedName = moduleRelative(moduleDir, targetRel);
   // The default surface name is a fallback here, not a file the package
-  // publishes. Telling the reader to add it invents an entry point.
+  // publishes. Offer index.ts only when adding it would make the exports
+  // map resolve. Any other missing entry stays a surface setting.
   if (targetModule.exportsUnresolved === true) {
-    return `package.json exports for '${targetModule.name}' did not resolve to a source file. Set surface: ${JSON.stringify(importedName)} on '${targetModule.name}' in archstrict.config.ts, or stop importing ${targetRel}`;
+    const lead = `package.json exports for '${targetModule.name}' did not resolve to a source file.`;
+    const setSurface = `set surface: ${JSON.stringify(importedName)} on '${targetModule.name}' in archstrict.config.ts, or stop importing ${targetRel}`;
+    if (targetModule.exportsBarrel === "index.ts") {
+      const addedPath = moduleDir === "" ? "index.ts" : `${moduleDir}/index.ts`;
+      return `${lead} Add ${addedPath} that re-exports what other modules use and import it instead of ${targetRel}, or ${setSurface}`;
+    }
+    return `${lead} Set surface: ${JSON.stringify(importedName)} on '${targetModule.name}' in archstrict.config.ts, or stop importing ${targetRel}`;
   }
   const addedName = surfaceFileToAdd(surfaceList);
   const addedPath = moduleDir === "" ? addedName : `${moduleDir}/${addedName}`;

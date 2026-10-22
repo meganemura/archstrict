@@ -154,7 +154,7 @@ describe("declaredModules[].surface derived from a real package.json exports map
     });
   });
 
-  test("an unresolved exports map does not tell the reader to add the missing default surface file", () => {
+  test("a plain ./dist/index.js map offers index.ts because adding it resolves every entry", () => {
     withTempProject((root) => {
       writeLib(root, {
         exports: { ".": { types: "./dist/index.d.ts", default: "./dist/index.js" } },
@@ -169,13 +169,59 @@ describe("declaredModules[].surface derived from a real package.json exports map
         ],
         surface: "index.ts",
       });
+      expect(graph.modules.get("lib")!.exportsBarrel).toBe("index.ts");
       const violations = checkPublicSurfaceBypass(graph);
       expect(violations).toHaveLength(1);
-      const command = violations[0]!.do;
+      expect(violations[0]!.do).toBe(
+        'package.json exports for \'lib\' did not resolve to a source file. Add packages/lib/index.ts that re-exports what other modules use and import it instead of packages/lib/src/index.ts, or set surface: "src/index.ts" on \'lib\' in archstrict.config.ts, or stop importing packages/lib/src/index.ts',
+      );
+    });
+  });
+
+  test("an exports map that would still miss another entry does not offer index.ts", () => {
+    withTempProject((root) => {
+      writeLib(root, {
+        exports: {
+          ".": { default: "./dist/index.js" },
+          "./http": { default: "./dist/http.js" },
+        },
+      });
+      writeApp(root, "../lib/src/index.ts");
+
+      const graph = buildModuleGraph({
+        projectRoot: root,
+        declaredModules: [
+          { name: "lib", glob: "packages/lib/**" },
+          { name: "app", glob: "packages/app/**" },
+        ],
+        surface: "index.ts",
+      });
+      expect(graph.modules.get("lib")!.exportsBarrel).toBeUndefined();
+      const command = checkPublicSurfaceBypass(graph)[0]!.do;
       expect(command).toContain("package.json exports for 'lib' did not resolve to a source file");
       expect(command).toContain('Set surface: "src/index.ts" on \'lib\' in archstrict.config.ts');
-      expect(command).not.toContain("add ");
+      expect(command).not.toContain("Add ");
       expect(command).not.toContain("packages/lib/index.ts");
+    });
+  });
+
+  test("a built path outside dist/ does not offer a root index.ts", () => {
+    withTempProject((root) => {
+      writeLib(root, {
+        exports: { ".": { default: "./lib/index.js" } },
+      });
+      writeApp(root, "../lib/src/index.ts");
+
+      const graph = buildModuleGraph({
+        projectRoot: root,
+        declaredModules: [
+          { name: "lib", glob: "packages/lib/**" },
+          { name: "app", glob: "packages/app/**" },
+        ],
+        surface: "index.ts",
+      });
+      expect(graph.modules.get("lib")!.exportsBarrel).toBeUndefined();
+      expect(checkPublicSurfaceBypass(graph)[0]!.do).not.toContain("Add ");
     });
   });
 
@@ -222,7 +268,7 @@ describe("declaredModules[].surface derived from a real package.json exports map
 });
 
 describe("check notes an unresolved exports map", () => {
-  test("the text names the module and the do does not add index.ts", async () => {
+  test("the text names the module and offers index.ts when that file would resolve the map", async () => {
     const root = mkdtempSync(join(tmpdir(), "archstrict-surface-exports-"));
     try {
       writeLib(root, {
@@ -245,9 +291,9 @@ describe("check notes an unresolved exports map", () => {
       expect(text).toContain(
         "note: package.json exports for 'lib' did not resolve to a source file, so check kept the default surface name",
       );
-      expect(text).not.toContain("add packages/lib/index.ts");
+      expect(text).toContain("Add packages/lib/index.ts that re-exports what other modules use");
       expect(JSON.stringify(result)).toContain("did not resolve to a source file");
-      expect(JSON.stringify(result)).not.toContain("add packages/lib/index.ts");
+      expect(JSON.stringify(result)).toContain("Add packages/lib/index.ts that re-exports what other modules use");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
