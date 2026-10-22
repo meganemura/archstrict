@@ -62,6 +62,13 @@ function compileGlobUncached(glob: string): { test: (path: string) => boolean; l
       // "anything, ending in a slash" group.
       pattern += "/(?:.*/)?";
       i += 4;
+    } else if (i === 0 && glob.startsWith("**/", i)) {
+      // `**/*.ts` matches `foo.ts` at the project root as well as
+      // `src/foo.ts`. `**` then a literal `/` would require a directory.
+      // Only the leading form: `src/**/*.ts` is the `/**/` case above and
+      // stays under `src/`.
+      pattern += "(?:.*/)?";
+      i += 3;
     } else if (glob.startsWith("**", i)) {
       pattern += ".*";
       i += 2;

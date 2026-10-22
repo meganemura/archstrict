@@ -144,9 +144,9 @@ const HIDDEN_EXCLUDE = [".*/**", "**/.*/**"];
 // NOISE_DIR_CANDIDATES already follows.
 // One entry per (test|spec) suffix crossed with every analyzed extension,
 // plus the `__tests__/` directory convention. `root` and `nested` are
-// always both added: compileGlob's own `**/` needs a literal slash, so
-// `**/*.test.ts` alone never matches a file sitting at the project root
-// (see HIDDEN_EXCLUDE's own two-pattern split, the same reason).
+// both written. A leading `**/` matches a file at the project root, so
+// the nested form covers that file too. The root form stays so the
+// exclude list names the convention (`*.test.ts`) beside the nested form.
 const TEST_FILE_EXCLUDE_CANDIDATES: readonly { label: string; root: string; nested: string }[] = [
   ...(["test", "spec"] as const).flatMap((suffix) =>
     ANALYZED_EXTENSIONS.map((ext) => ({

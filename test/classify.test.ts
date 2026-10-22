@@ -47,6 +47,18 @@ describe("classifyByGlob", () => {
     expect(classifyByGlob("elsewhere/file.ts", [{ glob: "packages/**", tags: ["x"] }])).toBeUndefined();
   });
 
+  test("a leading **/ matches a file at the project root and a nested file", () => {
+    const glob = compileGlob("**/*.test.ts");
+    expect(glob.test("foo.test.ts")).toBe(true);
+    expect(glob.test("src/foo.test.ts")).toBe(true);
+    expect(glob.test("src/app/foo.test.ts")).toBe(true);
+    expect(glob.test("foo.ts")).toBe(false);
+    expect(compileGlob("src/**/*.ts").test("foo.ts")).toBe(false);
+    expect(compileGlob("src/**/*.ts").test("src/foo.ts")).toBe(true);
+    expect(compileGlob("src/**/*.ts").test("src/app/foo.ts")).toBe(true);
+    expect(compileGlob("**").test("foo.ts")).toBe(true);
+  });
+
   test("a mid-pattern ** matches zero segments as well as one or more", () => {
     const entries = [{ glob: "a/**/b.ts", tags: ["x"] }];
     expect(classifyByGlob("a/b.ts", entries)).toEqual(["x"]);

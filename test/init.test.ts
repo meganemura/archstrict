@@ -729,11 +729,9 @@ export default {
       }
     });
 
-    // A test file directly at the project root (no directory segment at
-    // all) - the exact shape compileGlob's own `**/` form never matches,
-    // so this is the fixture that would catch a fix that added only the
-    // `**/*.test.ts`/`**/__tests__/**` half of each pair and forgot its
-    // own root-form twin.
+    // A test file directly at the project root has no directory segment.
+    // `**/*.test.ts` and `**/__tests__/**` match it. init still writes the
+    // root-form twin beside each of them.
     test("root-level test file and root-level __tests__/ directory are both excluded, not declared", () => {
       const { root, put } = scratchProject("archstrict-init-colocated-root-");
       put("src/app/index.ts", "export const app = 1;\n");

@@ -7,7 +7,7 @@ import { describe, test } from "vitest";
 import assert from "node:assert/strict";
 import * as hegel from "@hegeldev/hegel";
 import * as gs from "@hegeldev/hegel/generators";
-import { classifyByGlob } from "../src/classify.js";
+import { classifyByGlob, compileGlob } from "../src/classify.js";
 
 const segment = gs.fromRegex("[a-z][a-z0-9]{2,6}");
 
@@ -37,6 +37,21 @@ describe("classifyByGlob (property)", () => {
 
       assert.deepEqual(classifyByGlob(path, [broad, specific]), ["specific"]);
       assert.deepEqual(classifyByGlob(path, [specific, broad]), ["specific"]);
+    });
+  });
+
+  test("a leading **/ matches a root file and the same name under a directory, and a prefixed **/ does not match the root", () => {
+    hegel.test((tc) => {
+      const name = tc.draw(segment);
+      const ext = tc.draw(gs.sampledFrom(["ts", "tsx"] as const));
+      const file = `${name}.${ext}`;
+      const leading = compileGlob(`**/*.${ext}`);
+      assert.equal(leading.test(file), true);
+      assert.equal(leading.test(`src/${file}`), true);
+      assert.equal(leading.test(`src/app/${file}`), true);
+      assert.equal(leading.test(`${name}.js`), false);
+      assert.equal(compileGlob(`src/**/*.${ext}`).test(file), false);
+      assert.equal(compileGlob(`src/**/*.${ext}`).test(`src/${file}`), true);
     });
   });
 });

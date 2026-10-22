@@ -7,6 +7,7 @@ may change commands, flags, config, or output shape. The version entry will desc
 
 ### Breaking
 
+- A glob that starts with `**/` matches a file at the project root. `**/*.test.ts` matches `foo.test.ts` as well as `src/foo.test.ts`. A `**/` after a literal prefix is unchanged, so `src/**/*.ts` still does not match `foo.ts`. Migration: an `exclude`, `classify`, `declaredModules` glob, `friends` `from`, or `mustBeEmpty` glob that starts with `**/` now includes those root files. Narrow the glob, or name the root file in a more specific entry, when it should stay out. `archstrict init` still writes `*.test.ts` beside `**/*.test.ts`.
 - A `classify` glob that matches files but never supplies their tags is an `empty-rule-set` violation. The most specific glob still wins, by literal prefix length and then by fewer wildcards. The report names the glob that loses every file it matches. A glob that wins for at least one file, or that loses only to an entry with the same tags, stays silent. Migration: give the losing glob a longer literal prefix, or fewer wildcards at the same prefix (`src/app/*.test.ts` beside `src/app/**`, instead of `**/*.test.ts`), or remove the entry. See `skills/archstrict/references/rules.md`.
 
 ### Fixed

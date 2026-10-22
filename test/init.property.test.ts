@@ -47,8 +47,8 @@ type Shape = "none" | "flat" | "dirs";
 // Which colocated test file (if any) this draw mixes into the tree - P1
 // coverage must hold with a generated test file mixed in, not only over
 // trees that happen to have none, and must hold the same way whether that
-// file sits at the project root (where compileGlob's own `**/` form never
-// matches) or nested under the shape's own guaranteed real directory.
+// file sits at the project root or nested under the shape's own
+// guaranteed real directory. A leading `**/` matches both.
 type ColocatedTestKind = "none" | "nested-test" | "root-test" | "root-tests-dir" | "nested-spec";
 
 type Tree = {
@@ -142,10 +142,8 @@ function writeTree(root: string, tree: Tree): void {
       writeFileSync(join(nestParent, "scratch.test.ts"), "export const t = 1;\n");
       break;
     case "root-test":
-      // compileGlob's own `**/` form never matches a file with no
-      // directory segment at all - this draw is the one that would catch
-      // a fix that added only the `**/*.test.ts` glob and forgot its own
-      // root-form pair.
+      // A root test file has no directory segment. `**/*.test.ts` matches
+      // it, and init still writes `*.test.ts` beside that glob.
       writeFileSync(join(root, "scratch.test.ts"), "export const t = 1;\n");
       break;
     case "root-tests-dir":
