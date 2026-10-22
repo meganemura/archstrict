@@ -174,6 +174,11 @@ export type Module = {
   // project's own default). Carried in its original, un-normalized form -
   // display formatting (singular vs. plural) is rule 1's own job.
   surfaceName: string | readonly string[];
+  // Present only when package.json exports exists and an entry did not
+  // resolve to a source file. surfaceName is then the project default,
+  // which may name a file the package does not publish. Rule 1's do must
+  // not tell the reader to add that file.
+  exportsUnresolved?: true;
   // Rule 1's own "friend" exception - `fileGlob` is a project-relative
   // glob (resolved from the config's own module-relative `file`, the same
   // way `surfaceFiles` resolves `surface`), public to exactly the
@@ -609,11 +614,22 @@ function resolveExportsEntry(value: unknown, moduleDir: string): string | undefi
   return undefined;
 }
 
+// How a package.json exports map became a surface, or failed to.
+// `absent` is no package.json, no exports field, a map with nothing to
+// resolve, or JSON that did not parse. `unresolved` is a map that names
+// an entry which did not resolve to a source file on disk. One such entry
+// drops the whole derivation. `resolved` is every remaining entry.
+type ExportsDerivation =
+  | { readonly status: "absent" }
+  | { readonly status: "resolved"; readonly files: readonly string[] }
+  | { readonly status: "unresolved" };
+
 // Every real, sanctioned entry point a package.json's own `exports` map
-// names, resolved back to its own real source file - or undefined when
-// the map is absent, empty of real subpaths, or even one entry can't be
-// confidently resolved (whole-module fallback to the tool's own default,
-// never a partial or guessed-wrong surface array).
+// names, resolved back to its own real source file. `absent` and
+// `unresolved` both fall back to the tool's own default surface, never a
+// partial or guessed-wrong surface array. The two statuses stay distinct
+// so a bypass can avoid telling the reader to add that default file when
+// the map itself did not resolve.
 // Deliberately NOT cached across calls: buildModuleGraphForRules rebuilds
 // the whole graph on a package.json exports edit, and a cache keyed only
 // by moduleDir would return the stale, pre-edit surface for that same
@@ -623,18 +639,18 @@ function resolveExportsEntry(value: unknown, moduleDir: string): string | undefi
 // times per module per scan (surfaceName, surfaceGlobsFor's own dts
 // check), not once per candidate file, so leaving it uncached costs a few
 // reads per module per build, independent of file count.
-function deriveSurfaceFromExports(moduleDir: string): string[] | undefined {
+function deriveSurfaceFromExports(moduleDir: string): ExportsDerivation {
   const pkgPath = join(moduleDir, "package.json");
-  if (!existsSync(pkgPath)) return undefined;
+  if (!existsSync(pkgPath)) return { status: "absent" };
   let pkg: unknown;
   try {
     pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
   } catch {
-    return undefined;
+    return { status: "absent" };
   }
-  if (typeof pkg !== "object" || pkg === null) return undefined;
+  if (typeof pkg !== "object" || pkg === null) return { status: "absent" };
   const exportsField: unknown = (pkg as Record<string, unknown>).exports;
-  if (exportsField === undefined) return undefined;
+  if (exportsField === undefined) return { status: "absent" };
 
   // A single string, or a bare conditions object (keys like "types"/
   // "import" that don't start with "."), names only the package's own
@@ -652,10 +668,10 @@ function deriveSurfaceFromExports(moduleDir: string): string[] | undefined {
     if (key === "./package.json") continue; // a real file, but never TypeScript source
     if (value === null) continue; // explicitly blocked by the package's own author - not a leak candidate
     const source = resolveExportsEntry(value, moduleDir);
-    if (source === undefined) return undefined; // one unresolvable entry fails the whole derivation
+    if (source === undefined) return { status: "unresolved" };
     if (!resolved.includes(source)) resolved.push(source);
   }
-  return resolved.length > 0 ? resolved : undefined;
+  return resolved.length > 0 ? { status: "resolved", files: resolved } : { status: "absent" };
 }
 
 // A declared module's own effective surface: its own hand-set surface if
@@ -663,13 +679,23 @@ function deriveSurfaceFromExports(moduleDir: string): string[] | undefined {
 // map derived back to source (every real, sanctioned entry point at
 // once), else the project's own global default - never a mix of derived
 // and hand-set for the same module.
+function surfaceChoice(
+  dm: DeclaredModule,
+  moduleDir: string,
+  globalDefaultSurface: string | readonly string[],
+): { surface: string | readonly string[]; exportsUnresolved: boolean } {
+  if (dm.surface !== undefined) return { surface: dm.surface, exportsUnresolved: false };
+  const derived = deriveSurfaceFromExports(moduleDir);
+  if (derived.status === "resolved") return { surface: derived.files, exportsUnresolved: false };
+  return { surface: globalDefaultSurface, exportsUnresolved: derived.status === "unresolved" };
+}
+
 function effectiveSurface(
   dm: DeclaredModule,
   moduleDir: string,
   globalDefaultSurface: string | readonly string[],
 ): string | readonly string[] {
-  if (dm.surface !== undefined) return dm.surface;
-  return deriveSurfaceFromExports(moduleDir) ?? globalDefaultSurface;
+  return surfaceChoice(dm, moduleDir, globalDefaultSurface).surface;
 }
 
 // Exported (not just used internally by prepareGraph) so init's own fresh-
@@ -1026,6 +1052,12 @@ function buildDeclaredModules(
       const boundaryRoots = shape.kind === "single"
         ? [dir]
         : shape.globs.map((glob) => compilerJoin(projectRoot, moduleGlobBaseDir(glob)));
+      // A file list does not derive a surface from package.json. That
+      // derivation belongs to one directory glob, the same split
+      // surfaceGlobsFor already makes.
+      const choice = shape.kind === "single"
+        ? surfaceChoice(dm, dir, globalDefaultSurface)
+        : { surface: dm.surface ?? globalDefaultSurface, exportsUnresolved: false };
       return [
         dm.name,
         {
@@ -1035,9 +1067,8 @@ function buildDeclaredModules(
           boundaryRoots,
           files: [],
           surfaceFiles: [],
-          surfaceName: shape.kind === "single"
-            ? effectiveSurface(dm, dir, globalDefaultSurface)
-            : (dm.surface ?? globalDefaultSurface),
+          surfaceName: choice.surface,
+          ...(choice.exportsUnresolved ? { exportsUnresolved: true as const } : {}),
           friends: (dm.friends ?? []).map((f) => ({
             fileGlob: shape.kind === "single"
               ? moduleRelativeGlob(projectRoot, shape.glob, f.file, existsForClassification)

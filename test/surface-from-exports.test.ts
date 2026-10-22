@@ -8,6 +8,8 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildModuleGraph } from "../src/module-graph.js";
+import { checkPublicSurfaceBypass } from "../src/rules/public-surface.js";
+import { check, formatText } from "../src/verbs/check.js";
 
 function withTempProject(fn: (root: string) => void): void {
   const root = mkdtempSync(join(tmpdir(), "archstrict-surface-exports-"));
@@ -151,4 +153,116 @@ describe("declaredModules[].surface derived from a real package.json exports map
       expect(module.surfaceFiles.some((f) => f.endsWith("src/index.ts"))).toBe(false);
     });
   });
+
+  test("an unresolved exports map does not tell the reader to add the missing default surface file", () => {
+    withTempProject((root) => {
+      writeLib(root, {
+        exports: { ".": { types: "./dist/index.d.ts", default: "./dist/index.js" } },
+      });
+      writeApp(root, "../lib/src/index.ts");
+
+      const graph = buildModuleGraph({
+        projectRoot: root,
+        declaredModules: [
+          { name: "lib", glob: "packages/lib/**" },
+          { name: "app", glob: "packages/app/**" },
+        ],
+        surface: "index.ts",
+      });
+      const violations = checkPublicSurfaceBypass(graph);
+      expect(violations).toHaveLength(1);
+      const command = violations[0]!.do;
+      expect(command).toContain("package.json exports for 'lib' did not resolve to a source file");
+      expect(command).toContain('Set surface: "src/index.ts" on \'lib\' in archstrict.config.ts');
+      expect(command).not.toContain("add ");
+      expect(command).not.toContain("packages/lib/index.ts");
+    });
+  });
+
+  test("a module with no package.json still says to add the missing default surface file", () => {
+    withTempProject((root) => {
+      const dir = join(root, "packages", "lib");
+      mkdirSync(join(dir, "src"), { recursive: true });
+      writeFileSync(join(dir, "src", "index.ts"), "export const main = 1;\n");
+      writeApp(root, "../lib/src/index.ts");
+
+      const graph = buildModuleGraph({
+        projectRoot: root,
+        declaredModules: [
+          { name: "lib", glob: "packages/lib/**" },
+          { name: "app", glob: "packages/app/**" },
+        ],
+        surface: "index.ts",
+      });
+      const violations = checkPublicSurfaceBypass(graph);
+      expect(violations).toHaveLength(1);
+      expect(violations[0]!.do).toBe(
+        'add packages/lib/index.ts that re-exports what other modules use and import it instead of packages/lib/src/index.ts, or set surface: "src/index.ts" on \'lib\' in archstrict.config.ts',
+      );
+    });
+  });
+
+  test("a hand-set surface still names that file when exports would not resolve", () => {
+    withTempProject((root) => {
+      writeLib(root, {
+        exports: { ".": { default: "./dist/index.js" } },
+      });
+      writeApp(root, "../lib/src/index.ts");
+
+      const graph = buildModuleGraph({
+        projectRoot: root,
+        declaredModules: [
+          { name: "lib", glob: "packages/lib/**", surface: "index.ts" },
+          { name: "app", glob: "packages/app/**" },
+        ],
+      });
+      expect(checkPublicSurfaceBypass(graph)[0]!.do).toContain("add packages/lib/index.ts");
+    });
+  });
 });
+
+describe("check notes an unresolved exports map", () => {
+  test("the text names the module and the do does not add index.ts", async () => {
+    const root = mkdtempSync(join(tmpdir(), "archstrict-surface-exports-"));
+    try {
+      writeLib(root, {
+        exports: { ".": { types: "./dist/index.d.ts", default: "./dist/index.js" } },
+      });
+      writeApp(root, "../lib/src/index.ts");
+      writeFileSync(
+        join(root, "archstrict.config.ts"),
+        `export default ${JSON.stringify({
+          declaredModules: [
+            { name: "lib", glob: "packages/lib/**" },
+            { name: "app", glob: "packages/app/**" },
+          ],
+          because: "test",
+        })};\n`,
+      );
+
+      const result = await check(root);
+      const text = formatText(result);
+      expect(text).toContain(
+        "note: package.json exports for 'lib' did not resolve to a source file, so check kept the default surface name",
+      );
+      expect(text).not.toContain("add packages/lib/index.ts");
+      expect(JSON.stringify(result)).toContain("did not resolve to a source file");
+      expect(JSON.stringify(result)).not.toContain("add packages/lib/index.ts");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+function writeLib(root: string, pkg: { exports: unknown }): void {
+  const dir = join(root, "packages", "lib");
+  mkdirSync(join(dir, "src"), { recursive: true });
+  writeFileSync(join(dir, "src", "index.ts"), "export const main = 1;\n");
+  writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "lib", ...pkg }));
+}
+
+function writeApp(root: string, specifier: string): void {
+  const dir = join(root, "packages", "app");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "main.ts"), `import { main } from ${JSON.stringify(specifier)};\nexport const x = main;\n`);
+}

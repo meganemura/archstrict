@@ -1095,6 +1095,17 @@ function moduleNamesWithSurfaceInside(graph: ModuleGraph, directory: string): st
   return names;
 }
 
+// One note for every module whose exports map did not resolve. The bypass
+// do already says what to set. This names the module when the violation
+// list is grouped or the reader is looking at the summary.
+function exportsUnresolvedNotes(graph: ModuleGraph): string[] {
+  const names = [...graph.modules.values()].filter((module) => module.exportsUnresolved === true).map((module) => module.name);
+  names.sort();
+  if (names.length === 0) return [];
+  const listed = names.map((name) => `'${name}'`).join(", ");
+  return [`package.json exports for ${listed} did not resolve to a source file, so check kept the default surface name`];
+}
+
 export async function check(projectRoot: string, focusFile?: string, options: CheckOptions = {}): Promise<CheckResult> {
   const configPath = compilerResolve(projectRoot, "archstrict.config.ts");
   const config = await loadConfig(configPath);
@@ -1173,7 +1184,8 @@ export async function check(projectRoot: string, focusFile?: string, options: Ch
     },
   });
   if (skipTypeLeak) evaluated.typeLeaksSkippedFile = focusFile;
-  if (programNotes.length > 0) evaluated.notes = [...programNotes];
+  const surfaceNotes = exportsUnresolvedNotes(graph);
+  if (programNotes.length > 0 || surfaceNotes.length > 0) evaluated.notes = [...programNotes, ...surfaceNotes];
   // Skipped outright, not merely filtered afterward, when focus names a
   // real file that isn't the config file: unlike every other rule, a real
   // call here can cost a paid, networked --prove request (config-

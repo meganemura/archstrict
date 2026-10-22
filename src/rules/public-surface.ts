@@ -154,9 +154,14 @@ function remediation(
     return `set surface on '${targetModule.name}' to match ${relativePath(targetModule.dir)}, or stop importing it; this module is that file, not a directory`;
   }
   const moduleDir = relativePath(targetModule.dir);
+  const importedName = moduleRelative(moduleDir, targetRel);
+  // The default surface name is a fallback here, not a file the package
+  // publishes. Telling the reader to add it invents an entry point.
+  if (targetModule.exportsUnresolved === true) {
+    return `package.json exports for '${targetModule.name}' did not resolve to a source file. Set surface: ${JSON.stringify(importedName)} on '${targetModule.name}' in archstrict.config.ts, or stop importing ${targetRel}`;
+  }
   const addedName = surfaceFileToAdd(surfaceList);
   const addedPath = moduleDir === "" ? addedName : `${moduleDir}/${addedName}`;
-  const importedName = moduleRelative(moduleDir, targetRel);
   return `add ${addedPath} that re-exports what other modules use and import it instead of ${targetRel}, or set surface: ${JSON.stringify(importedName)} on '${targetModule.name}' in archstrict.config.ts`;
 }
 
