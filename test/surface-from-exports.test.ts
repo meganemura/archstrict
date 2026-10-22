@@ -252,6 +252,26 @@ describe("check notes an unresolved exports map", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  test("an unresolved exports map with no bypass does not add a note", async () => {
+    const root = mkdtempSync(join(tmpdir(), "archstrict-surface-exports-"));
+    try {
+      writeLib(root, {
+        exports: { ".": { default: "./dist/index.js" } },
+      });
+      writeFileSync(
+        join(root, "archstrict.config.ts"),
+        `export default ${JSON.stringify({
+          declaredModules: [{ name: "lib", glob: "packages/lib/**" }],
+          because: "test",
+        })};\n`,
+      );
+      const text = formatText(await check(root));
+      expect(text).not.toContain("did not resolve to a source file");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
 function writeLib(root: string, pkg: { exports: unknown }): void {

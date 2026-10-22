@@ -9,7 +9,7 @@ import { basename } from "node:path";
 import { compilerDirname, compilerJoin, compilerRealpath, compilerResolve } from "../project-path.js";
 import ts from "typescript";
 import { buildModuleGraphForRules, globResolutionDir, type ModuleGraph, type BuildOptions } from "../module-graph.js";
-import { dominantBypassModule, dominantBypassSentence } from "./map-shape.js";
+import { childDirectoryCounts, dominantBypassModule, dominantBypassSentence } from "./map-shape.js";
 import { assertConfigKeysKnown, assertEdgesShapeValid, assertGlobsSupported, assertSchemaVersion, describeShape, type Config } from "../config.js";
 import { ReportError } from "../report-error.js";
 import { checkPublicSurfaceBypass, type Violation as PublicSurfaceViolation } from "../rules/public-surface.js";
@@ -210,6 +210,9 @@ export type CheckResult = {
     totalFiles: number;
     bypasses: number;
     totalBypasses: number;
+    // How many child directories hold this module's files. Zero means the
+    // files are siblings, so the footer must not say to split.
+    childDirectories: number;
   };
 };
 
@@ -1095,11 +1098,17 @@ function moduleNamesWithSurfaceInside(graph: ModuleGraph, directory: string): st
   return names;
 }
 
-// One note for every module whose exports map did not resolve. The bypass
-// do already says what to set. This names the module when the violation
-// list is grouped or the reader is looking at the summary.
-function exportsUnresolvedNotes(graph: ModuleGraph): string[] {
-  const names = [...graph.modules.values()].filter((module) => module.exportsUnresolved === true).map((module) => module.name);
+// One note for a module whose exports map did not resolve and that a
+// public-surface bypass targets. A package that publishes dist/ and has
+// no bypass would otherwise print this on every check.
+function exportsUnresolvedNotes(graph: ModuleGraph, violations: readonly AnyViolation[]): string[] {
+  const bypassed = new Set<string>();
+  for (const violation of violations) {
+    if (violation.rule === "public-surface-bypass" && "todoModule" in violation) bypassed.add(violation.todoModule);
+  }
+  const names = [...graph.modules.values()]
+    .filter((module) => module.exportsUnresolved === true && bypassed.has(module.name))
+    .map((module) => module.name);
   names.sort();
   if (names.length === 0) return [];
   const listed = names.map((name) => `'${name}'`).join(", ");
@@ -1184,7 +1193,7 @@ export async function check(projectRoot: string, focusFile?: string, options: Ch
     },
   });
   if (skipTypeLeak) evaluated.typeLeaksSkippedFile = focusFile;
-  const surfaceNotes = exportsUnresolvedNotes(graph);
+  const surfaceNotes = exportsUnresolvedNotes(graph, evaluated.violations);
   if (programNotes.length > 0 || surfaceNotes.length > 0) evaluated.notes = [...programNotes, ...surfaceNotes];
   // Skipped outright, not merely filtered afterward, when focus names a
   // real file that isn't the config file: unlike every other rule, a real
@@ -1221,7 +1230,14 @@ export async function check(projectRoot: string, focusFile?: string, options: Ch
       [...graph.modules.values()].map((module) => ({ name: module.name, files: module.files.length })),
       bypassesByModule,
     );
-    if (dominant !== undefined) focused.dominantModule = dominant;
+    if (dominant !== undefined) {
+      const found = graph.modules.get(dominant.name);
+      const moduleDir = found === undefined ? "" : graph.relativePath(found.dir);
+      const childDirectories = found === undefined
+        ? 0
+        : childDirectoryCounts(moduleDir, found.files.map((file) => graph.relativePath(file))).length;
+      focused.dominantModule = { ...dominant, childDirectories };
+    }
   }
   const filtered = applyFilters(focused, options);
   // `nextSteps.do` is the footer text. Build it after filtering, so a
@@ -1377,7 +1393,10 @@ function footerCommands(result: CheckResult): string[] {
   if (result.violations.some((violation) => violation.rule === "uncovered-module")) {
     add(UNCOVERED_FOOTER);
   } else if (result.dominantModule !== undefined && hasFreezableViolation(result)) {
-    add(`split module '${result.dominantModule.name}' before archstrict todo`);
+    const name = result.dominantModule.name;
+    add(result.dominantModule.childDirectories > 0
+      ? `split module '${name}' on a child directory before archstrict todo`
+      : `group the sibling files in module '${name}' before archstrict todo`);
   } else if (hasFreezableViolation(result)) {
     add(TODO_FOOTER);
   }

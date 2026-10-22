@@ -221,6 +221,12 @@ function proposeSurfaces(graph: ModuleGraph): SurfaceProposal[] {
     const proposedSurface = candidates.slice(0, prefixLength).map(c => c.file);
     const coveredImports = candidates.slice(0, prefixLength).reduce((sum, c) => sum + c.importers, 0);
     const totalImports = pairs.size;
+    const moduleDir = graph.relativePath(module.dir);
+    const splitAdvice = childDirectoryAdvice(
+      module.name,
+      moduleDir,
+      childDirectoryCounts(moduleDir, module.files.map((file) => graph.relativePath(file))),
+    );
     proposals.push({
       module: module.name,
       candidates,
@@ -232,7 +238,7 @@ function proposeSurfaces(graph: ModuleGraph): SurfaceProposal[] {
         `do: set { name: ${JSON.stringify(module.name)}, ..., surface: ${JSON.stringify(proposedSurface)} } in declaredModules to retire ${coveredImports} of ${totalImports} bypasses into '${module.name}', leaving ${totalImports - coveredImports}`,
         `do: add a barrel file re-exporting from ${proposedSurface[0] ?? "a chosen entry file"}, then name it as this module's surface instead`,
         fileDominant?.name === module.name
-          ? `do: split '${module.name}' before archstrict todo: it holds ${fileDominant.files} of ${totalFiles} analyzed files, and freezing its bypasses records one bucket`
+          ? `do: ${splitAdvice} before archstrict todo: it holds ${fileDominant.files} of ${totalFiles} analyzed files, and freezing its bypasses records one bucket`
           : `do: leave '${module.name}' entirely private and run archstrict todo to freeze its bypasses as debt instead`,
       ],
     });

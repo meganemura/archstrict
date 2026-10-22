@@ -233,8 +233,11 @@ async function runTodo(args: string[]): Promise<number> {
     process.stdout.write(`pruned ${result.pruned} stale entrie(s)\n`);
   }
   for (const note of result.notes ?? []) process.stdout.write(`note: ${note}\n`);
+  // The note already says whether to group sibling files or names a child
+  // directory. A second line that always says "split" contradicts the
+  // sibling case. recommend is the command that prints the pasteable globs.
   process.stdout.write(result.notes !== undefined && result.notes.length > 0
-    ? `do: split the module named above before treating this freeze as done\n`
+    ? `do: archstrict recommend\n`
     : `do: archstrict check\n`);
   return 0;
 }

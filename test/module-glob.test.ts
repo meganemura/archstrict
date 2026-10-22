@@ -229,7 +229,7 @@ describe("mega-module and file-per-module notes", () => {
       expect(result.dominantModule).toMatchObject({ name: "core", files: 8, totalFiles: 9, bypasses: 8, totalBypasses: 8 });
       const text = formatText(result);
       expect(text.split("\n").filter((line) => line.startsWith("do: "))).toEqual([
-        "do: split module 'core' before archstrict todo",
+        "do: group the sibling files in module 'core' before archstrict todo",
         "do: archstrict recommend",
         "do: archstrict hotspots",
         "do: read node_modules/archstrict/skills/archstrict/references/rearchitect.md",

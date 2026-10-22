@@ -7,9 +7,9 @@ may change commands, flags, config, or output shape. The version entry will desc
 
 ### Fixed
 
-- A public-surface bypass whose `package.json` `exports` map did not resolve to a source file no longer says to add the missing default surface file. The `do` says to set `surface` to a source file. `check` prints a note naming that module.
+- A public-surface bypass whose `package.json` `exports` map did not resolve to a source file no longer says to add the missing default surface file. The `do` says to set `surface` to a source file. `check` prints a note naming that module when a bypass targets it.
 - When `check` counts `require()` or `import x = require(...)`, the text line says those imports were not checked and names up to eight files. A count of zero stays `unsupported syntax: 0`. `--json` still reports `unsupportedSyntax` as a number.
-- `recommend`'s mega-module note names two real child directories and a glob for each. A module whose files are siblings says that it has no child directory and to group those files. `todo`'s freeze note uses the same fact.
+- `recommend`'s mega-module note names two real child directories and a glob for each. A module whose files are siblings says that it has no child directory and to group those files. `todo`'s freeze note, `recommend`'s surface choice, and `check`'s footer use the same fact. `check`'s `dominantModule` object includes `childDirectories`. After a freeze note, `todo` prints `do: archstrict recommend`.
 - `node:ffi` is a builtin edge. Node 26's modules that must use the `node:` prefix are `node:ffi`, `node:sea`, `node:sqlite`, `node:test`, and `node:test/reporters`. `check` on Node 22 does not see `node:ffi` in `module.builtinModules`, so that import was an unresolved specifier. A bare `ffi` import is still a package.
 - `recommend`'s file-per-module note names two single-file modules from that directory. The example used to say `a.ts` and `b.ts` even when the project had neither, and pasting it declared a module that matched nothing.
 
