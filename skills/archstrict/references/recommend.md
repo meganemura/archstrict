@@ -12,8 +12,11 @@ semantics.
 Zero or more notes about the declared map itself, before any pattern.
 `mega-module`: one module holds at least four fifths of the analyzed files
 and at least eight files. Hotspots and a frozen bypass list then collapse
-into one bucket. The `do` says to split that module into directories that
-change together before `archstrict todo`, and to add an `edges` rule.
+into one bucket. When the module has child directories, the `do` names
+two of them as pasteable `glob` entries and counts any left out. When the
+files are siblings in that directory, the `do` says so and says to group
+the files that change together. Either way it says to add an `edges` rule
+before `archstrict todo`.
 `file-per-module`: at least four fifths of the modules, and at least four
 of them, are single files in one directory. Each file is public as itself,
 so imports between them are checked, and no growth seam is named. The `do`

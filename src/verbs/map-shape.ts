@@ -98,3 +98,40 @@ export function filePerModuleCluster(
   if (bestCount < FILE_PER_MODULE_MIN || !shareAtLeast(bestCount, modules.length)) return undefined;
   return { parent: bestParent, count: bestCount, total: modules.length };
 }
+
+export type ChildDirectory = { name: string; files: number };
+
+// A file directly in the module directory is not a child. A nested file
+// counts toward its first directory under the module, so src/core/api/a.ts
+// is the child api of src/core. Most files first, then name, so two calls
+// with the same files name the same example.
+export function childDirectoryCounts(moduleDir: string, fileRels: readonly string[]): ChildDirectory[] {
+  const prefix = moduleDir === "" || moduleDir === "." ? "" : `${moduleDir}/`;
+  const counts = new Map<string, number>();
+  for (const rel of fileRels) {
+    if (prefix !== "" && !rel.startsWith(prefix)) continue;
+    const rest = rel.slice(prefix.length);
+    const slash = rest.indexOf("/");
+    if (slash === -1) continue;
+    const name = rest.slice(0, slash);
+    counts.set(name, (counts.get(name) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([name, files]) => ({ name, files }))
+    .sort((a, b) => b.files - a.files || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+}
+
+// Two examples. A longer list belongs in the count, not in a sentence
+// someone pastes whole. The caller adds the verb-specific ending.
+export function childDirectoryAdvice(name: string, moduleDir: string, children: readonly ChildDirectory[]): string {
+  if (children.length === 0) {
+    return `'${name}' has no child directory. Group the sibling files that change together`;
+  }
+  const shown = children.slice(0, 2).map((child) => {
+    const glob = moduleDir === "" || moduleDir === "." ? `${child.name}/**` : `${moduleDir}/${child.name}/**`;
+    return `{ name: ${JSON.stringify(child.name)}, glob: ${JSON.stringify(glob)} }`;
+  });
+  const extra = children.length - 2;
+  const more = extra > 0 ? `, and ${extra} more child ${extra === 1 ? "directory" : "directories"}` : "";
+  return `split '${name}' on a child directory, for example ${shown.join(", ")}${more}`;
+}

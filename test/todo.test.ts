@@ -156,7 +156,7 @@ describe("todo", () => {
       expect(before.violations.filter(v => v.rule === "tag-boundary")).toHaveLength(1);
       expect(await todo(root)).toEqual({
         firstRun: true, added: 9, pruned: 0,
-        notes: ["8 of 8 public-surface-bypass violations target 'shared', which holds 8 of 9 analyzed files. Freezing them records one bucket. Split 'shared' into directories that change together before treating this freeze as done."],
+        notes: ["8 of 8 public-surface-bypass violations target 'shared', which holds 8 of 9 analyzed files. Freezing them records one bucket. 'shared' has no child directory. Group the sibling files that change together before treating this freeze as done."],
       });
       const saved = readTodoFile(root)!;
       expect(saved.modules.get("shared")).toHaveLength(8);

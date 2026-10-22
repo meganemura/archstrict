@@ -9,6 +9,8 @@ import * as gen from "@hegeldev/hegel/generators";
 import {
   DOMINANT_MIN_BYPASSES,
   DOMINANT_MIN_FILES,
+  childDirectoryAdvice,
+  childDirectoryCounts,
   dominantBypassModule,
   dominantByFiles,
   shareAtLeast,
@@ -71,6 +73,23 @@ describe("dominantBypassModule (property)", () => {
       const after = dominantBypassModule(modules, new Map([["core", bypasses.get("core")! + extra], ["app", other]]));
       assert.equal(after?.name, "core");
       assert.equal(after?.bypasses, before!.bypasses + extra);
+    });
+  });
+});
+
+describe("childDirectoryCounts (property)", () => {
+  test("a sibling file is not a child, and a nested file counts in its first directory", () => {
+    hegel.test((tc) => {
+      const dir = tc.draw(gen.sampledFrom(["src/core", ""]));
+      const child = tc.draw(gen.sampledFrom(["api", "db"]));
+      const sibling = dir === "" ? "root.ts" : `${dir}/root.ts`;
+      const nested = dir === "" ? `${child}/a.ts` : `${dir}/${child}/a.ts`;
+      const counts = childDirectoryCounts(dir, [sibling, nested, nested]);
+      assert.deepEqual(counts, [{ name: child, files: 2 }]);
+      const advice = childDirectoryAdvice("core", dir, counts);
+      const glob = dir === "" ? `${child}/**` : `${dir}/${child}/**`;
+      assert.equal(advice.includes(glob), true);
+      assert.equal(childDirectoryAdvice("core", dir, []), "'core' has no child directory. Group the sibling files that change together");
     });
   });
 });

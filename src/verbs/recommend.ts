@@ -8,7 +8,7 @@ import type { Config } from "../config.js";
 import { createConfigLocator } from "../config-pointer.js";
 import { fingerprintOf, relativizeForTodo } from "../todo-store.js";
 import { buildModuleGraphForRules, DEFAULT_SURFACE, moduleGlobBaseDir, moduleGlobList, type Module, type ModuleGlob, type ModuleGraph } from "../module-graph.js";
-import { dominantByFiles, filePerModuleCluster } from "./map-shape.js";
+import { childDirectoryAdvice, childDirectoryCounts, dominantByFiles, filePerModuleCluster } from "./map-shape.js";
 // Without a config, recommend previews init's own walk in memory (same
 // argument rules, same groups and globs) instead of running its own
 // single-level "src/*" discovery - the two could disagree about which
@@ -985,7 +985,15 @@ function fileModuleParent(projectRoot: string, module: Module): string {
 }
 
 function fileModulePath(projectRoot: string, module: Module): string {
-  return relative(projectRoot, module.dir).split(sep).join("/");
+  return projectRelative(projectRoot, module.dir);
+}
+
+function projectRelative(projectRoot: string, path: string): string {
+  return relative(projectRoot, path).split(sep).join("/");
+}
+
+function megaModuleDo(name: string, moduleDir: string, children: readonly { name: string; files: number }[]): string {
+  return `${childDirectoryAdvice(name, moduleDir, children)} before archstrict todo, and add an edges rule so import direction is checked`;
 }
 
 // Byte order, so the two files named in the example do not depend on the
@@ -1001,10 +1009,15 @@ function mapNotesFor(projectRoot: string, modules: readonly Module[]): MapNote[]
   const notes: MapNote[] = [];
   const dominant = dominantByFiles(modules.map((module) => ({ name: module.name, files: module.files.length })));
   if (dominant !== undefined) {
+    const module = modules.find((candidate) => candidate.name === dominant.name);
+    const moduleDir = module === undefined ? "" : fileModulePath(projectRoot, module);
+    const children = module === undefined
+      ? []
+      : childDirectoryCounts(moduleDir, module.files.map((file) => projectRelative(projectRoot, file)));
     notes.push({
       kind: "mega-module",
       evidence: `'${dominant.name}' holds ${dominant.files} of ${dominant.totalFiles} analyzed files. Hotspots and a frozen bypass list then collapse into one bucket.`,
-      do: `split '${dominant.name}' into directories that change together before archstrict todo, and add an edges rule so import direction is checked`,
+      do: megaModuleDo(dominant.name, moduleDir, children),
     });
   }
   // A directory that holds one file is still a directory seam, not a

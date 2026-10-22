@@ -166,7 +166,29 @@ describe("mega-module and file-per-module notes", () => {
       };`);
       const mega = await recommend(root);
       expect(mega.mapNotes.map((note) => note.kind)).toContain("mega-module");
-      expect(mega.mapNotes.find((note) => note.kind === "mega-module")?.evidence).toContain("8 of 9");
+      const note = mega.mapNotes.find((item) => item.kind === "mega-module");
+      expect(note?.evidence).toContain("8 of 9");
+      expect(note?.do).toContain("'core' has no child directory");
+      expect(note?.do).not.toContain("src/core/");
+    });
+  });
+
+  test("the mega-module note names two child directories that exist", async () => {
+    await withTempProject(async (root) => {
+      for (let i = 0; i < 5; i++) write(root, `src/core/api/a${i}.ts`, `export const a${i} = ${i};\n`);
+      for (let i = 0; i < 3; i++) write(root, `src/core/db/d${i}.ts`, `export const d${i} = ${i};\n`);
+      write(root, "src/core/extra/e.ts", "export const e = 1;\n");
+      write(root, "src/edge/one.ts", "export const one = 1;\n");
+      write(root, "archstrict.config.ts", `export default {
+        declaredModules: [{ name: "core", glob: "src/core/**" }, { name: "edge", glob: "src/edge/**" }],
+        because: "one module holds the tree",
+      };`);
+      const mega = await recommend(root);
+      const note = mega.mapNotes.find((item) => item.kind === "mega-module");
+      expect(note?.do).toContain('{ name: "api", glob: "src/core/api/**" }');
+      expect(note?.do).toContain('{ name: "db", glob: "src/core/db/**" }');
+      expect(note?.do).toContain("and 1 more child directory");
+      expect(note?.do).not.toContain("extra");
     });
   });
 

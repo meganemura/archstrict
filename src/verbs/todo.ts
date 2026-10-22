@@ -21,7 +21,7 @@ import {
   type TodoEntry,
 } from "../todo-store.js";
 import { loadConfig, runRules, type AnyViolation } from "./check.js";
-import { dominantBypassModule, dominantBypassSentence } from "./map-shape.js";
+import { childDirectoryAdvice, childDirectoryCounts, dominantBypassModule, dominantBypassSentence } from "./map-shape.js";
 
 // Only a violation with its own todoModule can be frozen: rule 1 (public-
 // surface bypass), rule 2 (cycles), rule 6 (type-leak), and rule 7 (the
@@ -193,12 +193,18 @@ function freezeOrPrune(
     bypassesByModule,
   );
   if (dominant === undefined) return { firstRun, added, pruned };
+  const dominantModule = graph.modules.get(dominant.name);
+  const moduleDir = dominantModule === undefined ? "" : graph.relativePath(dominantModule.dir);
+  const children = dominantModule === undefined
+    ? []
+    : childDirectoryCounts(moduleDir, dominantModule.files.map((file) => graph.relativePath(file)));
+  const split = `${childDirectoryAdvice(dominant.name, moduleDir, children)} before treating this freeze as done.`;
   return {
     firstRun,
     added,
     pruned,
     notes: [
-      `${dominantBypassSentence(dominant)}. Freezing them records one bucket. Split '${dominant.name}' into directories that change together before treating this freeze as done.`,
+      `${dominantBypassSentence(dominant)}. Freezing them records one bucket. ${split}`,
     ],
   };
 }
