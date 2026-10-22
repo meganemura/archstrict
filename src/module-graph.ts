@@ -226,6 +226,10 @@ export type ModuleGraph = {
   outsideFiles: string[]; // .ts files under the project root that match no module
   nonTsSourceFileCount: number; // files outside TypeScript analysis; a visibility count, not a violation
   unsupportedSyntaxCount: number; // require(), import x = require(...): out of scope for v0
+  // Project-relative paths of module files that hold at least one of those
+  // imports. The count is the imports. This list is the files. check text
+  // names them. JSON keeps the count alone.
+  unsupportedSyntaxFiles: readonly string[];
   unresolvedSpecifierCount: number;
   // The raw specifier text of every unresolved import, in encounter order -
   // a bare count alone gave no way to tell "one specifier, many uses" from
@@ -1551,6 +1555,7 @@ type WalkResult = {
     moduleAugmentationSpecifiers: ModuleAugmentationSpecifier[];
   }>;
   unsupportedSyntaxCount: number;
+  unsupportedSyntaxFiles: string[];
   unresolvedSpecifierCount: number;
   unresolvedSpecifiers: string[];
 };
@@ -1629,10 +1634,11 @@ function scanNonAnalyzedModuleAugmentations(
 // this function entirely for a file whose parse and resolutions are both
 // still valid.
 function walkAllFiles(prepared: ReturnType<typeof prepareGraph>, commons: GraphCommons, fileWalk: (fileName: string) => FileImportWalk | undefined): WalkResult {
-  const { rootNames, modules, resolveModuleForFile, projectRoot } = prepared;
+  const { rootNames, modules, resolveModuleForFile, projectRoot, relativePath } = prepared;
   const outsideFiles: string[] = [];
   const edges: Edge[] = [];
   let unsupportedSyntaxCount = 0;
+  const unsupportedSyntaxFiles: string[] = [];
   let unresolvedSpecifierCount = 0;
   const unresolvedSpecifiers: string[] = [];
   // Walked in rootNames order (listAnalyzedFiles' own directory-scan
@@ -1665,6 +1671,7 @@ function walkAllFiles(prepared: ReturnType<typeof prepareGraph>, commons: GraphC
     }
     modules.get(fromModule)?.files.push(fileName);
     unsupportedSyntaxCount += walked.unsupportedSyntaxCount;
+    if (walked.unsupportedSyntaxCount > 0) unsupportedSyntaxFiles.push(relativePath(fileName));
 
     for (const imp of walked.imports) {
       // Resolved regardless of a leading "." - a bare specifier
@@ -1681,7 +1688,8 @@ function walkAllFiles(prepared: ReturnType<typeof prepareGraph>, commons: GraphC
     }
   }
 
-  return { edges, outsideFiles, fileFlags, unsupportedSyntaxCount, unresolvedSpecifierCount, unresolvedSpecifiers };
+  unsupportedSyntaxFiles.sort(ordinalCompare);
+  return { edges, outsideFiles, fileFlags, unsupportedSyntaxCount, unsupportedSyntaxFiles, unresolvedSpecifierCount, unresolvedSpecifiers };
 }
 
 // The rest of a graph build - crossModuleEdges and the lazy Program/rule-6
@@ -1693,7 +1701,7 @@ function walkAllFiles(prepared: ReturnType<typeof prepareGraph>, commons: GraphC
 // different closure facts for cached and uncached graphs.
 function assembleGraph(prepared: ReturnType<typeof prepareGraph>, commons: GraphCommons, walked: WalkResult, overrides: GraphBuildOverrides): PreparedModuleGraph {
   const { modules, surface, rootDir, rootNames, compilerOptions, relativePath } = prepared;
-  const { edges, outsideFiles, fileFlags, unsupportedSyntaxCount, unresolvedSpecifierCount, unresolvedSpecifiers } = walked;
+  const { edges, outsideFiles, fileFlags, unsupportedSyntaxCount, unsupportedSyntaxFiles, unresolvedSpecifierCount, unresolvedSpecifiers } = walked;
   const { host, analyzedSet, optionsForContainingFile, sourceFileOptionsFor, resolveModule, resolutionCacheFor } = commons;
 
   const crossModuleEdges = edges.filter(
@@ -1928,6 +1936,7 @@ function assembleGraph(prepared: ReturnType<typeof prepareGraph>, commons: Graph
     outsideFiles,
     nonTsSourceFileCount: prepared.nonTsSourceFileCount,
     unsupportedSyntaxCount,
+    unsupportedSyntaxFiles,
     unresolvedSpecifierCount,
     unresolvedSpecifiers,
     surface,
@@ -2349,6 +2358,7 @@ export function buildModuleGraphForRules(options: BuildOptions, overrides: Graph
     moduleAugmentationSpecifiers: ModuleAugmentationSpecifier[];
   }>();
   let unsupportedSyntaxCount = 0;
+  const unsupportedSyntaxFiles: string[] = [];
   let unresolvedSpecifierCount = 0;
   const unresolvedSpecifiers: string[] = [];
   // True once any file's own parse was not reused - a full hit (every
@@ -2412,7 +2422,11 @@ export function buildModuleGraphForRules(options: BuildOptions, overrides: Graph
       fileFlags.set(file, { isScript, hasAmbientDeclarations, hasModuleAugmentation, moduleAugmentationSpecifiers });
       const fromModule = resolveModuleForFile(file);
       if (fromModule === undefined) outsideFiles.push(file);
-      else { modules.get(fromModule)?.files.push(file); unsupportedSyntaxCount += unsupportedForFile; }
+      else {
+        modules.get(fromModule)?.files.push(file);
+        unsupportedSyntaxCount += unsupportedForFile;
+        if (unsupportedForFile > 0) unsupportedSyntaxFiles.push(prepared.relativePath(file));
+      }
 
       // Every walked file's own specifiers are resolved here, whether or
       // not it currently belongs to a declared module - a file outside
@@ -2488,7 +2502,8 @@ export function buildModuleGraphForRules(options: BuildOptions, overrides: Graph
       versionOk ? cached.shards : undefined, dirtyPaths, deletedPaths, !versionOk || !resolutionsValid);
   }
 
+  unsupportedSyntaxFiles.sort(ordinalCompare);
   const walked: WalkResult = { edges, outsideFiles, fileFlags,
-    unsupportedSyntaxCount, unresolvedSpecifierCount, unresolvedSpecifiers };
+    unsupportedSyntaxCount, unsupportedSyntaxFiles, unresolvedSpecifierCount, unresolvedSpecifiers };
   return assembleGraph(prepared, commons, walked, overrides);
 }

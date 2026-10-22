@@ -1238,7 +1238,22 @@ export async function check(projectRoot: string, focusFile?: string, options: Ch
     const reason = focusSkip(projectRoot, focusFile, config);
     if (reason !== undefined) setFocusNotes(filtered, [focusSkipNote(focusFile, reason)]);
   }
+  // The file list is text only. check --json and the PostToolUse hook read
+  // CheckResult, and unsupportedSyntax stays a number there.
+  if (graph.unsupportedSyntaxFiles.length > 0) unsupportedSyntaxFiles.set(filtered, graph.unsupportedSyntaxFiles);
   return filtered;
+}
+
+const unsupportedSyntaxFiles = new WeakMap<CheckResult, readonly string[]>();
+const UNSUPPORTED_SYNTAX_FILE_CAP = 8;
+
+function unsupportedSyntaxLine(result: CheckResult): string {
+  if (result.unsupportedSyntax === 0) return "unsupported syntax: 0";
+  const files = unsupportedSyntaxFiles.get(result) ?? [];
+  const shown = files.slice(0, UNSUPPORTED_SYNTAX_FILE_CAP);
+  const rest = files.length - shown.length;
+  const where = shown.length === 0 ? "" : `, in ${shown.join(", ")}${rest > 0 ? `, and ${rest} more` : ""}`;
+  return `unsupported syntax: ${result.unsupportedSyntax} (require() and import x = require(...) were not checked${where})`;
 }
 
 // The output must always carry: rule id, path:line:col, evidence, because,
@@ -1657,7 +1672,7 @@ export function formatText(result: CheckResult): string {
     const breakdown = result.unresolvedSpecifierBreakdown.map((b) => `${b.prefix} (${b.count})`).join(", ");
     lines.push(`  top unresolved prefixes: ${breakdown}`);
   }
-  lines.push(`unsupported syntax: ${result.unsupportedSyntax}`);
+  lines.push(unsupportedSyntaxLine(result));
   lines.push(result.typeLeaks === null
     ? `type leaks: not checked (${result.typeLeaksSkippedFile} is not a module surface file)`
     : `type leaks: ${result.typeLeaks}`);

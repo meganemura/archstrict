@@ -1771,6 +1771,51 @@ test("a non-object config default export gives the exact load error", () => with
   await expect(check(root)).rejects.toEqual(new ReportError(`${configPath} has no default export`, `add a default export satisfying Config to ${configPath}, then run archstrict check`));
 }));
 
+describe("unsupported syntax text", () => {
+  test("a positive count names require imports and the file, and json keeps the number", () => withTempProject(async root => {
+    mkdirSync(join(root, "src", "app"), { recursive: true });
+    writeFileSync(join(root, "src", "app", "dep.ts"), "export const dep = 1;\n");
+    writeFileSync(join(root, "src", "app", "main.ts"), [
+      'import legacy = require("./dep.ts");',
+      'const value = require("./dep.ts");',
+      "export const main = [legacy, value];",
+      "",
+    ].join("\n"));
+    writeFileSync(join(root, "archstrict.config.ts"), `export default ${JSON.stringify({
+      declaredModules: [{ name: "app", glob: "src/app/**" }],
+      because: "test",
+    })};\n`);
+
+    const result = await check(root);
+    expect(result.unsupportedSyntax).toBe(2);
+    expect(formatText(result)).toContain(
+      "unsupported syntax: 2 (require() and import x = require(...) were not checked, in src/app/main.ts)",
+    );
+    const json = JSON.parse(JSON.stringify(result)) as { unsupportedSyntax: number };
+    expect(json.unsupportedSyntax).toBe(2);
+    expect(Object.keys(json)).not.toContain("unsupportedSyntaxFiles");
+    const copied = { ...result };
+    const copiedLine = formatText(copied).split("\n").find((line) => line.startsWith("unsupported syntax:"));
+    expect(copiedLine).toBe("unsupported syntax: 2 (require() and import x = require(...) were not checked)");
+  }));
+
+  test("text names at most eight files", () => withTempProject(async root => {
+    mkdirSync(join(root, "src", "app"), { recursive: true });
+    writeFileSync(join(root, "src", "app", "dep.ts"), "export const dep = 1;\n");
+    for (let i = 0; i < 9; i++) {
+      writeFileSync(join(root, "src", "app", `f${i}.ts`), 'const value = require("./dep.ts");\nexport const n = value;\n');
+    }
+    writeFileSync(join(root, "archstrict.config.ts"), `export default ${JSON.stringify({
+      declaredModules: [{ name: "app", glob: "src/app/**" }],
+      because: "test",
+    })};\n`);
+
+    const text = formatText(await check(root));
+    expect(text).toContain("unsupported syntax: 9 (require() and import x = require(...) were not checked, in src/app/f0.ts, src/app/f1.ts, src/app/f2.ts, src/app/f3.ts, src/app/f4.ts, src/app/f5.ts, src/app/f6.ts, src/app/f7.ts, and 1 more)");
+    expect(text).not.toContain("src/app/f8.ts");
+  }));
+});
+
 test("loadConfig accepts source overrides without reading or changing the disk config", () => withTempProject(async root => {
   const path = join(root, "archstrict.config.ts");
   const original = { declaredModules: [{ name: "disk", glob: "src/disk/**" }], because: "Use the saved boundary." };
