@@ -8,6 +8,7 @@ may change commands, flags, config, or output shape. The version entry will desc
 ### Fixed
 
 - `node:ffi` is a builtin edge. Node 26's modules that must use the `node:` prefix are `node:ffi`, `node:sea`, `node:sqlite`, `node:test`, and `node:test/reporters`. `check` on Node 22 does not see `node:ffi` in `module.builtinModules`, so that import was an unresolved specifier. A bare `ffi` import is still a package.
+- `recommend`'s file-per-module note names two single-file modules from that directory. The example used to say `a.ts` and `b.ts` even when the project had neither, and pasting it declared a module that matched nothing.
 
 ## 0.6.0 (2026-10-21)
 

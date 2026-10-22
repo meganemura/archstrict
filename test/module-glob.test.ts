@@ -155,6 +155,7 @@ describe("mega-module and file-per-module notes", () => {
       const flat = await recommend(root);
       expect(flat.mapNotes.map((note) => note.kind)).toEqual(["file-per-module"]);
       expect(flat.mapNotes[0]?.do).toContain('glob: ["src/a.ts", "src/b.ts"]');
+      expect(flat.mapNotes[0]?.do).toContain('surface: "a.ts"');
     });
     await withTempProject(async (root) => {
       for (let i = 0; i < 8; i++) write(root, `src/core/f${i}.ts`, `export const f${i} = ${i};\n`);
@@ -177,6 +178,17 @@ describe("mega-module and file-per-module notes", () => {
       symlinkSync(realRoot, linkedRoot, "dir");
       const result = await recommend(linkedRoot);
       expect(result.mapNotes.find((note) => note.kind === "file-per-module")?.do).toContain('glob: ["src/a.ts", "src/b.ts"]');
+    });
+  });
+
+  test("the file-per-module example names two files that exist", async () => {
+    await withTempProject(async (root) => {
+      for (const name of ["plan", "graph", "emit", "facts"]) write(root, `src/${name}.ts`, `export const ${name} = 1;\n`);
+      const result = await recommend(root);
+      const note = result.mapNotes.find((entry) => entry.kind === "file-per-module");
+      expect(note?.do).toContain('glob: ["src/emit.ts", "src/facts.ts"]');
+      expect(note?.do).toContain('surface: "emit.ts"');
+      expect(note?.do).not.toContain("a.ts");
     });
   });
 

@@ -979,9 +979,22 @@ export async function recommend(
 // text into hundreds of lines; `--json` always carries every module,
 // every candidate, every name.
 function fileModuleParent(projectRoot: string, module: Module): string {
-  const rel = relative(projectRoot, module.dir).split(sep).join("/");
+  const rel = fileModulePath(projectRoot, module);
   const slash = rel.lastIndexOf("/");
   return slash === -1 ? "." : rel.slice(0, slash);
+}
+
+function fileModulePath(projectRoot: string, module: Module): string {
+  return relative(projectRoot, module.dir).split(sep).join("/");
+}
+
+// Byte order, so the two files named in the example do not depend on the
+// order the graph happened to build the modules.
+function singleFilePaths(projectRoot: string, modules: readonly Module[], parent: string): string[] {
+  return modules
+    .filter((module) => module.rootIsFile && fileModuleParent(projectRoot, module) === parent)
+    .map((module) => fileModulePath(projectRoot, module))
+    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 }
 
 function mapNotesFor(projectRoot: string, modules: readonly Module[]): MapNote[] {
@@ -1002,11 +1015,15 @@ function mapNotesFor(projectRoot: string, modules: readonly Module[]): MapNote[]
   })));
   if (cluster !== undefined) {
     const where = cluster.parent === "." ? "the project root" : `'${cluster.parent}'`;
-    const sampleDir = cluster.parent === "." ? "" : `${cluster.parent}/`;
+    // Placeholders such as a.ts were refused. Pasting them into a project
+    // that has no such file declares a module that matches nothing.
+    const sample = singleFilePaths(projectRoot, modules, cluster.parent).slice(0, 2);
+    const surface = sample[0]!.slice(sample[0]!.lastIndexOf("/") + 1);
+    const glob = sample.map((path) => JSON.stringify(path)).join(", ");
     notes.push({
       kind: "file-per-module",
       evidence: `${cluster.count} of ${cluster.total} modules are single files under ${where}. Each file is public as itself, so an import between them is checked, but no growth seam is named.`,
-      do: `group files that change together into one module, for example { name: "seam", glob: ["${sampleDir}a.ts", "${sampleDir}b.ts"], surface: "a.ts" }, then add an edges rule. archstrict hotspots shows which files change together once history exists`,
+      do: `group files that change together into one module, for example { name: "seam", glob: [${glob}], surface: ${JSON.stringify(surface)} }, then add an edges rule. archstrict hotspots shows which files change together once history exists`,
     });
   }
   return notes;
