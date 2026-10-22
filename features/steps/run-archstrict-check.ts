@@ -8,11 +8,14 @@ const CLI_PATH = fileURLToPath(new URL("../../dist/cli.js", import.meta.url));
 // the real CLI with --json rather than calling check() in-process, matching
 // cli.test.ts's own pattern. check exits 1 whenever violations exist, by
 // design, so the exit code is read as data instead of failing the step on
-// the expected case.
+// the expected case. check must write nothing, so the step declares
+// mutates: false and nukadoko compares that against the files the spawned
+// CLI changed under the scratch copy.
 export default defineStep({
   description: "Runs the built archstrict CLI's check verb against the scratch copy and parses its --json output.",
   patterns: ["archstrict check runs against the scratch copy", "archstrict check runs against the scratch copy again"],
   args: z.object({ root: z.string() }),
+  mutates: false,
   returns: z.object({
     modules: z.number().describe("the number of declared modules check analyzed"),
     modulesWithoutSurface: z.number().describe("the number of modules with no public-surface file present"),
