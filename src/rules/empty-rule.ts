@@ -108,6 +108,41 @@ export function checkEmptyRuleSet(graph: ModuleGraph, config: Config): Violation
     }
   }
 
+  // A friends entry that matches nothing exempts no import. `file` is
+  // matched inside the module, the same paths rule 1 tests. `from` is
+  // matched against every analyzed file. Either miss is its own finding,
+  // because fixing one glob does not fix the other.
+  for (const [moduleIndex, declared] of (config.declaredModules ?? []).entries()) {
+    const module = graph.modules.get(declared.name);
+    if (module === undefined) continue;
+    const moduleRels = module.files.map((file) => graph.relativePath(file));
+    for (const [friendIndex, friend] of (declared.friends ?? []).entries()) {
+      const stored = module.friends[friendIndex];
+      if (stored === undefined) continue;
+      const pointer = `declaredModules[${moduleIndex}].friends[${friendIndex}]`;
+      if (!moduleRels.some((rel) => compileGlob(stored.fileGlob).test(rel))) {
+        violations.push(
+          violation(
+            config,
+            `friends file '${friend.file}' on module '${declared.name}' matches no file in that module`,
+            `fix the file glob or remove this friends entry from module '${declared.name}' in archstrict.config.ts`,
+            pointer,
+          ),
+        );
+      }
+      if (!allFiles.some((file) => compileGlob(friend.from).test(graph.relativePath(file)))) {
+        violations.push(
+          violation(
+            config,
+            `friends from '${friend.from}' on module '${declared.name}' matches no file in scope`,
+            `fix the from glob or remove this friends entry from module '${declared.name}' in archstrict.config.ts`,
+            pointer,
+          ),
+        );
+      }
+    }
+  }
+
   // A deprecated edge whose actual count has fallen to zero is not merely
   // smaller (rule 5's "update count" suggestion) — the edge is gone
   // entirely, so the entry itself is moot and checks nothing. Rule 5

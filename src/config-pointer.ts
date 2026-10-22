@@ -238,6 +238,15 @@ function pointerSpecs(violation: UnlocatedViolation, config: Config): PointerSpe
       if (violation.evidence === "no modules declared in declaredModules") {
         return [{ pointer: "declaredModules", role: "fired" }];
       }
+      const friend = /friends (?:file|from) '([^']*)' on module '([^']*)'/.exec(violation.evidence);
+      if (friend !== null) {
+        const moduleIndex = config.declaredModules?.findIndex((entry) => entry.name === friend[2]) ?? -1;
+        const friends = moduleIndex < 0 ? undefined : config.declaredModules?.[moduleIndex]?.friends;
+        const friendIndex = friends?.findIndex((entry) => entry.file === friend[1] || entry.from === friend[1]) ?? -1;
+        if (moduleIndex >= 0 && friendIndex >= 0) {
+          return [{ pointer: `declaredModules[${moduleIndex}].friends[${friendIndex}]`, role: "fired" }];
+        }
+      }
       const classifyIndex = indexByEvidence(config.classify, (entry) => violation.evidence.includes(`classify glob '${entry.glob}'`));
       if (classifyIndex >= 0) return [{ pointer: `classify[${classifyIndex}]`, role: "fired" }];
       const deprecatedIndex = indexByEvidence(config.deprecated, (entry) => violation.evidence.includes(`'${entry.from} -> ${entry.to}'`));

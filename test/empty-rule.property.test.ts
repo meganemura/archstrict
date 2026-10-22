@@ -89,7 +89,8 @@ describe("checkEmptyRuleSet (property)", () => {
       ];
       const config: Config = { configPath: "<test>", because: "property test", classify };
       const violations = checkEmptyRuleSet(graph, config);
-      const everyDirectoryCovered = ["src/a/**", "src/b/**", "src/c/**"].every((glob) => covered.includes(glob));
+      const coveredSet = new Set<string>(covered);
+      const everyDirectoryCovered = ["src/a/**", "src/b/**", "src/c/**"].every((glob) => coveredSet.has(glob));
       const broadLoses = tag === "kind:broad" && everyDirectoryCovered;
 
       if (!broadLoses) {
@@ -102,6 +103,58 @@ describe("checkEmptyRuleSet (property)", () => {
       const [located] = locateViolations(violations, config, createConfigLocator(config));
       assert.equal((located!.config as { pointer: string }).pointer, `classify[${covered.length}]`);
     });
+  });
+
+  test("a friends entry is flagged exactly when its file is not in the module or its from matches no analyzed file", () => {
+    const root = mkdtempSync(join(tmpdir(), "archstrict-friends-property-"));
+    try {
+      mkdirSync(join(root, "src", "core"), { recursive: true });
+      mkdirSync(join(root, "src", "friend"), { recursive: true });
+      writeFileSync(join(root, "src", "core", "internal.ts"), "export const internalThing = 1;\n");
+      writeFileSync(join(root, "src", "core", "other.ts"), "export const other = 1;\n");
+      writeFileSync(join(root, "src", "friend", "module.ts"), "export const allowed = 1;\n");
+      writeFileSync(join(root, "tsconfig.json"), "{}");
+      const files = ["internal.ts", "other.ts"] as const;
+      const missingFiles = ["missing.ts", "nope.ts"] as const;
+      const friend = gs.record({
+        file: gs.sampledFrom([...files, ...missingFiles]),
+        from: gs.sampledFrom(["src/friend/**", "src/ghost/**"] as const),
+      });
+
+      hegel.test((tc) => {
+        const drawn = tc.draw(gs.arrays(friend, { minSize: 0, maxSize: 3 }));
+        const declaredModules = [
+          {
+            name: "core",
+            glob: "src/core/**",
+            surface: "internal.ts",
+            friends: drawn.map((entry) => ({ ...entry, because: "property test" })),
+          },
+          { name: "friend", glob: "src/friend/**", surface: "index.ts" },
+        ];
+        const graph = buildModuleGraph({ projectRoot: root, declaredModules });
+        const config: Config = { configPath: "<test>", because: "property test", declaredModules };
+        const violations = checkEmptyRuleSet(graph, config);
+        const expected = drawn.flatMap((entry, index) => {
+          const misses: string[] = [];
+          if (!files.includes(entry.file as (typeof files)[number])) {
+            misses.push(`friends file '${entry.file}' on module 'core' matches no file in that module`);
+          }
+          if (entry.from === "src/ghost/**") {
+            misses.push(`friends from '${entry.from}' on module 'core' matches no file in scope`);
+          }
+          return misses.map((evidence) => ({ index, evidence }));
+        });
+        assert.deepEqual(violations.map((v) => v.evidence), expected.map((item) => item.evidence));
+        const located = locateViolations(violations, config, createConfigLocator(config));
+        assert.deepEqual(
+          located.map((v) => (v.config as { pointer: string }).pointer),
+          expected.map((item) => `declaredModules[0].friends[${item.index}]`),
+        );
+      }, { testCases: 20 });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   test("a deprecated entry is flagged exactly when its own pair has no cross-module edge, at its own index", () => {

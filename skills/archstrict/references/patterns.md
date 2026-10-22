@@ -801,9 +801,11 @@ declaredModules: [
 
 **Caveat.** `friends` has no `edges` entry and produces no
 `edgeRuleCoverage` row: rule 1 (`public-surface-bypass`) checks it directly,
-before reporting a bypass. Verify it by import, not by `evaluated` count -
-confirm the named friend's own import stays clean and a second, unlisted
-importer of the same internal file gets `public-surface-bypass`.
+before reporting a bypass. A `file` that matches no file in the module, or
+a `from` that matches no analyzed file, is `empty-rule-set`. Verify a
+matching entry by import, not by `evaluated` count. Confirm the named
+friend's own import stays clean and a second, unlisted importer of the
+same internal file gets `public-surface-bypass`.
 
 ## Edition split
 

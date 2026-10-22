@@ -111,6 +111,55 @@ describe("checkEmptyRuleSet", () => {
     }
   });
 
+  test("a friends entry that matches no file is a violation, and one that matches both sides is not", () => {
+    const root = mkdtempSync(join(tmpdir(), "archstrict-friends-empty-"));
+    try {
+      mkdirSync(join(root, "src", "core"), { recursive: true });
+      mkdirSync(join(root, "src", "friend"), { recursive: true });
+      writeFileSync(join(root, "src", "core", "index.ts"), "export const publicThing = 1;\n");
+      writeFileSync(join(root, "src", "core", "internal.ts"), "export const internalThing = 1;\n");
+      writeFileSync(join(root, "src", "friend", "module.ts"), "export const allowed = 1;\n");
+      writeFileSync(join(root, "tsconfig.json"), "{}");
+      const declaredModules = [
+        {
+          name: "core",
+          glob: "src/core/**",
+          surface: "index.ts",
+          friends: [
+            { file: "internal.ts", from: "src/friend/**", because: "allowed" },
+            { file: "missing.ts", from: "src/friend/**", because: "no such file" },
+            { file: "internal.ts", from: "src/ghost/**", because: "no such importer" },
+          ],
+        },
+        { name: "friend", glob: "src/friend/**", surface: "index.ts" },
+      ];
+      const graph = buildModuleGraph({ projectRoot: root, declaredModules });
+      const config: Config = {
+        configPath: join(root, "archstrict.config.ts"),
+        because: "test config",
+        declaredModules,
+      };
+
+      const violations = checkEmptyRuleSet(graph, config);
+      expect(violations.map((v) => v.evidence)).toEqual([
+        "friends file 'missing.ts' on module 'core' matches no file in that module",
+        "friends from 'src/ghost/**' on module 'core' matches no file in scope",
+      ]);
+      const located = locateViolations(violations, config, createConfigLocator(config));
+      expect(located.map((v) => v.config)).toMatchObject([
+        { pointer: "declaredModules[0].friends[1]", role: "fired" },
+        { pointer: "declaredModules[0].friends[2]", role: "fired" },
+      ]);
+      const fromEvidence = locateViolations(violations.map((v) => ({ ...v })), config, createConfigLocator(config));
+      expect(fromEvidence.map((v) => (v.config as { pointer: string }).pointer)).toEqual([
+        "declaredModules[0].friends[1]",
+        "declaredModules[0].friends[2]",
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("a deprecated edge whose actual count has fallen to zero is a violation", () => {
     const graph = buildModuleGraph({
       projectRoot: FIXTURE,
