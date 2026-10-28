@@ -1,4 +1,3 @@
-import type { ModuleGraph } from "./module-graph.js";
 import { ReportError } from "./report-error.js";
 
 // The only schema loadConfig accepts. init writes this value into a new
@@ -185,28 +184,6 @@ export function assertSchemaVersion(configPath: string, raw: object): void {
     `${configPath} schemaVersion ${JSON.stringify(version)} is not supported; this archstrict reads schemaVersion ${SCHEMA_VERSION}`,
     `set schemaVersion to ${SCHEMA_VERSION} in ${configPath}, then run archstrict check`,
   );
-}
-
-// Throws if any `deprecated` entry names a module that doesn't exist.
-// Shared by rule 4 and rule 5: without a single shared check, the two
-// rules can disagree about the same config. Measured: rule 4's own
-// zero-modules early return skips its `deprecated` loop entirely, so a
-// `deprecated` entry naming a nonexistent module reached rule 4's "count
-// is 0, edge no longer exists" case instead of a config error — a name
-// that never existed is not the same fact as an edge that used to exist
-// and shrank to nothing, and reporting it that way is misleading, not
-// just imprecise.
-export function assertDeprecatedModulesExist(graph: ModuleGraph, config: Config): void {
-  for (const entry of config.deprecated ?? []) {
-    for (const moduleName of [entry.from, entry.to]) {
-      if (!graph.modules.has(moduleName)) {
-        throw new ReportError(
-          `deprecated entry '${entry.from} -> ${entry.to}' names module '${moduleName}', which does not exist`,
-          `declare '${moduleName}' in ${config.configPath}, or remove that deprecated entry, then run archstrict check`,
-        );
-      }
-    }
-  }
 }
 
 // loadConfig reads a real config file with ts.transpileModule (strips

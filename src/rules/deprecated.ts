@@ -8,9 +8,32 @@
 // output formatting. Does not suppress rule 1: a deprecated edge that also
 // bypasses its target's public surface is still a rule-1 violation —
 // deprecated means "shrinking," not "exempt from every other rule."
-import { assertDeprecatedModulesExist, type Config } from "../config.js";
+import type { Config } from "../config.js";
 import type { ModuleGraph } from "../module-graph.js";
 import { withPointerSpecs } from "../config-pointer.js";
+import { ReportError } from "../report-error.js";
+
+// Throws if any `deprecated` entry names a module that doesn't exist.
+// Shared by rule 4 and rule 5: without a single shared check, the two
+// rules can disagree about the same config. Measured: rule 4's own
+// zero-modules early return skips its `deprecated` loop entirely, so a
+// `deprecated` entry naming a nonexistent module reached rule 4's "count
+// is 0, edge no longer exists" case instead of a config error — a name
+// that never existed is not the same fact as an edge that used to exist
+// and shrank to nothing, and reporting it that way is misleading, not
+// just imprecise.
+export function assertDeprecatedModulesExist(graph: ModuleGraph, config: Config): void {
+  for (const entry of config.deprecated ?? []) {
+    for (const moduleName of [entry.from, entry.to]) {
+      if (!graph.modules.has(moduleName)) {
+        throw new ReportError(
+          `deprecated entry '${entry.from} -> ${entry.to}' names module '${moduleName}', which does not exist`,
+          `declare '${moduleName}' in ${config.configPath}, or remove that deprecated entry, then run archstrict check`,
+        );
+      }
+    }
+  }
+}
 
 export type Violation = {
   rule: "deprecated-edge-increased";

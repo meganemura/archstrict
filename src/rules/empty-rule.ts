@@ -7,7 +7,8 @@
 // a failure". Also reports allow lists that cover every real target value.
 // Boundary: a config-vs-graph consistency check, not an edge check. No
 // I/O, no output formatting.
-import { assertDeprecatedModulesExist, type Config } from "../config.js";
+import type { Config } from "../config.js";
+import { assertDeprecatedModulesExist } from "./deprecated.js";
 import { classifyFile, compileGlob } from "../classify.js";
 import { type ModuleGraph } from "../module-graph.js";
 import { checkEdgesCoverage, checkExhaustiveAllow, formatPredicate, matchesPredicate, type FromToPredicate } from "./constraints.js";
