@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { buildModuleGraph } from "../src/module-graph.js";
+import { buildModuleGraph } from "../src/graph/module-graph.js";
 import { checkUncoveredModules } from "../src/rules/uncovered.js";
 
 const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), "fixtures/uncovered");

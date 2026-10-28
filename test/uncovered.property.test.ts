@@ -15,7 +15,7 @@ import * as hegel from "@hegeldev/hegel";
 import * as gs from "@hegeldev/hegel/generators";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { buildModuleGraph, type ModuleGraph } from "../src/module-graph.js";
+import { buildModuleGraph, type ModuleGraph } from "../src/graph/module-graph.js";
 import { makeProjectRelativePosix } from "../src/project-path.js";
 import { checkUncoveredModules } from "../src/rules/uncovered.js";
 

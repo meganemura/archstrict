@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
-import type { Config } from "../src/config.js";
+import type { Config } from "../src/config/config.js";
 import { diagram, type DiagramOptions } from "../src/verbs/diagram.js";
 import { renderDiagram, renderMarkdown, escapeLabel } from "../src/verbs/diagram-mermaid.js";
 import { FIXTURES, REPO, materialize } from "./diagram-project.js";

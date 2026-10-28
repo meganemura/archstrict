@@ -6,11 +6,11 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { buildModuleGraph } from "../src/module-graph.js";
-import type { Edge, Module, ModuleGraph } from "../src/module-graph.js";
+import { buildModuleGraph } from "../src/graph/module-graph.js";
+import type { Edge, Module, ModuleGraph } from "../src/graph/module-graph.js";
 import { makeProjectRelativePosix } from "../src/project-path.js";
-import type { Config } from "../src/config.js";
-import { createConfigLocator, locateViolation } from "../src/config-pointer.js";
+import type { Config } from "../src/config/config.js";
+import { createConfigLocator, locateViolation } from "../src/config/config-pointer.js";
 import { checkCycles, checkStaleCycleExceptions } from "../src/rules/cycles.js";
 import { fingerprintOf } from "../src/todo-store.js";
 

@@ -3,14 +3,14 @@
 import ts from "typescript";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, relative, resolve, sep } from "node:path";
-import { prepareGraph, type ModuleGraph } from "../module-graph.js";
-import { createWarmGraph } from "../warm-graph.js";
+import { prepareGraph, type ModuleGraph } from "../graph/module-graph.js";
+import { createWarmGraph } from "../graph/warm-graph.js";
 import { fingerprintOf, relativizeForTodo, type ViolationForTodo } from "../todo-store.js";
-import type { Violation } from "../type-leak.js";
+import type { Violation } from "../graph/type-leak.js";
 import { ReportError } from "../report-error.js";
 import { loadConfig, runRules, applyTodo, filterToFile } from "./check.js";
 import { resolveWriteTarget, writeTarget } from "./agents.js";
-import { createConfigLocator } from "../config-pointer.js";
+import { createConfigLocator } from "../config/config-pointer.js";
 
 export type FixResult = {
   fixed: { path: string; lines: string[] }[];

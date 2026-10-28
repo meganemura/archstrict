@@ -2,7 +2,7 @@ import { describe, expect, test, vi } from "vitest";
 import * as hegel from "@hegeldev/hegel";
 import * as gen from "@hegeldev/hegel/generators";
 import ts from "typescript";
-import { assertEdgesShapeValid } from "../src/config.js";
+import { assertEdgesShapeValid } from "../src/config/config.js";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,7 +11,7 @@ import { todo } from "../src/verbs/todo.js";
 import { check, filterToFile, formatText, hasBlockingViolations, loadConfig } from "../src/verbs/check.js";
 import type { Prover } from "../src/rules/config-meaning.js";
 import { ReportError } from "../src/report-error.js";
-import { buildModuleGraph, buildPreparedGraph, prepareGraph } from "../src/module-graph.js";
+import { buildModuleGraph, buildPreparedGraph, prepareGraph } from "../src/graph/module-graph.js";
 
 // A real ES module namespace object's own exports are read-only -
 // vi.spyOn cannot redefine `ts.createProgram` directly. Every call here

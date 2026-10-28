@@ -11,9 +11,9 @@ import { checkUncoveredModules } from "../src/rules/uncovered.js";
 import { checkMustBeEmpty } from "../src/rules/must-be-empty.js";
 import { check, loadConfig } from "../src/verbs/check.js";
 import { checkEdgesCoverage, checkOrder, checkPoint, formatPredicate } from "../src/rules/constraints.js";
-import { buildModuleGraph } from "../src/module-graph.js";
-import type { Config } from "../src/config.js";
-import type { ModuleGraph } from "../src/module-graph.js";
+import { buildModuleGraph } from "../src/graph/module-graph.js";
+import type { Config } from "../src/config/config.js";
+import type { ModuleGraph } from "../src/graph/module-graph.js";
 import { makeProjectRelativePosix } from "../src/project-path.js";
 
 const cli = resolve(dirname(fileURLToPath(import.meta.url)), "../dist/cli.js");

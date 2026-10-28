@@ -19,8 +19,8 @@ import assert from "node:assert/strict";
 import * as hegel from "@hegeldev/hegel";
 import * as gs from "@hegeldev/hegel/generators";
 import { checkAllowDeny, checkOrder, checkPoint, type ConstraintViolation } from "../src/rules/constraints.js";
-import type { Config } from "../src/config.js";
-import type { Edge, ModuleGraph } from "../src/module-graph.js";
+import type { Config } from "../src/config/config.js";
+import type { Edge, ModuleGraph } from "../src/graph/module-graph.js";
 import { makeProjectRelativePosix } from "../src/project-path.js";
 
 const DOMAINS = ["framework", "sql", "targets"] as const;

@@ -4,7 +4,7 @@
 // declaredModules entry per discovered dir - the shape "discovery becomes
 // an init-time suggestion" produces concretely. If this needed more than a
 // screen, the schema would be wrong for small projects.
-import type { Config } from "../../../src/config.js";
+import type { Config } from "../../../src/config/config.js";
 
 export default {
   configPath: "<fixture>",

@@ -6,19 +6,24 @@ import type { Config } from "./archstrict.types.js";
 // the caches and config beside it. A new rule file or a new verb file then
 // stays inside the module that already owns that kind of change.
 //
-// Flat files under src/ are one module because they change together: the
-// graph builder, config, caches, and the type-leak checker the builder
-// calls. A glob array can name a subset of siblings when a flat directory
-// holds more than one seam; this directory does not. cli.ts,
-// mcp-server.ts, and check-options.ts are peeled off with more-specific
-// globs: leaving them inside core would cycle core with verbs (the CLI
-// imports verbs, and verbs import the graph). map-shape.ts lives under
-// verbs: only those verbs call it.
+// The analysis engine under the rules is split by domain: src/config
+// holds what a project declared, src/graph holds what the code is, and
+// todo-store.ts holds the ratchet file. Splitting edge extraction or the
+// type closure out of src/graph was measured and refused: since
+// 2026-09-01 the edge files changed with the graph in 15 of 15 commits and
+// the type closure in 9 of 13, and moving only the type closure out made
+// a cycle through the edge cache's resolution key. A separate diagram module under src/verbs was refused too: it
+// changed in 4 commits, and its import of verbs/check.ts raised the
+// verbs module's fan-in. Flat files under src/ are single-file modules:
+// cli.ts, mcp-server.ts, and check-options.ts sit above verbs (the CLI
+// imports verbs, and verbs import the graph), and project-path.ts and
+// report-error.ts are below everything. map-shape.ts lives under verbs:
+// only those verbs call it.
 //
-// type-leak.ts lives in core, not under src/rules. The graph builder calls
-// that checker while it builds rule 6's closure, and the todo store reads
-// that rule's evidence marker. Leaving the file in the rules module made
-// those two calls a cycle with every other rule that reads the graph.
+// type-leak.ts lives in src/graph, not under src/rules. The graph builder
+// calls that checker while it builds rule 6's closure, and the todo store
+// reads that rule's evidence marker. Leaving the file in the rules module
+// made those two calls a cycle with every other rule that reads the graph.
 // A new rule stays in src/rules, which the order rule keeps under verbs
 // and off the core import path.
 //
@@ -108,26 +113,38 @@ export default {
       ],
     },
     {
-      name: "core",
-      glob: "src/*.ts",
-      // Files other modules import. augmentation-cache.ts, edge-cache.ts,
-      // the two edge engines, and gitignore.ts stay private: only the graph
-      // builder uses them. edge-engine-choice.ts is public because the CLI
-      // reads the engine choice and ends the engine around every verb.
-      surface: [
-        "classify.ts",
-        "config-pointer.ts",
-        "config.ts",
-        "edge-engine-choice.ts",
-        "module-candidates.ts",
-        "module-graph.ts",
-        "project-path.ts",
-        "report-error.ts",
-        "todo-store.ts",
-        "type-closure.ts",
-        "type-leak.ts",
-        "warm-graph.ts",
-      ],
+      // What the project declared: the config schema and loader, the
+      // pointers from a value back to its source text, and the glob-to-tag
+      // classifier the graph applies.
+      name: "config",
+      glob: "src/config/**",
+      surface: ["classify.ts", "config-pointer.ts", "config.ts"],
+    },
+    {
+      // What the code is: file discovery, the import edges and their
+      // caches, and the type closure behind rule 6. Every edge-engine and
+      // type-surface commit also touched module-graph.ts in most cases (15
+      // of 15 and 9 of 13 since 2026-09-01), so they are one module.
+      // edge-engine-choice.ts is public because the CLI reads the engine
+      // choice and ends the engine around every verb.
+      name: "graph",
+      glob: "src/graph/**",
+      surface: ["edge-engine-choice.ts", "module-candidates.ts", "module-graph.ts", "type-leak.ts", "warm-graph.ts"],
+    },
+    {
+      name: "todo-store",
+      glob: "src/todo-store.ts",
+      surface: "todo-store.ts",
+    },
+    {
+      name: "project-path",
+      glob: "src/project-path.ts",
+      surface: "project-path.ts",
+    },
+    {
+      name: "report-error",
+      glob: "src/report-error.ts",
+      surface: "report-error.ts",
     },
   ],
   classify: [
@@ -136,13 +153,23 @@ export default {
     { glob: "src/mcp-server.ts", tags: ["layer:mcp"] },
     { glob: "src/verbs/**", tags: ["layer:verbs"] },
     { glob: "src/rules/**", tags: ["layer:rules"] },
-    { glob: "src/*.ts", tags: ["layer:core"] },
+    { glob: "src/*.ts", tags: ["layer:core", "core:base"] },
+    { glob: "src/config/**", tags: ["layer:core", "core:config"] },
+    { glob: "src/graph/**", tags: ["layer:core", "core:graph"] },
+    { glob: "src/todo-store.ts", tags: ["layer:core", "core:todo"] },
     // The one file that may load tsrs (ARCHSTRICT_ENGINE=tsrs). It keeps its
     // layer tag; the engine tag is what the point rules below exclude.
-    { glob: "src/edge-engine-tsrs.ts", tags: ["layer:core", "engine:tsrs"] },
+    { glob: "src/graph/edge-engine-tsrs.ts", tags: ["layer:core", "core:graph", "engine:tsrs"] },
   ],
   edges: {
     order: [
+      {
+        tagNamespace: "core",
+        sequence: { "": ["base", "config", "graph", "todo"] },
+        direction: "downward-only",
+        because:
+          "inside core, the graph reads the declared config, and the todo ratchet reads the graph; config never needs the graph to load",
+      },
       {
         tagNamespace: "layer",
         sequence: { "": ["core", "rules", "verbs", "mcp", "cli"] },
@@ -224,7 +251,7 @@ export default {
   },
   // Every module is clean. A later violation stays visible: todo will not
   // freeze a new one into a module on this list.
-  strict: ["check-options", "cli", "core", "mcp", "rules", "verbs"],
+  strict: ["check-options", "cli", "config", "graph", "mcp", "project-path", "report-error", "rules", "todo-store", "verbs"],
   because:
-    "Seams follow change, not one file per module: core is the analysis engine (graph, config, caches, the type-leak checker the graph builder calls, and the todo ratchet), rules and verbs are the directories new rules and verbs land in, and cli, mcp, and check-options sit above them so packaging does not cycle back into the graph. layer order keeps that direction. The MCP SDK is confined to the mcp module.",
+    "Seams follow change, not one file per module: the core layer is the analysis engine, split into config (what a project declared), graph (what the code is: discovery, edges, caches, and the type closure behind rule 6), and the todo store, in that order, rules and verbs are the directories new rules and verbs land in, and cli, mcp, and check-options sit above them so packaging does not cycle back into the graph. layer order keeps that direction. The MCP SDK is confined to the mcp module.",
 } satisfies Config;

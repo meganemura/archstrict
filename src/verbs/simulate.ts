@@ -3,10 +3,10 @@
 import { existsSync, realpathSync } from "node:fs";
 import { basename } from "node:path";
 import ts from "typescript";
-import { buildModuleGraphForRules, DEFAULT_SURFACE, isEligibleSourceFile, isResolvableFile, prepareGraph, type ModuleGraph } from "../module-graph.js";
+import { buildModuleGraphForRules, DEFAULT_SURFACE, isEligibleSourceFile, isResolvableFile, prepareGraph, type ModuleGraph } from "../graph/module-graph.js";
 import { fingerprintOf, relativizeForTodo } from "../todo-store.js";
 import { applyTodo, formatText, loadConfig, runRules, type AnyViolation, type CheckResult } from "./check.js";
-import { createConfigLocator } from "../config-pointer.js";
+import { createConfigLocator } from "../config/config-pointer.js";
 import { compilerDirname, compilerJoin, compilerResolve } from "../project-path.js";
 import { focusNoteLines, focusSkip, focusSkipNote, setFocusNotes } from "./focus-note.js";
 

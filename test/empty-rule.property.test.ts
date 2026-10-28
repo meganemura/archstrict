@@ -12,11 +12,11 @@ import { fileURLToPath } from "node:url";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { compileGlob } from "../src/classify.js";
-import { buildModuleGraph } from "../src/module-graph.js";
+import { compileGlob } from "../src/config/classify.js";
+import { buildModuleGraph } from "../src/graph/module-graph.js";
 import { checkEmptyRuleSet } from "../src/rules/empty-rule.js";
-import { createConfigLocator, locateViolations } from "../src/config-pointer.js";
-import type { Config } from "../src/config.js";
+import { createConfigLocator, locateViolations } from "../src/config/config-pointer.js";
+import type { Config } from "../src/config/config.js";
 
 const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), "fixtures/uncovered"); // a, b, c
 const CYCLES_FIXTURE = join(dirname(fileURLToPath(import.meta.url)), "fixtures/cycles");

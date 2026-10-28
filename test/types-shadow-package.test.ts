@@ -9,9 +9,9 @@
 import { describe, expect, test } from "vitest";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { buildModuleGraph } from "../src/module-graph.js";
+import { buildModuleGraph } from "../src/graph/module-graph.js";
 import { checkAllowDeny } from "../src/rules/constraints.js";
-import type { Config } from "../src/config.js";
+import type { Config } from "../src/config/config.js";
 
 const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), "fixtures/types-shadow-package");
 

@@ -3,10 +3,10 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { buildModuleGraph } from "../src/module-graph.js";
+import { buildModuleGraph } from "../src/graph/module-graph.js";
 import { checkEmptyRuleSet } from "../src/rules/empty-rule.js";
-import { createConfigLocator, locateViolations } from "../src/config-pointer.js";
-import type { Config } from "../src/config.js";
+import { createConfigLocator, locateViolations } from "../src/config/config-pointer.js";
+import type { Config } from "../src/config/config.js";
 
 const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), "fixtures/uncovered"); // a, b, c
 // c imports from both a (its surface, and a bypass into a/internal.ts) and

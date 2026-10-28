@@ -4,7 +4,7 @@ import { describe, test } from "vitest";
 import assert from "node:assert/strict";
 import * as hegel from "@hegeldev/hegel";
 import * as gs from "@hegeldev/hegel/generators";
-import type { Config } from "../src/config.js";
+import type { Config } from "../src/config/config.js";
 import { escapeLabel, renderDiagram } from "../src/verbs/diagram-mermaid.js";
 import { buildDiagramModel, focusModel, type FileRow } from "../src/verbs/diagram-model.js";
 

@@ -4,7 +4,7 @@
 // every constraint shape appears at least once, in the syntax an agent
 // would type. Not wired to any rule yet - `edges` is typed but
 // unimplemented until the constraint engine lands.
-import type { Config } from "../../../src/config.js";
+import type { Config } from "../../../src/config/config.js";
 
 export default {
   configPath: "<fixture>",

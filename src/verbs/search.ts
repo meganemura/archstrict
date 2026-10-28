@@ -2,7 +2,7 @@
 // Boundary: reads declared modules; does not search private declarations or change project files.
 import { resolve } from "node:path";
 import ts from "typescript";
-import { buildModuleGraphForRules } from "../module-graph.js";
+import { buildModuleGraphForRules } from "../graph/module-graph.js";
 import { loadConfig } from "./check.js";
 
 type SearchMatch = {

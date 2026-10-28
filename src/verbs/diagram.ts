@@ -2,8 +2,8 @@
 // Boundary: no import graph, no TypeScript program, no writes. Meaning is diagram-model.ts and
 // Mermaid syntax is diagram-mermaid.ts.
 import { basename, resolve } from "node:path";
-import { classifyFile } from "../classify.js";
-import { DEFAULT_SURFACE, listAnalyzedFiles, moduleForDeclaredFile, toProjectRelativePosix } from "../module-graph.js";
+import { classifyFile } from "../config/classify.js";
+import { DEFAULT_SURFACE, listAnalyzedFiles, moduleForDeclaredFile, toProjectRelativePosix } from "../graph/module-graph.js";
 import { loadConfig } from "./check.js";
 import { buildDiagramModel, describeQualifier, focusModel, type FileRow, type LinkKind } from "./diagram-model.js";
 import { renderDiagram, renderMarkdown, type DiagramDetail, type DiagramDirection } from "./diagram-mermaid.js";

@@ -11,7 +11,7 @@ type PathModule = typeof import("node:path");
 async function classifyByDirectoryNameOn(separator: "/" | "\\") {
   vi.resetModules();
   vi.doMock("node:path", async (importOriginal) => ({ ...(await importOriginal<PathModule>()), sep: separator }));
-  const { classifyByDirectoryName } = await import("../src/classify.js");
+  const { classifyByDirectoryName } = await import("../src/config/classify.js");
   return classifyByDirectoryName;
 }
 

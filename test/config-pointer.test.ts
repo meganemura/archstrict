@@ -12,14 +12,14 @@ import { join } from "node:path";
 import { test } from "vitest";
 import * as hegel from "@hegeldev/hegel";
 import * as gs from "@hegeldev/hegel/generators";
-import type { Config } from "../src/config.js";
+import type { Config } from "../src/config/config.js";
 import {
   createConfigLocator,
   declaredModulePointerForName,
   locateViolation,
   type ConfigPointer,
   type UnlocatedViolation,
-} from "../src/config-pointer.js";
+} from "../src/config/config-pointer.js";
 
 function positionOf(source: string, marker: string): { line: number; column: number } {
   const offset = source.indexOf(marker);

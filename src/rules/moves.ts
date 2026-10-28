@@ -2,9 +2,9 @@
 // Boundary: decorates existing findings; never emits violations or applies edits.
 // Retag moves are deferred: shared classification globs can affect sibling files and every rule that uses those tags.
 // Such moves need a broader verification pass than these local proposals.
-import { classifyFile, classifyByDirectoryName } from "../classify.js";
-import type { Config } from "../config.js";
-import { type ModuleGraph } from "../module-graph.js";
+import { classifyFile, classifyByDirectoryName } from "../config/classify.js";
+import type { Config } from "../config/config.js";
+import { type ModuleGraph } from "../graph/module-graph.js";
 import { computeAllowDeny, checkExhaustiveAllow, isExemptedByGlobPair, targetTagsInGraph,
   type AllowDenyMatch, type ConstraintViolation } from "./constraints.js";
 

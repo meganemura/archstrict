@@ -22,8 +22,8 @@ import {
   moduleGlobList,
   toProjectRelativePosix,
   type ModuleGraph,
-} from "../src/module-graph.js";
-import { compileGlob } from "../src/classify.js";
+} from "../src/graph/module-graph.js";
+import { compileGlob } from "../src/config/classify.js";
 import { checkUncoveredModules } from "../src/rules/uncovered.js";
 import { makeProjectRelativePosix } from "../src/project-path.js";
 

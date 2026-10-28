@@ -1,4 +1,4 @@
-import { ReportError } from "./report-error.js";
+import { ReportError } from "../report-error.js";
 
 // The only schema loadConfig accepts. init writes this value into a new
 // archstrict.config.ts. A config that omits the field is this same schema

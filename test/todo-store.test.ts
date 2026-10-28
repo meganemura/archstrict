@@ -6,7 +6,7 @@ import * as gen from "@hegeldev/hegel/generators";
 import { mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildModuleGraph } from "../src/module-graph.js";
+import { buildModuleGraph } from "../src/graph/module-graph.js";
 import { runRules, applyTodo } from "../src/verbs/check.js";
 import { ReportError } from "../src/report-error.js";
 

@@ -10,7 +10,7 @@ import { describe, expect, test } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildModuleGraph } from "../src/module-graph.js";
+import { buildModuleGraph } from "../src/graph/module-graph.js";
 import { checkCycles } from "../src/rules/cycles.js";
 
 function writeFixture(root: string, aImport: string): void {

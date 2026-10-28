@@ -53,11 +53,11 @@ import { readAugmentationCache, writeAugmentationCache, type CachedAugmentationE
 import { existsSync, readFileSync, readdirSync, realpathSync, statSync, type Dirent } from "node:fs";
 import { join, relative } from "node:path";
 import { builtinModules } from "node:module";
-import { compileGlob, mostSpecificMatch } from "./classify.js";
-import { ReportError } from "./report-error.js";
+import { compileGlob, mostSpecificMatch } from "../config/classify.js";
+import { ReportError } from "../report-error.js";
 import { buildTypeClosure, computeSyntacticNamedDeclarations, type TypeClosureInputs } from "./type-closure.js";
 import { checkTypeLeaks, type Violation as TypeLeakViolation } from "./type-leak.js";
-import { compilerJoin, compilerDirname, compilerRealpath, makeProjectRelativePosix, toTypeScriptPath, type ProjectRelativePath } from "./project-path.js";
+import { compilerJoin, compilerDirname, compilerRealpath, makeProjectRelativePosix, toTypeScriptPath, type ProjectRelativePath } from "../project-path.js";
 import { edgeEngineFromEnvironment } from "./edge-engine-choice.js";
 import { moduleAugmentationSpecifiers, openEdgeSession, scriptKindForFile, type EdgeResolution,
   type FileImportWalk, type ImportRecord, type ModuleAugmentationSpecifier, type Position } from "./edge-engine.js";
@@ -2052,7 +2052,7 @@ function hash(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
-const ARCHSTRICT_VERSION: string = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
+const ARCHSTRICT_VERSION: string = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")).version;
 
 // A hash of the built files whose own code produces a cache entry
 // (this file, edge-cache.ts, and the two edge engines, read from beside

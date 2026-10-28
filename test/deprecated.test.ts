@@ -1,11 +1,11 @@
 import { describe, expect, test } from "vitest";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { buildModuleGraph } from "../src/module-graph.js";
+import { buildModuleGraph } from "../src/graph/module-graph.js";
 import { checkDeprecatedEdges } from "../src/rules/deprecated.js";
 import { checkEmptyRuleSet } from "../src/rules/empty-rule.js";
-import { createConfigLocator, locateViolations } from "../src/config-pointer.js";
-import type { Config } from "../src/config.js";
+import { createConfigLocator, locateViolations } from "../src/config/config-pointer.js";
+import type { Config } from "../src/config/config.js";
 
 // c -> a has 2 edges (widget via public.ts, secret via internal.ts);
 // c -> b has 1 edge (gadget).

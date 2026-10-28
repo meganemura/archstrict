@@ -14,7 +14,7 @@ import * as gen from "@hegeldev/hegel/generators";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
-import { buildModuleGraph } from "../src/module-graph.js";
+import { buildModuleGraph } from "../src/graph/module-graph.js";
 import { applyTodo, check, filterToFile, runRules, type AnyViolation } from "../src/verbs/check.js";
 import { fingerprintOf, readTodoFile, writeTodoFile, type TodoEntry } from "../src/todo-store.js";
 import { todo } from "../src/verbs/todo.js";

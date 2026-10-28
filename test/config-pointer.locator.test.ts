@@ -12,8 +12,8 @@ import { join } from "node:path";
 import { describe, test } from "vitest";
 import * as hegel from "@hegeldev/hegel";
 import * as gs from "@hegeldev/hegel/generators";
-import type { Config } from "../src/config.js";
-import { createConfigLocator, locateViolation, withPointerSpecs } from "../src/config-pointer.js";
+import type { Config } from "../src/config/config.js";
+import { createConfigLocator, locateViolation, withPointerSpecs } from "../src/config/config-pointer.js";
 import { loadConfig } from "../src/verbs/check.js";
 
 const configPath = "/project/archstrict.config.ts";

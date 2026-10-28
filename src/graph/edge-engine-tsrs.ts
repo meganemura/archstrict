@@ -24,8 +24,8 @@ import { pathToFileURL } from "node:url";
 import type * as TsrsSync from "tsrs/unstable/sync";
 import type * as TsrsAst from "tsrs/unstable/ast";
 import type * as TsrsFs from "tsrs/unstable/fs";
-import { compilerDirname } from "./project-path.js";
-import { ReportError } from "./report-error.js";
+import { compilerDirname } from "../project-path.js";
+import { ReportError } from "../report-error.js";
 import { TSRS_INSTALL, TSRS_VERSION, onEdgeEngineClose } from "./edge-engine-choice.js";
 import { edgeResolutionOf, type EdgeResolution, type EdgeSession, type EdgeSessionInputs,
   type FileImportWalk, type ImportRecord, type ModuleAugmentationSpecifier } from "./edge-engine.js";

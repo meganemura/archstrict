@@ -10,11 +10,11 @@ import * as gen from "@hegeldev/hegel/generators";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, renameSync, realpathSync, statSync, utimesSync, chmodSync, existsSync, symlinkSync } from "node:fs";
 import { join, dirname, relative, resolve, sep, win32 } from "node:path";
 import { tmpdir } from "node:os";
-import { buildModuleGraph, buildModuleGraphForRules, buildPreparedGraph, prepareGraph, type ModuleGraph, type BuildOptions } from "../src/module-graph.js";
-import { readEdgeCache, writeEdgeCache, shardIndexForRelativePath, SHARD_COUNT, type EdgeCache, type CachedFileEntry, type CachedResolution } from "../src/edge-cache.js";
+import { buildModuleGraph, buildModuleGraphForRules, buildPreparedGraph, prepareGraph, type ModuleGraph, type BuildOptions } from "../src/graph/module-graph.js";
+import { readEdgeCache, writeEdgeCache, shardIndexForRelativePath, SHARD_COUNT, type EdgeCache, type CachedFileEntry, type CachedResolution } from "../src/graph/edge-cache.js";
 import { rules } from "../src/verbs/rules.js";
 import { check, filterToFile } from "../src/verbs/check.js";
-import { checkTypeLeaks } from "../src/type-leak.js";
+import { checkTypeLeaks } from "../src/graph/type-leak.js";
 import { makeAbsolutePosix, makeProjectRelativePosix } from "../src/project-path.js";
 
 // `failRenameTo`: set to an absolute path to make exactly the next

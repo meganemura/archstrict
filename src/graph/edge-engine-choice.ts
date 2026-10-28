@@ -4,7 +4,7 @@
 // tsrs: the CLI reads this before every verb, and loading a compiler here
 // would cost `archstrict agents` and `--help` the time the CLI's lazy verb
 // imports exist to save. The engines are in edge-engine.ts.
-import { ReportError } from "./report-error.js";
+import { ReportError } from "../report-error.js";
 
 export const EDGE_ENGINES = ["typescript", "tsrs"] as const;
 export type EdgeEngineName = (typeof EDGE_ENGINES)[number];

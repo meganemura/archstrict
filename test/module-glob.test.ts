@@ -8,14 +8,14 @@ import * as gen from "@hegeldev/hegel/generators";
 import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { mostSpecificMatch } from "../src/classify.js";
+import { mostSpecificMatch } from "../src/config/classify.js";
 import {
   buildModuleGraph,
   declaredModuleMembership,
   globResolutionDir,
   moduleForDeclaredFile,
   sharedGlobResolutionDir,
-} from "../src/module-graph.js";
+} from "../src/graph/module-graph.js";
 import { check, formatText, loadConfig } from "../src/verbs/check.js";
 import { init } from "../src/verbs/init.js";
 import { recommend } from "../src/verbs/recommend.js";

@@ -8,7 +8,7 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { CallToolRequestSchema, ListToolsRequestSchema, type Tool } from "@modelcontextprotocol/sdk/types.js";
 import { readFileSync } from "node:fs";
 import { ReportError } from "./report-error.js";
-import { createWarmGraph } from "./warm-graph.js";
+import { createWarmGraph } from "./graph/warm-graph.js";
 import { CHECK_FULL_LIST_LIMIT, check, groupedToolCheck, type CheckResult } from "./verbs/check.js";
 import { rules } from "./verbs/rules.js";
 import { search } from "./verbs/search.js";

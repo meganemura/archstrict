@@ -14,11 +14,11 @@ import { dirname, join } from "node:path";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import ts from "typescript";
-import { buildPreparedGraph, prepareGraph, type DeclaredModule } from "../src/module-graph.js";
+import { buildPreparedGraph, prepareGraph, type DeclaredModule } from "../src/graph/module-graph.js";
 import { check, formatText } from "../src/verbs/check.js";
 import { formatSearchText, type SearchResult } from "../src/verbs/search.js";
 import { formatFixText, type FixResult } from "../src/verbs/fix.js";
-import { checkTypeLeaks } from "../src/type-leak.js";
+import { checkTypeLeaks } from "../src/graph/type-leak.js";
 
 const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), "fixtures/type-leak-closure");
 const declaredModules: DeclaredModule[] = [{ name: "m", glob: "src/m/**" }];

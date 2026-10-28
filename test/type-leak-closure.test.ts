@@ -15,8 +15,8 @@ import { dirname, join } from "node:path";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import ts from "typescript";
-import { buildModuleGraph, prepareGraph, type DeclaredModule, type ModuleGraph } from "../src/module-graph.js";
-import { checkTypeLeaks, type Violation } from "../src/type-leak.js";
+import { buildModuleGraph, prepareGraph, type DeclaredModule, type ModuleGraph } from "../src/graph/module-graph.js";
+import { checkTypeLeaks, type Violation } from "../src/graph/type-leak.js";
 
 const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), "fixtures/type-leak-closure");
 const declaredModules: DeclaredModule[] = [{ name: "m", glob: "src/m/**" }];

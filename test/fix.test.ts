@@ -21,8 +21,8 @@ vi.mock("typescript", async (importOriginal) => {
 import { fix, formatFixText, type FixResult } from "../src/verbs/fix.js";
 import { check } from "../src/verbs/check.js";
 import * as writes from "../src/verbs/agents.js";
-import * as graphs from "../src/module-graph.js";
-import * as warmGraphs from "../src/warm-graph.js";
+import * as graphs from "../src/graph/module-graph.js";
+import * as warmGraphs from "../src/graph/warm-graph.js";
 import { fingerprintOf, writeTodoFile } from "../src/todo-store.js";
 
 type Fixture = { root: string; surface: string; put: (path: string, text: string) => void; options: graphs.BuildOptions };

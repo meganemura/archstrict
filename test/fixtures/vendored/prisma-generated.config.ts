@@ -1,4 +1,4 @@
-import type { Config } from "../../../src/config.js";
+import type { Config } from "../../../src/config/config.js";
 
 export default {
   configPath: "<generated>",

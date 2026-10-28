@@ -7,11 +7,11 @@ import * as gen from "@hegeldev/hegel/generators";
 import { mkdtempSync, mkdirSync, writeFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { classifyFile, compileGlob } from "../src/classify.js";
-import { buildModuleGraph, toProjectRelativePosix } from "../src/module-graph.js";
+import { classifyFile, compileGlob } from "../src/config/classify.js";
+import { buildModuleGraph, toProjectRelativePosix } from "../src/graph/module-graph.js";
 import { checkAllowDeny, checkOrder, checkPoint, matchesPredicate, type FromToPredicate } from "../src/rules/constraints.js";
 import { rules, type RulesResult } from "../src/verbs/rules.js";
-import type { Config } from "../src/config.js";
+import type { Config } from "../src/config/config.js";
 
 const cases = Number(process.env.ARCHSTRICT_PROJECTION_CASES ?? 20);
 

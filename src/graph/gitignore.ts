@@ -13,7 +13,7 @@
 // binary, still skips what the checkout's own .gitignore files name.
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
-import { compilerDirname } from "./project-path.js";
+import { compilerDirname } from "../project-path.js";
 
 // `literal` is set for an unanchored pattern with no wildcard or escape
 // (`node_modules/`, `Thumbs.db`): it matches a basename exactly.

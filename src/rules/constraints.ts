@@ -25,13 +25,13 @@ import { computeMoves, type Move } from "./moves.js";
 // Move is part of ConstraintViolation's public shape. Naming it from this
 // surface keeps moves.ts private: only constraints.ts imports that file.
 export type { Move };
-import { compileGlob } from "../classify.js";
-import { classifyFile } from "../classify.js";
-import { type Edge, type ModuleGraph } from "../module-graph.js";
+import { compileGlob } from "../config/classify.js";
+import { classifyFile } from "../config/classify.js";
+import { type Edge, type ModuleGraph } from "../graph/module-graph.js";
 import type { ProjectRelativePath } from "../project-path.js";
-import type { Config } from "../config.js";
+import type { Config } from "../config/config.js";
 import { ReportError } from "../report-error.js";
-import { withPointerSpecs } from "../config-pointer.js";
+import { withPointerSpecs } from "../config/config-pointer.js";
 
 export type ConstraintViolation = {
   rule: "tag-boundary" | "tag-order" | "point-rule";

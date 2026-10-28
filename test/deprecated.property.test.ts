@@ -8,9 +8,9 @@ import * as hegel from "@hegeldev/hegel";
 import * as gs from "@hegeldev/hegel/generators";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { buildModuleGraph } from "../src/module-graph.js";
+import { buildModuleGraph } from "../src/graph/module-graph.js";
 import { checkDeprecatedEdges } from "../src/rules/deprecated.js";
-import type { Config } from "../src/config.js";
+import type { Config } from "../src/config/config.js";
 
 // c -> a has 2 edges; c -> b has 1 edge (test/deprecated.test.ts's own
 // header has the detail).

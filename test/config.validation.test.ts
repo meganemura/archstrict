@@ -6,7 +6,7 @@ import * as gen from "@hegeldev/hegel/generators";
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Config } from "../src/config.js";
+import type { Config } from "../src/config/config.js";
 import { check, loadConfig } from "../src/verbs/check.js";
 
 test("edge shape errors identify the faulty value and give the matching edit", async () => {

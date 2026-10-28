@@ -35,7 +35,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { init } from "../src/verbs/init.js";
-import type { Config } from "../src/config.js";
+import type { Config } from "../src/config/config.js";
 
 const EXPECTED_GENERATED_FIELDS = [
   "schemaVersion",

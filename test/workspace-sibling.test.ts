@@ -10,9 +10,9 @@ import { describe, expect, test } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildModuleGraph } from "../src/module-graph.js";
+import { buildModuleGraph } from "../src/graph/module-graph.js";
 import { checkAllowDeny, checkEdgesCoverage } from "../src/rules/constraints.js";
-import type { Config } from "../src/config.js";
+import type { Config } from "../src/config/config.js";
 
 function writeWorkspaceFixture(root: string): void {
   mkdirSync(join(root, "packages", "a"), { recursive: true });

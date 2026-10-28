@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { join } from "node:path";
 import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { buildModuleGraph, type ModuleGraph } from "../src/module-graph.js";
+import { buildModuleGraph, type ModuleGraph } from "../src/graph/module-graph.js";
 import { checkPublicSurfaceBypass } from "../src/rules/public-surface.js";
 
 const bypassFilesWithConflictingPositionOrder: Record<string, string> = {

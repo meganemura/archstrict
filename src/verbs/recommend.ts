@@ -3,11 +3,11 @@
 import { existsSync } from "node:fs";
 import { relative, resolve, sep } from "node:path";
 import { applyTodo, loadConfig, runRules, type AnyViolation } from "./check.js";
-import { AmbiguousClassifyError, classifyByGlob, mostSpecificMatch } from "../classify.js";
-import type { Config } from "../config.js";
-import { createConfigLocator } from "../config-pointer.js";
+import { AmbiguousClassifyError, classifyByGlob, mostSpecificMatch } from "../config/classify.js";
+import type { Config } from "../config/config.js";
+import { createConfigLocator } from "../config/config-pointer.js";
 import { fingerprintOf, relativizeForTodo } from "../todo-store.js";
-import { buildModuleGraphForRules, DEFAULT_SURFACE, moduleGlobBaseDir, moduleGlobList, type Module, type ModuleGlob, type ModuleGraph } from "../module-graph.js";
+import { buildModuleGraphForRules, DEFAULT_SURFACE, moduleGlobBaseDir, moduleGlobList, type Module, type ModuleGlob, type ModuleGraph } from "../graph/module-graph.js";
 import { childDirectoryAdvice, childDirectoryCounts, dominantByFiles, filePerModuleCluster } from "./map-shape.js";
 // Without a config, recommend previews init's own walk in memory (same
 // argument rules, same groups and globs) instead of running its own

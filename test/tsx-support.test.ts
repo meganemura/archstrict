@@ -13,8 +13,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { init } from "../src/verbs/init.js";
 import { check, loadConfig } from "../src/verbs/check.js";
-import { buildModuleGraph, isEligibleSourceFile } from "../src/module-graph.js";
-import { checkTypeLeaks } from "../src/type-leak.js";
+import { buildModuleGraph, isEligibleSourceFile } from "../src/graph/module-graph.js";
+import { checkTypeLeaks } from "../src/graph/type-leak.js";
 
 function scratchProject(prefix: string): { root: string; put: (relPath: string, contents: string) => void } {
   const root = realpathSync(mkdtempSync(join(tmpdir(), prefix)));

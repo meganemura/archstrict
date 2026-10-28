@@ -10,7 +10,7 @@ import {
   suggestUncovered,
   groupForRelFile,
   suggestionDoText,
-} from "../src/module-candidates.js";
+} from "../src/graph/module-candidates.js";
 
 describe("nameCandidates", () => {
   test("case 1: a group's own on-disk name, with no collision", () => {

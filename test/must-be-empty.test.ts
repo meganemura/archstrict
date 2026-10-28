@@ -1,11 +1,11 @@
 import { describe, expect, test } from "vitest";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { buildModuleGraph } from "../src/module-graph.js";
+import { buildModuleGraph } from "../src/graph/module-graph.js";
 import { runRules } from "../src/verbs/check.js";
 import { checkMustBeEmpty } from "../src/rules/must-be-empty.js";
-import type { Config } from "../src/config.js";
-import { createConfigLocator, locateViolation } from "../src/config-pointer.js";
+import type { Config } from "../src/config/config.js";
+import { createConfigLocator, locateViolation } from "../src/config/config-pointer.js";
 
 const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), "fixtures/public-surface");
 

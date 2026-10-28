@@ -24,7 +24,7 @@
 // would make that call a cycle with every other rule that reads the graph.
 import ts from "typescript";
 import { relative } from "node:path";
-import { toTypeScriptPath } from "./project-path.js";
+import { toTypeScriptPath } from "../project-path.js";
 import { declarationKey, sourceFileKey } from "./type-closure.js";
 
 type Via = "inferred-return" | "generic-parameter" | "structural";

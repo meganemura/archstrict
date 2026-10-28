@@ -9,9 +9,9 @@
 // convention every other rule here follows.
 // Boundary: pure predicate over a file list and a Config. No I/O of its
 // own (the caller supplies which files exist), no output formatting.
-import { compileGlob } from "../classify.js";
-import type { Config } from "../config.js";
-import { withPointerSpecs } from "../config-pointer.js";
+import { compileGlob } from "../config/classify.js";
+import type { Config } from "../config/config.js";
+import { withPointerSpecs } from "../config/config-pointer.js";
 
 export type Violation = {
   rule: "must-be-empty";

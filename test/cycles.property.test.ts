@@ -9,7 +9,7 @@ import * as gs from "@hegeldev/hegel/generators";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildModuleGraph } from "../src/module-graph.js";
+import { buildModuleGraph } from "../src/graph/module-graph.js";
 import { checkCycles } from "../src/rules/cycles.js";
 
 const MODULE_NAMES = ["m1", "m2", "m3", "m4"] as const;

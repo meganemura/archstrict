@@ -9,7 +9,7 @@ import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import { search, tokenize, formatSearchText, type SearchResult } from "../src/verbs/search.js";
-import { buildPreparedGraph, prepareGraph } from "../src/module-graph.js";
+import { buildPreparedGraph, prepareGraph } from "../src/graph/module-graph.js";
 
 function put(root: string, path: string, content: string) {
   mkdirSync(dirname(join(root, path)), { recursive: true });

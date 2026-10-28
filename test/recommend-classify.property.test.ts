@@ -4,7 +4,7 @@ import { test } from "vitest";
 import assert from "node:assert/strict";
 import * as hegel from "@hegeldev/hegel";
 import * as gs from "@hegeldev/hegel/generators";
-import { AmbiguousClassifyError, classifyByGlob } from "../src/classify.js";
+import { AmbiguousClassifyError, classifyByGlob } from "../src/config/classify.js";
 import { mergeClassify, shownClassify } from "../src/verbs/recommend.js";
 
 const FILES = ["src/a/index.ts", "src/a/x.ts", "src/a/deep/y.ts", "src/b/index.ts", "src/b/x.ts", "src/c.ts", "test/a.ts"];

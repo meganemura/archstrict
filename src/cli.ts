@@ -10,7 +10,7 @@ import type { Change } from "./verbs/simulate.js";
 import { readFileSync } from "node:fs";
 import { ReportError } from "./report-error.js";
 import { parseCheckArgv } from "./check-options.js";
-import { closeEdgeEngine, edgeEngineFromEnvironment } from "./edge-engine-choice.js";
+import { closeEdgeEngine, edgeEngineFromEnvironment } from "./graph/edge-engine-choice.js";
 
 // One table, keyed by verb. Help and an unknown verb both print it, so a second usage string cannot drift.
 // `writes` marks the verbs that create or edit project files. Help returns before those verbs run.

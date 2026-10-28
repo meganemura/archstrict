@@ -9,7 +9,7 @@ import { describe, expect, test, vi } from "vitest";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { isPathGitignored } from "../src/gitignore.js";
+import { isPathGitignored } from "../src/graph/gitignore.js";
 
 vi.mock("node:path", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:path")>();

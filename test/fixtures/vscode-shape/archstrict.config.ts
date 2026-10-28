@@ -3,7 +3,7 @@
 // restrictions), ported to the same tag schema the Prisma fixture uses.
 // Proves `classifyByDirectoryName` and an external `pkg:` target compose
 // with the same `allowDeny` shape, no special case.
-import type { Config } from "../../../src/config.js";
+import type { Config } from "../../../src/config/config.js";
 
 export default {
   configPath: "<fixture>",

@@ -4,8 +4,8 @@ import { execFileSync, spawn } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { resolve } from "node:path";
-import { compileGlob } from "../classify.js";
-import { buildModuleGraphForRules, moduleForDeclaredFile, type ModuleGraph } from "../module-graph.js";
+import { compileGlob } from "../config/classify.js";
+import { buildModuleGraphForRules, moduleForDeclaredFile, type ModuleGraph } from "../graph/module-graph.js";
 import { applyTodo, loadConfig, readCurrentTodo, runRules } from "./check.js";
 
 type RuleCounts = Record<string, number>;

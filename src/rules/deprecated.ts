@@ -8,9 +8,9 @@
 // output formatting. Does not suppress rule 1: a deprecated edge that also
 // bypasses its target's public surface is still a rule-1 violation —
 // deprecated means "shrinking," not "exempt from every other rule."
-import type { Config } from "../config.js";
-import type { ModuleGraph } from "../module-graph.js";
-import { withPointerSpecs } from "../config-pointer.js";
+import type { Config } from "../config/config.js";
+import type { ModuleGraph } from "../graph/module-graph.js";
+import { withPointerSpecs } from "../config/config-pointer.js";
 import { ReportError } from "../report-error.js";
 
 // Throws if any `deprecated` entry names a module that doesn't exist.

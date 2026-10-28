@@ -7,7 +7,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import { prepareGraph } from "../src/module-graph.js";
+import { prepareGraph } from "../src/graph/module-graph.js";
 import { check, formatText } from "../src/verbs/check.js";
 
 const declaredModules = [{ name: "app", glob: "src/app/**" }];

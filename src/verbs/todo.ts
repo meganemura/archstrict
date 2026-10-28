@@ -9,8 +9,8 @@
 // both agree on the same identity for the same violation without
 // depending on each other.
 import { join } from "node:path";
-import { buildModuleGraphForRules, type ModuleGraph } from "../module-graph.js";
-import type { Config } from "../config.js";
+import { buildModuleGraphForRules, type ModuleGraph } from "../graph/module-graph.js";
+import type { Config } from "../config/config.js";
 import { ReportError } from "../report-error.js";
 import {
   buildTodoEntry,

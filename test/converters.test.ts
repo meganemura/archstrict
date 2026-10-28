@@ -144,9 +144,9 @@ describe("convert-prisma-architecture-config.mjs", () => {
     const fresh = regenerate("convert-prisma-architecture-config.mjs", "prisma-architecture.config.json");
     const committed = readFileSync(join(VENDORED, "prisma-generated.config.ts"), "utf8")
       // The committed fixture's import path differs on purpose (this
-      // project's own src/config.js, not a real project's generated
+      // project's own src/config/config.js, not a real project's generated
       // file) - normalize both sides before comparing everything else.
-      .replace('import type { Config } from "../../../src/config.js";', 'import type { Config } from "./archstrict.types.js";');
+      .replace('import type { Config } from "../../../src/config/config.js";', 'import type { Config } from "./archstrict.types.js";');
     expect(fresh).toBe(committed);
   });
 });
@@ -203,7 +203,7 @@ describe("convert-vscode-layering-config.mjs", () => {
   test("the committed fixture is not stale: regenerating from the same vendored input produces the identical file", () => {
     const fresh = regenerate("convert-vscode-layering-config.mjs", "vscode-code-layering.json");
     const committed = readFileSync(join(VENDORED, "vscode-generated.config.ts"), "utf8").replace(
-      'import type { Config } from "../../../src/config.js";',
+      'import type { Config } from "../../../src/config/config.js";',
       'import type { Config } from "./archstrict.types.js";',
     );
     expect(fresh).toBe(committed);

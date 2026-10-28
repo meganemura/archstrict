@@ -7,9 +7,9 @@
 // field JSON.stringify would keep.
 import { existsSync, statSync } from "node:fs";
 import { basename, isAbsolute } from "node:path";
-import { compileGlob } from "../classify.js";
-import type { Config } from "../config.js";
-import { DEFAULT_SURFACE, isEligibleSourceFile, toProjectRelativePosix } from "../module-graph.js";
+import { compileGlob } from "../config/classify.js";
+import type { Config } from "../config/config.js";
+import { DEFAULT_SURFACE, isEligibleSourceFile, toProjectRelativePosix } from "../graph/module-graph.js";
 import { compilerDirname, compilerJoin, compilerRealpath, compilerResolve } from "../project-path.js";
 
 type FocusSkip = "outside" | "excluded" | "unanalyzed";

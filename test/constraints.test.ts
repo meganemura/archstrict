@@ -21,7 +21,7 @@
 import { describe, expect, test } from "vitest";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { buildModuleGraph } from "../src/module-graph.js";
+import { buildModuleGraph } from "../src/graph/module-graph.js";
 import {
   checkAllowDeny,
   checkEdgesCoverage,
@@ -31,9 +31,9 @@ import {
   type ConstraintViolation,
   type FromToPredicate,
 } from "../src/rules/constraints.js";
-import type { Config } from "../src/config.js";
-import { createConfigLocator, locateViolation } from "../src/config-pointer.js";
-import type { Edge, ModuleGraph } from "../src/module-graph.js";
+import type { Config } from "../src/config/config.js";
+import { createConfigLocator, locateViolation } from "../src/config/config-pointer.js";
+import type { Edge, ModuleGraph } from "../src/graph/module-graph.js";
 import { makeProjectRelativePosix } from "../src/project-path.js";
 import { ReportError } from "../src/report-error.js";
 

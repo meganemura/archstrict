@@ -8,9 +8,9 @@
 // module glob holds files of six layers, and a module-to-module arrow would claim a ban the
 // config never wrote. Each selector therefore lists the modules that hold its files, with a
 // file count when only some of a module's files match.
-import { compileGlob } from "../classify.js";
-import type { Config } from "../config.js";
-import { DEFAULT_SURFACE, moduleGlobList } from "../module-graph.js";
+import { compileGlob } from "../config/classify.js";
+import type { Config } from "../config/config.js";
+import { DEFAULT_SURFACE, moduleGlobList } from "../graph/module-graph.js";
 import { ReportError } from "../report-error.js";
 import { formatPredicate, matchesPredicate, sequenceFor, type FromToPredicate } from "../rules/constraints.js";
 

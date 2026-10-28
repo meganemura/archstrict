@@ -8,7 +8,7 @@ import { describe, expect, test } from "vitest";
 import prismaShape from "./fixtures/prisma-shape/archstrict.config.js";
 import vscodeShape from "./fixtures/vscode-shape/archstrict.config.js";
 import nukadokoShape from "./fixtures/nukadoko-shape/archstrict.config.js";
-import { classifyByGlob, classifyByDirectoryName, classifyFile, compileGlob, AmbiguousClassifyError } from "../src/classify.js";
+import { classifyByGlob, classifyByDirectoryName, classifyFile, compileGlob, AmbiguousClassifyError } from "../src/config/classify.js";
 
 describe("design fixtures typecheck and load", () => {
   test("prisma-shape, vscode-shape, and nukadoko-shape all satisfy Config", () => {

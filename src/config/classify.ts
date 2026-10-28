@@ -17,7 +17,7 @@
 // directory-name match at once (VS Code's own env:* tags are pure ambient;
 // Prisma's are pure explicit; nothing requires a project pick only one).
 import { sep } from "node:path";
-import { ReportError } from "./report-error.js";
+import { ReportError } from "../report-error.js";
 
 type ClassifyEntry = { glob: string; tags: readonly string[] };
 type ClassifyByDirectoryName = { tagNamespace: string; names: readonly string[] };

@@ -12,7 +12,7 @@ import {
   readAugmentationCache,
   writeAugmentationCache,
   type CachedAugmentationEntry,
-} from "../src/augmentation-cache.js";
+} from "../src/graph/augmentation-cache.js";
 
 test("augmentation cache entries round-trip exactly", () => {
   const root = mkdtempSync(join(tmpdir(), "archstrict-augmentation-cache-"));

@@ -126,7 +126,7 @@ import { dirname, join } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import type ts from "typescript";
 import type { ImportRecord, ModuleAugmentationSpecifier } from "./edge-engine.js";
-import { makeAbsolutePosix, makeProjectRelativePosix, type ProjectRelativePath } from "./project-path.js";
+import { makeAbsolutePosix, makeProjectRelativePosix, type ProjectRelativePath } from "../project-path.js";
 
 // Bumped whenever the on-disk shape (header or shard encoding) changes -
 // an old cache is then a silent miss (parseHeader rejects the unknown

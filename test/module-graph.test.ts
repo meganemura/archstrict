@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join, relative } from "node:path";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { buildModuleGraph, prepareGraph, walkFileImports, listAnalyzedFiles, type DeclaredModule } from "../src/module-graph.js";
+import { buildModuleGraph, prepareGraph, walkFileImports, listAnalyzedFiles, type DeclaredModule } from "../src/graph/module-graph.js";
 
 const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), "fixtures/package-resolution");
 const declaredModules = [{ name: "consumer", glob: "src/consumer/**" }];

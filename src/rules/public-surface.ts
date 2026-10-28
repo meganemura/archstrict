@@ -10,8 +10,8 @@
 // Boundary: pure predicate over a ModuleGraph's cross-module edges. No I/O,
 // no output formatting (that is the `check` verb's job), no todo handling
 // (that is `todo`'s job).
-import { compileGlob } from "../classify.js";
-import { type Edge, type Module, type ModuleGraph } from "../module-graph.js";
+import { compileGlob } from "../config/classify.js";
+import { type Edge, type Module, type ModuleGraph } from "../graph/module-graph.js";
 import type { ProjectRelativePath } from "../project-path.js";
 
 export type Violation = {

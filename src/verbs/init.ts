@@ -32,16 +32,16 @@ import {
   moduleForDeclaredFile,
   toProjectRelativePosix,
   type DeclaredModule,
-} from "../module-graph.js";
+} from "../graph/module-graph.js";
 import {
   groupAnalyzedFiles,
   nameCandidates,
   declaredModuleEntryText,
   suggestUncovered,
   type NamedCandidateGroup,
-} from "../module-candidates.js";
-import { compileGlob } from "../classify.js";
-import { SCHEMA_VERSION } from "../config.js";
+} from "../graph/module-candidates.js";
+import { compileGlob } from "../config/classify.js";
+import { SCHEMA_VERSION } from "../config/config.js";
 import { childDirectoryAdvice, childDirectoryCounts, dominantByFiles } from "./map-shape.js";
 import { ReportError } from "../report-error.js";
 import { loadConfig } from "./check.js";

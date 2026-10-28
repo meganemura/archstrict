@@ -36,10 +36,10 @@
 // do: text - evidence (and so the fingerprint, which excludes path for
 // this rule already) is untouched, and when no pair in the component is
 // lopsided, today's do: is unchanged.
-import type { Config } from "../config.ts";
-import type { Edge, ModuleGraph } from "../module-graph.ts";
+import type { Config } from "../config/config.ts";
+import type { Edge, ModuleGraph } from "../graph/module-graph.ts";
 import type { ProjectRelativePath } from "../project-path.js";
-import { withPointerSpecs } from "../config-pointer.js";
+import { withPointerSpecs } from "../config/config-pointer.js";
 
 export type Violation = {
   rule: "cycle";

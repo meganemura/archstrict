@@ -2,14 +2,14 @@
 // Boundary: projects source-side constraints; actual target evaluation remains with check.
 import { existsSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { classifyFile, compileGlob } from "../classify.js";
-import { buildModuleGraphForRules, DEFAULT_SURFACE, moduleForDeclaredFile, surfaceGlobsFor, toProjectRelativePosix, type ModuleGraph } from "../module-graph.js";
+import { classifyFile, compileGlob } from "../config/classify.js";
+import { buildModuleGraphForRules, DEFAULT_SURFACE, moduleForDeclaredFile, surfaceGlobsFor, toProjectRelativePosix, type ModuleGraph } from "../graph/module-graph.js";
 import { checkMustBeEmpty, type Violation as MustBeEmptyViolation } from "../rules/must-be-empty.js";
 import { uncoveredViolationFor, type Violation as UncoveredViolation } from "../rules/uncovered.js";
-import { groupForRelFile, suggestUncovered } from "../module-candidates.js";
+import { groupForRelFile, suggestUncovered } from "../graph/module-candidates.js";
 import { assertSequenceListsValue, formatPredicate, matchesPredicate, sequenceFor } from "../rules/constraints.js";
 import { formatConfigPointerLines, loadConfig } from "./check.js";
-import { createConfigLocator, locateViolation, type LocatedViolation } from "../config-pointer.js";
+import { createConfigLocator, locateViolation, type LocatedViolation } from "../config/config-pointer.js";
 
 type AllowDenyProjection = {
   source: string;

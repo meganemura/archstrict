@@ -7,9 +7,9 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync, statSync, 
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import ts from "typescript";
-import * as graphs from "../src/module-graph.js";
-import type { ModuleGraph, BuildOptions } from "../src/module-graph.js";
-import { createWarmGraph } from "../src/warm-graph.js";
+import * as graphs from "../src/graph/module-graph.js";
+import type { ModuleGraph, BuildOptions } from "../src/graph/module-graph.js";
+import { createWarmGraph } from "../src/graph/warm-graph.js";
 
 // A real ES module namespace object's own exports are read-only -
 // vi.spyOn cannot redefine `ts.createSourceFile` directly. Wrapped here so

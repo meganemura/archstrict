@@ -14,8 +14,8 @@
 // suggestion per directory (or per loose file) is module-candidates.ts's
 // job, shared with init's re-run and `archstrict rules <path>` so all three
 // print the identical entry text for the same file.
-import { type ModuleGraph } from "../module-graph.js";
-import { groupForRelFile, suggestUncovered, suggestionDoText, type NamedCandidateGroup } from "../module-candidates.js";
+import { type ModuleGraph } from "../graph/module-graph.js";
+import { groupForRelFile, suggestUncovered, suggestionDoText, type NamedCandidateGroup } from "../graph/module-candidates.js";
 
 export type Violation = {
   rule: "uncovered-module";

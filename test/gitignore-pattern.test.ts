@@ -6,7 +6,7 @@
 import { describe, expect, test } from "vitest";
 import * as hegel from "@hegeldev/hegel";
 import * as gen from "@hegeldev/hegel/generators";
-import { isIgnoredBy, withGitignoreFile } from "../src/gitignore.js";
+import { isIgnoredBy, withGitignoreFile } from "../src/graph/gitignore.js";
 
 function ignores(lines: string, path: string): boolean {
   return isIgnoredBy(withGitignoreFile([], "", `${lines}\n`), path, false);

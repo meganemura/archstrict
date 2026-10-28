@@ -7,9 +7,9 @@ import { join } from "node:path";
 import { describe, test } from "vitest";
 import * as hegel from "@hegeldev/hegel";
 import * as gs from "@hegeldev/hegel/generators";
-import type { Config } from "../src/config.js";
-import { createConfigLocator, locateViolation } from "../src/config-pointer.js";
-import { buildModuleGraph } from "../src/module-graph.js";
+import type { Config } from "../src/config/config.js";
+import { createConfigLocator, locateViolation } from "../src/config/config-pointer.js";
+import { buildModuleGraph } from "../src/graph/module-graph.js";
 import { runRules } from "../src/verbs/check.js";
 
 const whitespace = gs.sampledFrom([" ", "  ", "\n  ", "\n    /* entry */ "]);

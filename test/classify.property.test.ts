@@ -7,7 +7,7 @@ import { describe, test } from "vitest";
 import assert from "node:assert/strict";
 import * as hegel from "@hegeldev/hegel";
 import * as gs from "@hegeldev/hegel/generators";
-import { classifyByGlob, compileGlob } from "../src/classify.js";
+import { classifyByGlob, compileGlob } from "../src/config/classify.js";
 
 const segment = gs.fromRegex("[a-z][a-z0-9]{2,6}");
 

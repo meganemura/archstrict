@@ -9,8 +9,8 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import { isEligibleSourceFile, listAnalyzedFiles, prepareGraph, toProjectRelativePosix } from "../src/module-graph.js";
-import { forcedBasesOf, gitignoreStackAbove, isIgnoredBy, isPathGitignored, nextIgnoreState, withGitignoreFile } from "../src/gitignore.js";
+import { isEligibleSourceFile, listAnalyzedFiles, prepareGraph, toProjectRelativePosix } from "../src/graph/module-graph.js";
+import { forcedBasesOf, gitignoreStackAbove, isIgnoredBy, isPathGitignored, nextIgnoreState, withGitignoreFile } from "../src/graph/gitignore.js";
 import { check } from "../src/verbs/check.js";
 import { init } from "../src/verbs/init.js";
 

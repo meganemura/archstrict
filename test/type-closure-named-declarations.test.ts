@@ -16,9 +16,9 @@ import { dirname, join } from "node:path";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import ts from "typescript";
-import { buildModuleGraph, prepareGraph, scriptKindForFile, type DeclaredModule, type ModuleGraph } from "../src/module-graph.js";
-import { resolutionKey } from "../src/edge-cache.js";
-import { computeSyntacticNamedDeclarations, declarationKey, sourceFileKey, type TypeClosureInputs } from "../src/type-closure.js";
+import { buildModuleGraph, prepareGraph, scriptKindForFile, type DeclaredModule, type ModuleGraph } from "../src/graph/module-graph.js";
+import { resolutionKey } from "../src/graph/edge-cache.js";
+import { computeSyntacticNamedDeclarations, declarationKey, sourceFileKey, type TypeClosureInputs } from "../src/graph/type-closure.js";
 
 function namedDeclarationsFromChecker(program: ts.Program, checker: ts.TypeChecker, surfaceFiles: readonly string[]): Set<ts.Node> {
   const declarations = new Set<ts.Node>();

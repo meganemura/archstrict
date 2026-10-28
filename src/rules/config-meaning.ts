@@ -1,7 +1,7 @@
 // Responsibility: assess contradictions between edge rules and their reasons through one Jev batch.
 // Boundary: advisory config findings only; no module ownership or todo policy.
-import type { Config } from "../config.js";
-import { withPointerSpecs } from "../config-pointer.js";
+import type { Config } from "../config/config.js";
+import { withPointerSpecs } from "../config/config-pointer.js";
 
 type ChoiceAnswer = {
   type: "choice";

@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
-import type { Config } from "../src/config.js";
+import type { Config } from "../src/config/config.js";
 import { checkConfigMeaning, realProver, ProverFailure, type Prover } from "../src/rules/config-meaning.js";
 import { check, formatText, hasBlockingViolations } from "../src/verbs/check.js";
 

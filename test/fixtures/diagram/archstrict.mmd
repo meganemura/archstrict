@@ -1,37 +1,45 @@
 flowchart TB
-  subgraph l0["layer: cli"]
-    m0["<b>cli</b><br/><small>src/cli.ts</small><br/><small>surface: cli.ts</small>"]
-    m2["<b>check-options</b><br/><small>src/check-options.ts</small><br/><small>surface: check-options.ts</small>"]
+  subgraph l0["core: todo"]
+    m7["<b>todo-store</b><br/><small>src/todo-store.ts</small><br/><small>surface: todo-store.ts</small>"]
   end
-  subgraph l1["layer: mcp"]
-    m1["<b>mcp</b><br/><small>src/mcp-server.ts</small><br/><small>surface: mcp-server.ts</small>"]
+  subgraph l1["core: graph"]
+    m6["<b>graph</b><br/><small>src/graph/**</small><br/><small>surface: edge-engine-choice.ts, module-candidates.ts, module-graph.ts, type-leak.ts, warm-graph.ts</small>"]
   end
-  subgraph l2["layer: verbs"]
-    m3["<b>verbs</b><br/><small>src/verbs/**</small><br/><small>surface: agents.ts, check.ts, diagram.ts, fix.ts, hotspots.ts, init.ts, recommend.ts, rules.ts, search.ts, simulate.ts, todo.ts</small>"]
+  subgraph l2["core: config"]
+    m5["<b>config</b><br/><small>src/config/**</small><br/><small>surface: classify.ts, config-pointer.ts, config.ts</small>"]
   end
-  subgraph l3["layer: rules"]
-    m4["<b>rules</b><br/><small>src/rules/**</small><br/><small>surface: config-meaning.ts, constraints.ts, cycles.ts, deprecated.ts, empty-rule.ts, must-be-empty.ts, public-surface.ts, uncovered.ts</small>"]
+  subgraph l3["core: base"]
+    m8["<b>project-path</b><br/><small>src/project-path.ts</small><br/><small>surface: project-path.ts</small>"]
+    m9["<b>report-error</b><br/><small>src/report-error.ts</small><br/><small>surface: report-error.ts</small>"]
   end
-  subgraph l4["layer: core"]
-    m5["<b>core</b><br/><small>src/*.ts</small><br/><small>surface: classify.ts, config-pointer.ts, config.ts, edge-engine-choice.ts, module-candidates.ts, module-graph.ts, project-path.ts, report-error.ts, todo-store.ts, type-closure.ts, type-leak.ts, warm-graph.ts</small>"]
-  end
-  s0(["<b>layer:core except engine:tsrs</b><br/><small>1 module: core (16/17 files)</small>"]):::selector
+  m0["<b>cli</b><br/><small>src/cli.ts</small><br/><small>surface: cli.ts</small>"]
+  m1["<b>mcp</b><br/><small>src/mcp-server.ts</small><br/><small>surface: mcp-server.ts</small>"]
+  m2["<b>check-options</b><br/><small>src/check-options.ts</small><br/><small>surface: check-options.ts</small>"]
+  m3["<b>verbs</b><br/><small>src/verbs/**</small><br/><small>surface: agents.ts, check.ts, diagram.ts, fix.ts, hotspots.ts, init.ts, recommend.ts, rules.ts, search.ts, simulate.ts, todo.ts</small>"]
+  m4["<b>rules</b><br/><small>src/rules/**</small><br/><small>surface: config-meaning.ts, constraints.ts, cycles.ts, deprecated.ts, empty-rule.ts, must-be-empty.ts, public-surface.ts, uncovered.ts</small>"]
+  s0(["<b>layer:cli</b><br/><small>2 modules: cli, check-options</small>"]):::selector
+  s1(["<b>layer:rules</b><br/><small>1 module: rules</small>"]):::selector
+  s2(["<b>layer:mcp</b><br/><small>1 module: mcp</small>"]):::selector
+  s3(["<b>layer:core</b><br/><small>5 modules: config, graph, todo-store, project-path, report-error</small>"]):::selector
+  s4(["<b>layer:verbs</b><br/><small>1 module: verbs</small>"]):::selector
+  s5(["<b>layer:core except engine:tsrs</b><br/><small>5 modules: config, graph (10/11 files), todo-store, project-path, report-error</small>"]):::selector
   k0{{"pkg: @modelcontextprotocol/sdk"}}:::package
   k1{{"pkg: @modelcontextprotocol/sdk, tsrs"}}:::package
   k2{{"pkg: tsrs"}}:::package
+  n2["<b>order</b><br/>order layer: core #lt; rules #lt; verbs #lt; mcp #lt; cli"]:::note
   l0 ==> l1
   l1 ==> l2
   l2 ==> l3
-  l3 ==> l4
-  l0 -.-x|"cannot use"| l3
-  l1 -.-x|"cannot use"| l3
-  l4 -.-x|"cannot use"| k0
-  l3 -.-x|"cannot use"| k1
-  l2 -.-x|"cannot use"| k1
-  l0 -.-x|"cannot use"| k1
-  s0 -.-x|"cannot use"| k2
-  l1 -.-x|"cannot use"| k2
-  linkStyle 0,1,2,3 stroke:#868e96,stroke-width:3px
-  linkStyle 4,5,6,7,8,9,10,11 stroke:#e03131,stroke-width:1.5px,stroke-dasharray:5 4
+  s0 -.-x|"cannot use"| s1
+  s2 -.-x|"cannot use"| s1
+  s3 -.-x|"cannot use"| k0
+  s1 -.-x|"cannot use"| k1
+  s4 -.-x|"cannot use"| k1
+  s0 -.-x|"cannot use"| k1
+  s5 -.-x|"cannot use"| k2
+  s2 -.-x|"cannot use"| k2
+  linkStyle 0,1,2 stroke:#868e96,stroke-width:3px
+  linkStyle 3,4,5,6,7,8,9,10 stroke:#e03131,stroke-width:1.5px,stroke-dasharray:5 4
   classDef selector fill:none,stroke-dasharray:4 3
   classDef package fill:none,stroke:#e03131,color:#e03131
+  classDef note fill:none,stroke-dasharray:2 2

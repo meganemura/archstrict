@@ -8,9 +8,9 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { basename } from "node:path";
 import { compilerDirname, compilerJoin, compilerRealpath, compilerResolve } from "../project-path.js";
 import ts from "typescript";
-import { buildModuleGraphForRules, globResolutionDir, type ModuleGraph, type BuildOptions } from "../module-graph.js";
+import { buildModuleGraphForRules, globResolutionDir, type ModuleGraph, type BuildOptions } from "../graph/module-graph.js";
 import { childDirectoryCounts, dominantBypassModule, dominantBypassSentence } from "./map-shape.js";
-import { assertConfigKeysKnown, assertEdgesShapeValid, assertGlobsSupported, assertSchemaVersion, describeShape, type Config } from "../config.js";
+import { assertConfigKeysKnown, assertEdgesShapeValid, assertGlobsSupported, assertSchemaVersion, describeShape, type Config } from "../config/config.js";
 import { ReportError } from "../report-error.js";
 import { checkPublicSurfaceBypass, type Violation as PublicSurfaceViolation } from "../rules/public-surface.js";
 import {
@@ -26,7 +26,7 @@ import {
   type Suggestion as DeprecatedSuggestion,
   type Violation as DeprecatedViolation,
 } from "../rules/deprecated.js";
-import { checkTypeLeaks, type Violation as TypeLeakViolation } from "../type-leak.js";
+import { checkTypeLeaks, type Violation as TypeLeakViolation } from "../graph/type-leak.js";
 import { checkMustBeEmpty, type Violation as MustBeEmptyViolation } from "../rules/must-be-empty.js";
 import {
   checkAllowDeny,
@@ -54,7 +54,7 @@ import {
   locateViolations,
   type ConfigLocator,
   type ConfigPointers,
-} from "../config-pointer.js";
+} from "../config/config-pointer.js";
 import { focusNoteLines, focusSkip, focusSkipNote, setFocusNotes } from "./focus-note.js";
 
 // Not one of the six rules: reported when a todo entry matches no current

@@ -7,7 +7,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, 
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
-import * as graphs from "../src/module-graph.js";
+import * as graphs from "../src/graph/module-graph.js";
 import { applyTodo, check, loadConfig, runRules, type AnyViolation } from "../src/verbs/check.js";
 import { simulate, formatSimulateText, type Change } from "../src/verbs/simulate.js";
 import { fingerprintOf, writeTodoFile } from "../src/todo-store.js";

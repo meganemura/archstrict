@@ -14,9 +14,9 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { closeEdgeEngine, parseEdgeEngine, TSRS_INSTALL } from "../src/edge-engine-choice.js";
-import { openEdgeSession, type EdgeSession } from "../src/edge-engine.js";
-import { buildModuleGraphForRules, buildPreparedGraph, prepareGraph, type DeclaredModule } from "../src/module-graph.js";
+import { closeEdgeEngine, parseEdgeEngine, TSRS_INSTALL } from "../src/graph/edge-engine-choice.js";
+import { openEdgeSession, type EdgeSession } from "../src/graph/edge-engine.js";
+import { buildModuleGraphForRules, buildPreparedGraph, prepareGraph, type DeclaredModule } from "../src/graph/module-graph.js";
 import { ReportError } from "../src/report-error.js";
 
 const REPO = dirname(dirname(fileURLToPath(import.meta.url)));
