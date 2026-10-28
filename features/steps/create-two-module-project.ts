@@ -20,6 +20,8 @@ export default defineStep({
     billingIndex: z.string().describe("billing's public surface file, relative to the root"),
     billingInternal: z.string().describe("a billing file that is not its surface, relative to the root"),
     newFile: z.string().describe("the orders file the agent is about to create, relative to the root"),
+    newFilePath: z.string().describe("the orders file the agent is about to create, as an absolute path"),
+    billingSurface: z.array(z.string()).describe("the absolute paths of the files billing shows other modules: its index file alone"),
   }),
   mutates: true,
   async run({ scratch }) {
@@ -40,6 +42,15 @@ export default defineStep({
     writeFileSync(join(root, "src/orders/index.ts"), "export function orderCount(): number {\n  return 0;\n}\n");
     const init = await runArchstrictJson(root, ["init"]);
     if (init.exitCode !== 0) throw new Error(`archstrict init exited ${init.exitCode}: ${JSON.stringify(init.json)}`);
-    return { root, billingIndex: "src/billing/index.ts", billingInternal: "src/billing/invoice.ts", newFile: "src/orders/checkout.ts" };
+    const billingIndex = "src/billing/index.ts";
+    const newFile = "src/orders/checkout.ts";
+    return {
+      root,
+      billingIndex,
+      billingInternal: "src/billing/invoice.ts",
+      newFile,
+      newFilePath: join(root, newFile),
+      billingSurface: [join(root, billingIndex)],
+    };
   },
 });

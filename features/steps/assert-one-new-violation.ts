@@ -1,24 +1,28 @@
 import { defineStep, z } from "nukadoko";
-import runArchstrictCheck from "./run-archstrict-check.js";
-import assertCheckIsGreenAfterFreeze from "./assert-check-is-green-after-freeze.js";
+import runArchstrictCheckAgain from "./run-archstrict-check-again.js";
+import runArchstrictTodo from "./run-archstrict-todo.js";
 
 // todo never adds after its first run, even when a new violation appears (the
 // same invariant test/todo.test.ts already covers with a synthetic fixture) -
 // this is the same fact measured against nukadoko's real files instead.
 export default defineStep({
-  description: "Asserts one new violation appears after one new cross-module import, and that todo never adds after its first run.",
+  description: "One new violation appears after one new cross-module import, and check's frozen count is still what todo froze.",
   pattern: "check reports exactly one new violation, and the frozen count is unchanged",
-  args: z.object({ violations: z.number(), todo: z.number(), previousTodo: z.number() }),
-  mutates: false,
+  args: z.object({
+    violations: runArchstrictCheckAgain.returns.shape.violations,
+    todo: runArchstrictCheckAgain.returns.shape.todo,
+    frozen: runArchstrictTodo.returns.shape.added,
+  }),
   from: {
-    violations: [runArchstrictCheck, "violations"],
-    todo: [runArchstrictCheck, "todo"],
-    previousTodo: [assertCheckIsGreenAfterFreeze, "todo"],
+    violations: [runArchstrictCheckAgain, "violations"],
+    todo: [runArchstrictCheckAgain, "todo"],
+    frozen: [runArchstrictTodo, "added"],
   },
-  run({}, { violations, todo, previousTodo }) {
-    if (violations !== 1) throw new Error(`expected exactly 1 new violation, check reported ${violations}`);
-    if (todo !== previousTodo) {
-      throw new Error(`expected todo to stay at ${previousTodo} (todo never adds after its first run), check reported ${todo}`);
-    }
+  observe({}, { violations }) {
+    return { newViolations: violations === 1 ? "one" : String(violations) };
   },
+  claims: [
+    { actual: "newViolations", compare: "equal", expected: { literal: "one" } },
+    { actual: "todo", compare: "equal", expected: { from: "frozen" } },
+  ],
 });

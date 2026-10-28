@@ -7,50 +7,36 @@ import runArchstrictCheck from "./run-archstrict-check.js";
 // future nukadoko release with a different file count. init declares one
 // module per module directory AND one per loose root .ts file, so the module
 // count is moduleDirs.length + rootFileCount, and every one of those files is
-// covered - outsideFiles is 0, not rootFileCount, unlike before init's own
-// walk covered the loose files too.
+// covered - the setup step finds no file outside both, unlike before init's
+// own walk covered the loose files too.
 export default defineStep({
   description:
-    "Asserts check's module/outside-file/unresolved-specifier counts against the scratch copy's own file layout, computed independently by the setup step.",
+    "Check's module, surface-less module, outside-file, and unresolved-specifier counts equal the scratch copy's own file layout, computed independently by the setup step.",
   pattern: "check resolves every specifier, matching the scratch copy's own file layout",
   args: z.object({
-    moduleDirs: z.array(z.string()),
-    rootFileCount: z.number(),
-    modulesWithoutIndexTs: z.number(),
-    expectedUnresolvedSpecifiers: z.number(),
-    modules: z.number(),
-    modulesWithoutSurface: z.number(),
-    outsideFiles: z.number(),
-    unresolvedSpecifiers: z.number(),
+    expectedModules: setupNukadokoScratch.returns.shape.expectedModules,
+    modulesWithoutIndexTs: setupNukadokoScratch.returns.shape.modulesWithoutIndexTs,
+    filesOutsideModules: setupNukadokoScratch.returns.shape.filesOutsideModules,
+    expectedUnresolvedSpecifiers: setupNukadokoScratch.returns.shape.expectedUnresolvedSpecifiers,
+    modules: runArchstrictCheck.returns.shape.modules,
+    modulesWithoutSurface: runArchstrictCheck.returns.shape.modulesWithoutSurface,
+    outsideFiles: runArchstrictCheck.returns.shape.outsideFiles,
+    unresolvedSpecifiers: runArchstrictCheck.returns.shape.unresolvedSpecifiers,
   }),
-  mutates: false,
   from: {
-    moduleDirs: [setupNukadokoScratch, "moduleDirs"],
-    rootFileCount: [setupNukadokoScratch, "rootFileCount"],
+    expectedModules: [setupNukadokoScratch, "expectedModules"],
     modulesWithoutIndexTs: [setupNukadokoScratch, "modulesWithoutIndexTs"],
+    filesOutsideModules: [setupNukadokoScratch, "filesOutsideModules"],
     expectedUnresolvedSpecifiers: [setupNukadokoScratch, "expectedUnresolvedSpecifiers"],
     modules: [runArchstrictCheck, "modules"],
     modulesWithoutSurface: [runArchstrictCheck, "modulesWithoutSurface"],
     outsideFiles: [runArchstrictCheck, "outsideFiles"],
     unresolvedSpecifiers: [runArchstrictCheck, "unresolvedSpecifiers"],
   },
-  run({}, args) {
-    const expectedModules = args.moduleDirs.length + args.rootFileCount;
-    if (args.modules !== expectedModules) {
-      throw new Error(`expected ${expectedModules} modules (${args.moduleDirs.length} directories + ${args.rootFileCount} loose root files), check reported ${args.modules}`);
-    }
-    if (args.modulesWithoutSurface !== args.modulesWithoutIndexTs) {
-      throw new Error(
-        `expected ${args.modulesWithoutIndexTs} modules without a surface (no index.ts), check reported ${args.modulesWithoutSurface}`,
-      );
-    }
-    if (args.outsideFiles !== 0) {
-      throw new Error(`expected 0 files not covered by any declared module (init's own walk covers every analyzed file by construction), check reported ${args.outsideFiles}`);
-    }
-    if (args.unresolvedSpecifiers !== args.expectedUnresolvedSpecifiers) {
-      throw new Error(
-        `expected ${args.expectedUnresolvedSpecifiers} unresolved specifiers (bare specifiers naming neither a node builtin nor an installed package), check reported ${args.unresolvedSpecifiers}`,
-      );
-    }
-  },
+  claims: [
+    { actual: "modules", compare: "equal", expected: { from: "expectedModules" } },
+    { actual: "modulesWithoutSurface", compare: "equal", expected: { from: "modulesWithoutIndexTs" } },
+    { actual: "outsideFiles", compare: "equal", expected: { from: "filesOutsideModules" } },
+    { actual: "unresolvedSpecifiers", compare: "equal", expected: { from: "expectedUnresolvedSpecifiers" } },
+  ],
 });

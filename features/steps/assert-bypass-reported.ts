@@ -1,36 +1,38 @@
 import { defineStep, z } from "nukadoko";
-import { join } from "node:path";
 import createTwoModuleProject from "./create-two-module-project.js";
-import writeBypassingFile, { violations } from "./write-bypassing-file.js";
+import writeBypassingFile from "./write-bypassing-file.js";
 
 // The do: line is what lets an agent fix its own mistake without asking, so
 // the step checks it names both files.
 export default defineStep({
-  description: "Asserts check exited 1 with exactly one public-surface-bypass on line 1 of the new file, and its do: names billing's index and the bypassed file.",
+  description: "Check exited 1 with exactly one public-surface-bypass, on the new file's import line, and its do: names billing's index and the bypassed file.",
   pattern: "check reports one public-surface-bypass violation whose do: line names billing's index",
   args: z.object({
-    root: z.string(),
-    newFile: z.string(),
-    billingIndex: z.string(),
-    billingInternal: z.string(),
-    exitCode: z.number(),
-    violations,
+    newFilePath: createTwoModuleProject.returns.shape.newFilePath,
+    billingIndex: createTwoModuleProject.returns.shape.billingIndex,
+    billingInternal: createTwoModuleProject.returns.shape.billingInternal,
+    exitCode: writeBypassingFile.returns.shape.exitCode,
+    violations: writeBypassingFile.returns.shape.violations,
+    importLine: writeBypassingFile.returns.shape.importLine,
   }),
   from: {
-    root: [createTwoModuleProject, "root"],
-    newFile: [createTwoModuleProject, "newFile"],
+    newFilePath: [createTwoModuleProject, "newFilePath"],
     billingIndex: [createTwoModuleProject, "billingIndex"],
     billingInternal: [createTwoModuleProject, "billingInternal"],
     exitCode: [writeBypassingFile, "exitCode"],
     violations: [writeBypassingFile, "violations"],
+    importLine: [writeBypassingFile, "importLine"],
   },
-  mutates: false,
-  run({}, { root, newFile, billingIndex, billingInternal, exitCode, violations }) {
-    if (exitCode !== 1) throw new Error(`expected check to exit 1, got ${exitCode}`);
-    if (violations.length !== 1) throw new Error(`expected one violation, got ${JSON.stringify(violations)}`);
-    const [violation] = violations;
-    if (violation!.rule !== "public-surface-bypass") throw new Error(`expected public-surface-bypass, got ${violation!.rule}`);
-    if (violation!.path !== join(root, newFile) || violation!.line !== 1) throw new Error(`the violation is at ${violation!.path}:${violation!.line}`);
-    if (!violation!.do.includes(billingIndex) || !violation!.do.includes(billingInternal)) throw new Error(`the do: line is ${violation!.do}`);
+  observe({}, { exitCode, violations }) {
+    // check reports a violation by exiting 1; any other exit is read out as it is.
+    return { reported: exitCode !== 1 ? `check exited ${exitCode}` : violations.length === 1 ? "one" : String(violations.length) };
   },
+  claims: [
+    { actual: "reported", compare: "equal", expected: { literal: "one" } },
+    { actual: "violations", at: "0.rule", compare: "equal", expected: { literal: "public-surface-bypass" } },
+    { actual: "violations", at: "0.path", compare: "equal", expected: { from: "newFilePath" } },
+    { actual: "violations", at: "0.line", compare: "equal", expected: { from: "importLine" } },
+    { actual: "violations", at: "0.do", compare: "contains-text", expected: { from: "billingIndex" } },
+    { actual: "violations", at: "0.do", compare: "contains-text", expected: { from: "billingInternal" } },
+  ],
 });

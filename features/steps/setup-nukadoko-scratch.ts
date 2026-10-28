@@ -1,7 +1,7 @@
 import { defineStep, z } from "nukadoko";
 import { cpSync, existsSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { builtinModules } from "node:module";
-import { join } from "node:path";
+import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const BUILTIN_MODULE_NAMES = new Set(builtinModules);
@@ -15,6 +15,14 @@ const BUILTIN_MODULE_NAMES = new Set(builtinModules);
 function packageNameOf(specifier: string): string {
   const parts = specifier.split("/");
   return specifier.startsWith("@") ? `${parts[0]}/${parts[1]}` : parts[0]!;
+}
+
+function tsFilesUnder(dir: string): string[] {
+  return readdirSync(dir).flatMap((name) => {
+    const full = join(dir, name);
+    if (statSync(full).isDirectory()) return tsFilesUnder(full);
+    return name.endsWith(".ts") ? [full] : [];
+  });
 }
 
 // Every bare (non-relative) import/export-from specifier under `srcDir`,
@@ -82,6 +90,12 @@ export default defineStep({
     rootFileCount: z
       .number()
       .describe("how many .ts files sit directly under src/, outside every module directory"),
+    expectedModules: z
+      .number()
+      .describe("the modules init declares: one per module directory and one per loose .ts file directly under src/"),
+    filesOutsideModules: z
+      .number()
+      .describe("how many .ts files under src/ sit neither directly under src/ nor inside a module directory, which no module init declares would cover"),
     modulesWithoutIndexTs: z
       .number()
       .describe(
@@ -119,9 +133,21 @@ export default defineStep({
     const entries = readdirSync(srcDir);
     const moduleDirs = entries.filter((name) => statSync(join(srcDir, name)).isDirectory()).sort();
     const rootFileCount = entries.filter((name) => name.endsWith(".ts") && statSync(join(srcDir, name)).isFile()).length;
+    const filesOutsideModules = tsFilesUnder(srcDir).filter((file) => {
+      const parts = relative(srcDir, file).split(sep);
+      return parts.length > 1 && !moduleDirs.includes(parts[0]!);
+    }).length;
     const modulesWithoutIndexTs = moduleDirs.filter((name) => !existsSync(join(srcDir, name, "index.ts"))).length;
     const expectedUnresolvedSpecifiers = countUnresolvableSpecifiers(srcDir, ARCHSTRICT_NODE_MODULES);
 
-    return { root, moduleDirs, rootFileCount, modulesWithoutIndexTs, expectedUnresolvedSpecifiers };
+    return {
+      root,
+      moduleDirs,
+      rootFileCount,
+      expectedModules: moduleDirs.length + rootFileCount,
+      filesOutsideModules,
+      modulesWithoutIndexTs,
+      expectedUnresolvedSpecifiers,
+    };
   },
 });
