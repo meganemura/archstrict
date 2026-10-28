@@ -122,6 +122,20 @@ function isAnalyzedSource(path: string): boolean {
   return /\.(?:ts|tsx|mts|cts)$/.test(path) && !/\.d\.(?:ts|mts|cts)$/.test(path);
 }
 
+// git's numstat writes a rename as `old => new`, or with the shared part
+// outside braces: `src/{a.ts => graph/a.ts}`. Either side of the braces can
+// be empty, which leaves a doubled slash to collapse.
+function renamedPaths(field: string): { from: string; to: string } {
+  const braced = /^(.*)\{(.*) => (.*)\}(.*)$/.exec(field);
+  if (braced !== null) {
+    const [, head = "", before = "", after = "", tail = ""] = braced;
+    return { from: `${head}${before}${tail}`.replace("//", "/"), to: `${head}${after}${tail}`.replace("//", "/") };
+  }
+  const arrow = field.indexOf(" => ");
+  if (arrow === -1) return { from: field, to: field };
+  return { from: field.slice(0, arrow), to: field.slice(arrow + 4) };
+}
+
 async function readGitHistory(
   projectRoot: string,
   since: string | undefined,
@@ -132,7 +146,11 @@ async function readGitHistory(
   }
   const shallow = gitValue(projectRoot, ["rev-parse", "--is-shallow-repository"]) === "true";
   const prefix = gitValue(projectRoot, ["rev-parse", "--show-prefix"]) ?? "";
-  const args = ["log", "--numstat", "--no-renames", "--format=%x1e%H"];
+  // Rename detection keeps a moved file's history: git log walks newest
+  // first, so each rename maps the older path to the file's current path
+  // before any older commit names it. Without it, moving files into a new
+  // module directory left that module with no commits.
+  const args = ["log", "--numstat", "-M", "--format=%x1e%H"];
   if (since !== undefined) {
     const isRef = gitValue(projectRoot, ["rev-parse", "--verify", "--quiet", `${since}^{commit}`]) !== undefined;
     args.push(isRef ? `${since}..HEAD` : `--since=${since}`);
@@ -143,6 +161,7 @@ async function readGitHistory(
   const stderr: Buffer[] = [];
   child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
   const commits: CommitModules[] = [];
+  const currentPath = new Map<string, string>();
   let current: CommitModules | undefined;
   const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
   for await (const line of lines) {
@@ -155,12 +174,11 @@ async function readGitHistory(
     const firstTab = line.indexOf("\t");
     const secondTab = line.indexOf("\t", firstTab + 1);
     if (firstTab === -1 || secondTab === -1) continue;
-    let path = line.slice(secondTab + 1);
-    if (prefix !== "") {
-      if (!path.startsWith(prefix)) continue;
-      path = path.slice(prefix.length);
-    }
-    const moduleName = moduleForPath(path);
+    const { from, to } = renamedPaths(line.slice(secondTab + 1));
+    const path = currentPath.get(to) ?? to;
+    if (from !== to) currentPath.set(from, path);
+    if (!path.startsWith(prefix)) continue;
+    const moduleName = moduleForPath(path.slice(prefix.length));
     if (moduleName === undefined) continue;
     const added = Number(line.slice(0, firstTab));
     const deleted = Number(line.slice(firstTab + 1, secondTab));

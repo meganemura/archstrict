@@ -82,6 +82,26 @@ describe("hotspots", () => {
     }
   });
 
+  test("counts a moved file's earlier commits for the module it moved into", async () => {
+    const root = mkdtempSync(join(tmpdir(), "archstrict-hotspots-"));
+    try {
+      writeProject(root);
+      const helper = (n: number): string => Array.from({ length: 12 }, (_, i) => `export const helper${i} = ${i * n};\n`).join("");
+      writeFileSync(join(root, "src", "alpha", "helper.ts"), helper(1));
+      git(root, ["init", "-q"]);
+      commit(root, "initial");
+      writeFileSync(join(root, "src", "alpha", "helper.ts"), helper(2));
+      commit(root, "helper");
+      git(root, ["mv", "src/alpha/helper.ts", "src/beta/helper.ts"]);
+      commit(root, "move helper to beta");
+
+      const commitsByModule = Object.fromEntries((await hotspots(root)).modules.map((module) => [module.name, module.commits]));
+      expect(commitsByModule).toEqual({ alpha: 1, beta: 3 });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("bounds text sections to ten rows and the do: lines to two", () => {
     const modules = Array.from({ length: 12 }, (_, i) => ({
       name: `m${i}`, commits: 12 - i, changedLines: i, fanIn: i, fanOut: 0,
