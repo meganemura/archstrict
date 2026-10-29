@@ -84,8 +84,14 @@ export function checkPublicSurfaceBypass(graph: ModuleGraph, focus?: string): Vi
   for (const edge of edges) {
     const targetModule = graph.modules.get(edge.toModule!);
     if (targetModule === undefined) continue; // resolved outside any module; not this rule's concern
-    if (targetModule.surfaceFiles.includes(edge.resolvedFile)) continue; // reached the public surface itself
     if (isExemptedByFriend(edge, targetModule, graph.relativePath)) continue;
+    // Outside the visibility the surface is no door either, so the do
+    // names the visibility, not the surface.
+    if (isOutsideVisibility(edge, targetModule, graph.relativePath)) {
+      violations.push(visibilityViolationFor(edge, targetModule, graph.relativePath));
+      continue;
+    }
+    if (targetModule.surfaceFiles.includes(edge.resolvedFile)) continue; // reached the public surface itself
 
     violations.push(violationFor(edge, targetModule, graph.relativePath));
   }
@@ -98,6 +104,26 @@ export function checkPublicSurfaceBypass(graph: ModuleGraph, focus?: string): Vi
   // can order the same two paths differently on different machines.
   return violations.sort((a, b) =>
     (a.path < b.path ? -1 : a.path > b.path ? 1 : 0) || a.line - b.line || a.column - b.column);
+}
+
+function isOutsideVisibility(edge: Edge, targetModule: Module, relativePath: ProjectRelativePath): boolean {
+  return targetModule.visibility !== undefined && !compileGlob(targetModule.visibility).test(relativePath(edge.fromFile));
+}
+
+function visibilityViolationFor(edge: Edge, targetModule: Module, relativePath: ProjectRelativePath): Violation {
+  const visibility = targetModule.visibility!;
+  return {
+    rule: "public-surface-bypass",
+    path: edge.fromFile,
+    line: edge.fromPosition.line,
+    column: edge.fromPosition.column,
+    evidence: `'${edge.specifier}' resolved to module '${targetModule.name}', which only files matching '${visibility}' may import`,
+    because: "a module's visibility names every file that may import it; everything else reaches it through a module that is visible",
+    do: `import it through a module that ${relativePath(edge.fromFile)} may import, or widen visibility on module '${targetModule.name}' in archstrict.config.ts`,
+    todoModule: targetModule.name,
+    specifier: edge.specifier,
+    target: edge.resolvedFile,
+  };
 }
 
 function violationFor(edge: Edge, targetModule: Module, relativePath: ProjectRelativePath): Violation {

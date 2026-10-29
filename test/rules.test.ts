@@ -20,7 +20,7 @@ const cli = resolve(dirname(fileURLToPath(import.meta.url)), "../dist/cli.js");
 const config = {
   declaredModules: [
     { name: "app", glob: "src/app/**", surface: "public/*.ts" },
-    { name: "shared", glob: "src/shared/**", surface: "index.ts", friends: [
+    { name: "shared", glob: "src/shared/**", surface: "index.ts", visibility: "src/app/**", friends: [
       { file: "secret.ts", from: "src/app/**", because: "app may use the helper" },
     ] },
     { name: "private", glob: "src/private/**", surface: "index.ts" },
@@ -88,13 +88,13 @@ describe("rules", () => {
     expect(await rules(root, join(root, "src/future/index.ts"))).toMatchObject({ exists: false, module: "future", isSurfaceFile: true });
   }));
 
-  test("lists existing public surfaces and matching friend entries", async () => withProject(async (root) => {
+  test("lists the public surfaces a path may import, inside each module's visibility, and matching friend entries", async () => withProject(async (root) => {
     const result = await rules(root, join(root, "src/app/new.ts"));
     expect(result.importableFrom).toEqual([{ module: "shared", surfaceFiles: [join(root, "src/shared/index.ts")] }]);
     expect(result.friendAccess).toEqual([{ module: "shared", file: "src/shared/secret.ts", from: "src/app/**", because: "app may use the helper" }]);
     const other = await rules(root, join(root, "src/other/new.ts"));
     expect(other.friendAccess).toEqual([]);
-    expect(other.importableFrom.map((entry) => entry.module)).toEqual(["app", "shared"]);
+    expect(other.importableFrom.map((entry) => entry.module)).toEqual(["app"]);
   }));
 
   test("excluded paths retain descriptive results but suppress violations", async () => withProject(async (root) => {

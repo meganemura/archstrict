@@ -189,6 +189,9 @@ export type Module = {
   // exception's `from` side needs the same per-edge glob test `surface`
   // never does.
   friends: { fileGlob: string; from: string; because: string }[];
+  // The project-relative glob of files that may import this module, when
+  // config narrows it; absent means every file may.
+  visibility?: string;
 };
 
 // A module declared directly in config - a barrel index.ts's mere presence
@@ -218,6 +221,7 @@ export type DeclaredModule = {
   // one entry in it can't be confidently resolved to a real source file.
   surface?: string | readonly string[];
   friends?: readonly { file: string; from: string; because: string }[];
+  visibility?: string;
 };
 
 export type ModuleGraph = {
@@ -1094,6 +1098,7 @@ function buildDeclaredModules(
             from: f.from,
             because: f.because,
           })),
+          ...(dm.visibility !== undefined ? { visibility: dm.visibility } : {}),
         },
       ];
     }),

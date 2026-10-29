@@ -117,6 +117,18 @@ export function checkEmptyRuleSet(graph: ModuleGraph, config: Config): Violation
     const module = graph.modules.get(declared.name);
     if (module === undefined) continue;
     const moduleRels = module.files.map((file) => graph.relativePath(file));
+    // A visibility that matches no file makes the module unreachable, which
+    // reads as a clean pass while it is a typo.
+    if (declared.visibility !== undefined && !allFiles.some((file) => compileGlob(declared.visibility!).test(graph.relativePath(file)))) {
+      violations.push(
+        violation(
+          config,
+          `visibility '${declared.visibility}' on module '${declared.name}' matches no file in scope`,
+          `fix the visibility glob or remove it from module '${declared.name}' in archstrict.config.ts`,
+          `declaredModules[${moduleIndex}].visibility`,
+        ),
+      );
+    }
     for (const [friendIndex, friend] of (declared.friends ?? []).entries()) {
       const stored = module.friends[friendIndex];
       if (stored === undefined) continue;

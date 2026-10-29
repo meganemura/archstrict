@@ -238,6 +238,11 @@ function pointerSpecs(violation: UnlocatedViolation, config: Config): PointerSpe
       if (violation.evidence === "no modules declared in declaredModules") {
         return [{ pointer: "declaredModules", role: "fired" }];
       }
+      const visible = /^visibility '[^']*' on module '([^']*)'/.exec(violation.evidence);
+      if (visible !== null) {
+        const moduleIndex = config.declaredModules?.findIndex((entry) => entry.name === visible[1]) ?? -1;
+        if (moduleIndex >= 0) return [{ pointer: `declaredModules[${moduleIndex}].visibility`, role: "fired" }];
+      }
       const friend = /friends (?:file|from) '([^']*)' on module '([^']*)'/.exec(violation.evidence);
       if (friend !== null) {
         const moduleIndex = config.declaredModules?.findIndex((entry) => entry.name === friend[2]) ?? -1;

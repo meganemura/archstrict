@@ -89,7 +89,7 @@ const _checkFieldsMatch: AssertKeysMatch<
 // to DeclaredModuleEntry instead of Config.
 type DeclaredModuleEntry = NonNullable<Config["declaredModules"]>[number];
 
-const EXPECTED_DECLARED_MODULE_FIELDS = ["name", "glob", "surface", "friends"] as const;
+const EXPECTED_DECLARED_MODULE_FIELDS = ["name", "glob", "surface", "friends", "visibility"] as const;
 
 const _checkDeclaredModuleFieldsMatch: AssertKeysMatch<
   (typeof EXPECTED_DECLARED_MODULE_FIELDS)[number],

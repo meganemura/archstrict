@@ -111,6 +111,12 @@ export type Config = {
     // mandatory, the same convention every other exception field here
     // already follows.
     friends?: readonly { file: string; from: string; because: string }[];
+    // Who may import this module at all: a project-relative glob over the
+    // importing file. A surface import from a file outside it is a
+    // public-surface-bypass, the same posture Bazel's visibility takes. One
+    // glob on the inner modules of a directory replaces a friends entry on
+    // each of them.
+    visibility?: string;
   }[];
 
   // archspec's own "empty component" concept: a directory that must stay
@@ -327,7 +333,7 @@ export function assertConfigKeysKnown(raw: object): void {
   known(config.classifyByDirectoryName, ["tagNamespace", "names"], "config.classifyByDirectoryName");
   each(config.deprecated, ["from", "to", "count", "because"], "config.deprecated");
   each(config.mustBeEmpty, ["glob", "because"], "config.mustBeEmpty");
-  each(config.declaredModules, ["name", "glob", "surface", "friends"], "config.declaredModules");
+  each(config.declaredModules, ["name", "glob", "surface", "friends", "visibility"], "config.declaredModules");
   if (Array.isArray(config.declaredModules)) {
     config.declaredModules.forEach((entry, i) => {
       if (isPlainObject(entry)) each(entry.friends, ["file", "from", "because"], `config.declaredModules[${i}].friends`);
@@ -451,6 +457,7 @@ export function assertGlobsSupported(config: Config, verb: string): void {
     } else if (surface !== undefined) {
       assertGlobSupported(configPath, `declaredModules[${i}].surface`, surface, verb);
     }
+    if (mod?.visibility !== undefined) assertGlobSupported(configPath, `declaredModules[${i}].visibility`, mod.visibility, verb);
     for (const [j, friend] of (mod?.friends ?? []).entries()) {
       assertGlobSupported(configPath, `declaredModules[${i}].friends[${j}].file`, friend?.file, verb);
       assertGlobSupported(configPath, `declaredModules[${i}].friends[${j}].from`, friend?.from, verb);

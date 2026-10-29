@@ -160,6 +160,32 @@ describe("checkEmptyRuleSet", () => {
     }
   });
 
+  test("a visibility that matches no file is a violation, and one that matches a file is not", () => {
+    const root = mkdtempSync(join(tmpdir(), "archstrict-visibility-empty-"));
+    try {
+      mkdirSync(join(root, "src", "core"), { recursive: true });
+      mkdirSync(join(root, "src", "app"), { recursive: true });
+      writeFileSync(join(root, "src", "core", "index.ts"), "export const publicThing = 1;\n");
+      writeFileSync(join(root, "src", "app", "index.ts"), "export const app = 1;\n");
+      writeFileSync(join(root, "tsconfig.json"), "{}");
+      const declaredModules = [
+        { name: "core", glob: "src/core/**", surface: "index.ts", visibility: "src/app/**" },
+        { name: "app", glob: "src/app/**", surface: "index.ts", visibility: "src/ghost/**" },
+      ];
+      const graph = buildModuleGraph({ projectRoot: root, declaredModules });
+      const config: Config = { configPath: join(root, "archstrict.config.ts"), because: "test config", declaredModules };
+
+      const violations = checkEmptyRuleSet(graph, config);
+      expect(violations.map((v) => v.evidence)).toEqual([
+        "visibility 'src/ghost/**' on module 'app' matches no file in scope",
+      ]);
+      const located = locateViolations(violations.map((v) => ({ ...v })), config, createConfigLocator(config));
+      expect(located.map((v) => (v.config as { pointer: string }).pointer)).toEqual(["declaredModules[1].visibility"]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("a deprecated edge whose actual count has fallen to zero is a violation", () => {
     const graph = buildModuleGraph({
       projectRoot: FIXTURE,

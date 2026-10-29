@@ -129,7 +129,7 @@ test("an unknown key in any config entry is an error naming the key, the accepte
       accepted: "schemaVersion, surface, deprecated, strict, ignoredCycles, because, scope, exclude, classify, classifyByDirectoryName, declaredModules, mustBeEmpty, edges" },
     { config: { ...valid, classify: [{ glob: "src/**", tag: "layer:a" }] }, context: "config.classify[0]", key: "tag", accepted: "glob, tags" },
     { config: { ...valid, classifyByDirectoryName: { tagNamespace: "env", name: ["node"] } }, context: "config.classifyByDirectoryName", key: "name", accepted: "tagNamespace, names" },
-    { config: { ...valid, declaredModules: [{ ...module, surfce: "index.ts" }] }, context: "config.declaredModules[0]", key: "surfce", accepted: "name, glob, surface, friends" },
+    { config: { ...valid, declaredModules: [{ ...module, surfce: "index.ts" }] }, context: "config.declaredModules[0]", key: "surfce", accepted: "name, glob, surface, friends, visibility" },
     { config: { ...valid, declaredModules: [{ ...module, friends: [{ file: "x.ts", form: "src/b/**", because: "test" }] }] },
       context: "config.declaredModules[0].friends[0]", key: "form", accepted: "file, from, because" },
     { config: { ...valid, deprecated: [{ from: "a", to: "a", count: 1, becuase: "test" }] }, context: "config.deprecated[0]", key: "becuase", accepted: "from, to, count, because" },

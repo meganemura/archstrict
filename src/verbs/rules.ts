@@ -190,7 +190,8 @@ export async function rules(projectRoot: string, path: string): Promise<RulesRes
     module,
     tags,
     isSurfaceFile,
-    importableFrom: modules.filter((m) => m.name !== module && m.surfaceFiles.length > 0)
+    importableFrom: modules.filter((m) => m.name !== module && m.surfaceFiles.length > 0
+      && (m.visibility === undefined || compileGlob(m.visibility).test(rel)))
       .map((m) => ({ module: m.name, surfaceFiles: m.surfaceFiles })),
     friendAccess: modules.flatMap((m) => m.friends
       .filter((friend) => compileGlob(friend.from).test(rel))

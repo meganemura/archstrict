@@ -22,6 +22,16 @@ Not the same gap as a package's own multiple real entry points (see the `surface
 
 A `friends` entry whose `file` matches no file in that module, or whose `from` matches no analyzed file, is rule 4 (`empty-rule-set`). The entry exempts nothing. `check` reports each miss on its own, at `declaredModules[i].friends[j]`.
 
+### `visibility` - who may import a module at all
+
+`declaredModules[].visibility` (one project-relative glob) names the files that may import the module. Inside the glob the module is an ordinary module: its surface is public and its other files are private. Outside the glob even the surface is a bypass, with evidence `'<specifier>' resolved to module '<name>', which only files matching '<glob>' may import` and `do: import it through a module that <importer> may import, or widen visibility on module '<name>' in archstrict.config.ts`. A `friends` entry still exempts the importer it names. This takes the same posture as Bazel's `visibility`.
+
+The motivating case is a directory split into inner modules: `src/records/` holds `store/`, `claims/`, `issues/`, and so on, and the rest of the project reads only `src/records/index.ts`. `visibility: "src/records/**"` on each inner module says that once. The inner modules keep real surfaces, so a sibling that reaches past one is still a bypass.
+
+Alternative refused: a `friends` entry with `file: "*.ts"` and `from: "src/records/**"` on each inner module. It needs one entry per module. It opens every file of the module to every sibling. And `check` counts each such module as one without a public surface.
+
+A `visibility` that matches no analyzed file is rule 4 (`empty-rule-set`), at `declaredModules[i].visibility`, because nothing may then import the module, and the fault is the glob, not each import. `rules <path>` lists a module under `importableFrom` only when the path is inside its visibility.
+
 ## 2. cycle
 
 A module-level cycle: two or more modules import each other, directly or through a chain, forming a strongly-connected component. One violation per component, regardless of its size or how many edges it contains. Only non-type-only edges count - a type-only cycle has no runtime consequence, and TypeScript itself allows it.
