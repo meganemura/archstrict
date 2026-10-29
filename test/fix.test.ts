@@ -70,6 +70,17 @@ for (const newline of ["\n", "\r\n"]) for (const trailing of [false, true]) {
   }));
 }
 
+test("the re-export follows the file's .ts specifiers and single quotes, after its last import", () => project(async ({ root, put, surface }) => {
+  put("tsconfig.json", JSON.stringify({ compilerOptions: { types: [], noLib: true, strict: true, module: "nodenext", target: "esnext", allowImportingTsExtensions: true, noEmit: true } }));
+  const original = "export { make } from './internal.ts';\nimport { other } from '../other/index.ts';\n\nexport const both = [other];\n";
+  put("src/app/index.ts", original);
+  const result = await fix(root);
+  expect(result.fixed).toEqual([{ path: surface, lines: ["export type { Hidden } from './internal.ts';"] }]);
+  expect(readFileSync(surface, "utf8")).toBe(
+    "export { make } from './internal.ts';\nimport { other } from '../other/index.ts';\nexport type { Hidden } from './internal.ts';\n\nexport const both = [other];\n");
+  expect((await check(root)).violations.filter(v => v.rule === "type-leak")).toEqual([]);
+}));
+
 test("names and specifiers are grouped and sorted before appending", () => project(async ({ root, put, surface }) => {
   put("src/app/z.ts", 'export interface Zebra { value: string }\nexport interface Apple { value: number }\nexport function z(): Zebra { return { value: "x" }; }\nexport function a(): Apple { return { value: 1 }; }');
   put("src/app/a.ts", 'export interface Middle { value: boolean }\nexport function m(): Middle { return { value: true }; }');

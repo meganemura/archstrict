@@ -24,6 +24,30 @@ export type FixResult = {
   notes?: string[];
 };
 
+type ImportStyle = { extension: ".ts" | ".js" | ""; quote: "'" | '"'; insertAt: number | undefined };
+
+// The new lines are read beside the file's own imports, so they follow that file's relative specifier
+// extension and quote, and sit after its last import or re-export instead of below the code.
+function importStyleOf(path: string, text: string): ImportStyle {
+  const source = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, false);
+  let style: ImportStyle = { extension: ".js", quote: '"', insertAt: undefined };
+  let seenRelative = false;
+  for (const statement of source.statements) {
+    if (!ts.isImportDeclaration(statement) && !(ts.isExportDeclaration(statement) && statement.moduleSpecifier !== undefined)) continue;
+    style = { ...style, insertAt: statement.getEnd() };
+    const specifier = statement.moduleSpecifier;
+    if (seenRelative || specifier === undefined || !ts.isStringLiteral(specifier) || !specifier.text.startsWith(".")) continue;
+    seenRelative = true;
+    const extension = /\.ts$/.test(specifier.text) ? ".ts" : /\.js$/.test(specifier.text) ? ".js" : "";
+    style = { ...style, extension, quote: text.charAt(specifier.getStart(source)) === "'" ? "'" : '"' };
+  }
+  return style;
+}
+
+function quoted(specifier: string, quote: ImportStyle["quote"]): string {
+  return quote === '"' ? JSON.stringify(specifier) : `'${specifier.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
+}
+
 // A bare interface or type can leak through an inferred return type without its declaring file ever exporting it.
 // Re-exporting that declaration produces TS2459, but the surface's new export name can make the type-leak rule report success.
 // Verification runs architecture rules, not a full semantic-diagnostics pass, so this guard must reject the declaration before any write.
@@ -96,6 +120,7 @@ export async function fix(projectRoot: string, file?: string, dryRun = false): P
       for (const violation of leaks) result.unfixable.push({ path, type: violation.leak?.internalType ?? "unknown", reason });
       continue;
     }
+    const style = importStyleOf(path, readFileSync(path, "utf8"));
     const groups = new Map<string, Set<string>>();
     const targeted = new Set<string>();
     for (const violation of leaks) {
@@ -113,7 +138,7 @@ export async function fix(projectRoot: string, file?: string, dryRun = false): P
       const base = rel.startsWith("../") ? rel : `./${rel}`;
       // A formatted relative path can still fail under the compiler's extension and module resolution rules.
       // Require the real resolver to confirm the exact internal file before emitting a specifier that only appears correct.
-      const specifier = [`${base}.js`, base, `${base}.ts`].find(candidate =>
+      const specifier = [...new Set([`${base}${style.extension}`, `${base}.js`, base, `${base}.ts`])].find(candidate =>
         ts.resolveModuleName(candidate, path, prepared.compilerOptionsForFile(path), host).resolvedModule?.resolvedFileName === leak.internalFile);
       if (specifier === undefined) {
         result.unfixable.push({ path, type: leak.internalType, reason: `no candidate specifier resolves to '${leak.internalFile}'` });
@@ -125,7 +150,7 @@ export async function fix(projectRoot: string, file?: string, dryRun = false): P
       targeted.add(keyOf(violation));
     }
     const lines = [...groups.keys()].sort().map(specifier =>
-      `export type { ${[...groups.get(specifier)!].sort().join(", ")} } from ${JSON.stringify(specifier)};`);
+      `export type { ${[...groups.get(specifier)!].sort().join(", ")} } from ${quoted(specifier, style.quote)};`);
     if (lines.length === 0) continue;
     if (dryRun) {
       result.planned.push({ path, lines });
@@ -138,8 +163,11 @@ export async function fix(projectRoot: string, file?: string, dryRun = false): P
     const original = readFileSync(target);
     const firstNewline = original.indexOf(10);
     const newline = firstNewline > 0 && original[firstNewline - 1] === 13 ? "\r\n" : "\n";
+    const at = style.insertAt === undefined ? undefined : Buffer.byteLength(original.toString("utf8").slice(0, style.insertAt));
     const separator = original.length > 0 && original[original.length - 1] !== 10 ? newline : "";
-    const updated = Buffer.concat([original, Buffer.from(separator + lines.join(newline) + newline)]);
+    const updated = at === undefined || at >= original.length
+      ? Buffer.concat([original, Buffer.from(separator + lines.join(newline) + newline)])
+      : Buffer.concat([original.subarray(0, at), Buffer.from(newline + lines.join(newline)), original.subarray(at)]);
     let failure: string | undefined;
     try {
       writeTarget(target, updated);

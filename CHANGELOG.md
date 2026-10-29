@@ -17,6 +17,7 @@ may change commands, flags, config, or output shape. The version entry will desc
 
 ### Fixed
 
+- `fix` writes each `export type` re-export in the style of the file's own relative imports, with a `.ts`, `.js`, or no extension and single or double quotes, and puts it after the file's last import or re-export. Before, it always wrote `.js` in double quotes at the end of the file, below the code. A file with no import still gets the lines at its end.
 - `hotspots` follows renames. A file moved into another module directory keeps its earlier commits, and they count for the module it is in now. Before, the move left the new module with no history and gave the old one a commit for the deletion, so a re-architecture could not be measured with the step that is meant to confirm it.
 - A public-surface bypass whose `package.json` `exports` map did not resolve to a source file says to set `surface` to the imported file. When adding `<module>/index.ts` would make every exports entry resolve, and every analyzed file already sits in that module directory, the `do` also offers that file. A `./dist/index.js` map whose source already lives under `src/` does not, and neither does a map that would still miss another entry. `check` prints a note naming that module when a bypass targets it.
 - When `check` counts `require()` or `import x = require(...)`, the text line says those imports were not checked and names up to eight files. A count of zero stays `unsupported syntax: 0`. `--json` still reports `unsupportedSyntax` as a number.
