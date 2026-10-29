@@ -1,6 +1,6 @@
 {
   "name": "archstrict",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "TypeScript module boundary checking, in the sense of ArchUnit and archspec. A PreToolUse hook previews a proposed Edit, Write, or MultiEdit with simulate and returns added violations as additional context. A PostToolUse hook runs check right after the write and returns violations into the agent's own context, the same moment a human editor's red squiggly would.",
   "author": {
     "name": "meganemura"
